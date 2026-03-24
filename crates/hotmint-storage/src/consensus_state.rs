@@ -1,5 +1,7 @@
 use hotmint_types::{BlockHash, Epoch, Height, QuorumCertificate, ViewNumber};
+use ruc::*;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use vsdb::MapxOrd;
 
 /// Key constants for the consensus state KV store
@@ -20,12 +22,47 @@ enum StateValue {
     AppHash(BlockHash),
 }
 
+/// File name for the persisted instance ID of the consensus state collection.
+const META_FILE: &str = "consensus_state.meta";
+
 /// Persistent consensus state store backed by vsdb
 pub struct PersistentConsensusState {
     store: MapxOrd<u64, StateValue>,
 }
 
 impl PersistentConsensusState {
+    /// Opens an existing consensus state store or creates a fresh one.
+    ///
+    /// Must be called after [`vsdb::vsdb_set_base_dir`].
+    /// The instance ID of the internal collection is stored in
+    /// `data_dir/consensus_state.meta` (8 bytes: one little-endian u64).
+    /// On first run the file is created; on subsequent runs the collection
+    /// is recovered via [`MapxOrd::from_meta`].
+    pub fn open(data_dir: &Path) -> Result<Self> {
+        let meta_path = data_dir.join(META_FILE);
+        if meta_path.exists() {
+            let bytes = std::fs::read(&meta_path).c(d!("read consensus_state.meta"))?;
+            if bytes.len() != 8 {
+                return Err(eg!(
+                    "corrupt consensus_state.meta: expected 8 bytes, got {}",
+                    bytes.len()
+                ));
+            }
+            let store_id = u64::from_le_bytes(bytes.try_into().unwrap());
+            Ok(Self {
+                store: MapxOrd::from_meta(store_id).c(d!("restore consensus store"))?,
+            })
+        } else {
+            let store: MapxOrd<u64, StateValue> = MapxOrd::new();
+            let store_id = store.save_meta().c(d!())?;
+            std::fs::write(&meta_path, store_id.to_le_bytes())
+                .c(d!("write consensus_state.meta"))?;
+            Ok(Self { store })
+        }
+    }
+
+    /// Creates a new in-memory consensus state without any persistent meta file.
+    /// Intended for unit tests only; use [`Self::open`] in production.
     pub fn new() -> Self {
         Self {
             store: MapxOrd::new(),

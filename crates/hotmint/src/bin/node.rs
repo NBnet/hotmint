@@ -266,11 +266,12 @@ async fn run_node(
     fs::create_dir_all(&data_dir).c(d!("create data dir"))?;
     vsdb::vsdb_set_base_dir(&data_dir).c(d!("set vsdb base dir"))?;
 
-    let store: Arc<RwLock<Box<dyn BlockStore>>> =
-        Arc::new(RwLock::new(Box::new(VsdbBlockStore::new())));
+    let store: Arc<RwLock<Box<dyn BlockStore>>> = Arc::new(RwLock::new(Box::new(
+        VsdbBlockStore::open(&data_dir).c(d!("open block store"))?,
+    )));
 
     // 6. Restore consensus state
-    let pcs = PersistentConsensusState::new();
+    let pcs = PersistentConsensusState::open(&data_dir).c(d!("open consensus state"))?;
     let mut state =
         ConsensusState::with_chain_id(our_vid, validator_set.clone(), &genesis.chain_id);
     if let Some(view) = pcs.load_current_view() {
