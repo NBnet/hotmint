@@ -25,7 +25,7 @@ const RPC_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum bytes per RPC line. Prevents OOM from clients sending huge data without newlines.
 const MAX_LINE_BYTES: usize = 1_048_576;
 /// Maximum submit_tx calls per second per connection (token bucket).
-const TX_RATE_LIMIT_PER_SEC: u32 = 100;
+pub(crate) const TX_RATE_LIMIT_PER_SEC: u32 = 100;
 
 /// Named consensus status shared via watch channel.
 #[derive(Debug, Clone, Copy)]
@@ -144,14 +144,14 @@ impl RpcServer {
 }
 
 /// Per-connection token-bucket rate limiter for submit_tx.
-struct TxRateLimiter {
+pub(crate) struct TxRateLimiter {
     tokens: u32,
     max_tokens: u32,
     last_refill: tokio::time::Instant,
 }
 
 impl TxRateLimiter {
-    fn new(rate_per_sec: u32) -> Self {
+    pub(crate) fn new(rate_per_sec: u32) -> Self {
         Self {
             tokens: rate_per_sec,
             max_tokens: rate_per_sec,
@@ -159,7 +159,7 @@ impl TxRateLimiter {
         }
     }
 
-    fn allow(&mut self) -> bool {
+    pub(crate) fn allow(&mut self) -> bool {
         let now = tokio::time::Instant::now();
         let elapsed = now.duration_since(self.last_refill);
         if elapsed >= Duration::from_secs(1) {
@@ -175,7 +175,7 @@ impl TxRateLimiter {
     }
 }
 
-async fn handle_request(
+pub(crate) async fn handle_request(
     state: &RpcState,
     line: &str,
     tx_limiter: &mut TxRateLimiter,
