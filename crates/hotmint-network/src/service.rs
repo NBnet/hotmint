@@ -779,13 +779,16 @@ impl NetworkService {
     async fn handle_litep2p_event(&mut self, event: Litep2pEvent) {
         match event {
             Litep2pEvent::ConnectionEstablished { peer, endpoint } => {
-                // Enforce total connection limit
-                if self.connected_peers.len() >= self.pex_config.max_peers {
+                // Enforce connection limit, but always admit validators.
+                // This prevents Eclipse attacks where an adversary fills all
+                // connection slots with Sybil nodes to isolate validators.
+                let is_validator = self.peer_map.peer_to_validator.contains_key(&peer);
+                if !is_validator && self.connected_peers.len() >= self.pex_config.max_peers {
                     warn!(
                         peer = %peer,
                         total = self.connected_peers.len(),
                         max = self.pex_config.max_peers,
-                        "connection limit reached, ignoring new peer"
+                        "connection limit reached, ignoring non-validator peer"
                     );
                     return;
                 }
