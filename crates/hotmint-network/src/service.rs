@@ -1024,4 +1024,16 @@ impl NetworkSink for Litep2pNetworkSink {
         // F-02: Use dedicated watch channel so epoch changes are never dropped.
         let _ = self.epoch_tx.send(Some((epoch, validators)));
     }
+
+    fn broadcast_evidence(&self, proof: &hotmint_types::evidence::EquivocationProof) {
+        let msg = ConsensusMessage::Evidence(proof.clone());
+        match codec::encode(&msg) {
+            Ok(bytes) => {
+                if let Err(e) = self.cmd_tx.try_send(NetCommand::Broadcast(bytes)) {
+                    warn!("broadcast_evidence cmd dropped: {e}");
+                }
+            }
+            Err(e) => warn!("broadcast_evidence encode failed: {e}"),
+        }
+    }
 }

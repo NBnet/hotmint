@@ -2,6 +2,7 @@ pub mod application;
 pub mod commit;
 pub mod engine;
 pub mod error;
+pub mod evidence_store;
 pub mod leader;
 pub mod metrics;
 pub mod network;
@@ -15,5 +16,6 @@ pub mod vote_collector;
 pub use engine::{
     ConsensusEngine, ConsensusEngineBuilder, EngineConfig, SharedBlockStore, StatePersistence,
 };
+pub use evidence_store::EvidenceStore;
 pub use pacemaker::PacemakerConfig;
 pub use state::ConsensusState;

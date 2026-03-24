@@ -107,6 +107,7 @@ fn spawn_node(
             verifier: Box::new(Ed25519Verifier),
             pacemaker: None,
             persistence: None,
+            evidence_store: None,
         },
     );
 
@@ -516,6 +517,7 @@ async fn test_equivocation_detected_via_injected_votes() {
                 verifier: Box::new(Ed25519Verifier),
                 pacemaker: None,
                 persistence: None,
+                evidence_store: None,
             },
         );
         handles.push(tokio::spawn(async move { engine.run().await }));

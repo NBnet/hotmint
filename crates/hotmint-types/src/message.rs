@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::block::Block;
 use crate::certificate::{DoubleCertificate, QuorumCertificate, TimeoutCertificate};
 use crate::crypto::Signature;
+use crate::evidence::EquivocationProof;
 use crate::validator::ValidatorId;
 use crate::view::ViewNumber;
 use crate::vote::Vote;
@@ -46,4 +47,7 @@ pub enum ConsensusMessage {
         validator: ValidatorId,
         signature: Signature,
     },
+
+    /// Evidence of validator equivocation (gossip)
+    Evidence(EquivocationProof),
 }

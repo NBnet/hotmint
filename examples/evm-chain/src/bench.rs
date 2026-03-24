@@ -185,6 +185,7 @@ async fn run_bench(label: &str, base_timeout_ms: u64) {
                     backoff_multiplier: 1.5,
                 }),
                 persistence: None,
+                evidence_store: None,
             },
         );
 

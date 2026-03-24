@@ -116,6 +116,7 @@ async fn ipc_consensus_e2e() {
                 verifier: Box::new(Ed25519Verifier),
                 pacemaker: None,
                 persistence: None,
+                evidence_store: None,
             },
         );
 

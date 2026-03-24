@@ -401,6 +401,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
                 backoff_multiplier: config.consensus.backoff_multiplier,
             }),
             persistence: Some(Box::new(pcs)),
+            evidence_store: None,
         },
     );
 

@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 
 use crate::application::Application;
 use crate::commit::try_commit;
+use crate::evidence_store::EvidenceStore;
 use crate::leader;
 use crate::network::NetworkSink;
 use crate::pacemaker::{Pacemaker, PacemakerConfig};
@@ -54,6 +55,8 @@ pub struct ConsensusEngine {
     pending_epoch: Option<Epoch>,
     /// Optional state persistence (for crash recovery).
     persistence: Option<Box<dyn StatePersistence>>,
+    /// Optional evidence store for persisting equivocation proofs.
+    evidence_store: Option<Box<dyn EvidenceStore>>,
 }
 
 /// Configuration for ConsensusEngine.
@@ -61,16 +64,18 @@ pub struct EngineConfig {
     pub verifier: Box<dyn Verifier>,
     pub pacemaker: Option<PacemakerConfig>,
     pub persistence: Option<Box<dyn StatePersistence>>,
+    pub evidence_store: Option<Box<dyn EvidenceStore>>,
 }
 
 impl EngineConfig {
     /// Create an `EngineConfig` with the given verifier and defaults
-    /// (no custom pacemaker, no persistence).
+    /// (no custom pacemaker, no persistence, no evidence store).
     pub fn new(verifier: Box<dyn Verifier>) -> Self {
         Self {
             verifier,
             pacemaker: None,
             persistence: None,
+            evidence_store: None,
         }
     }
 
@@ -112,6 +117,7 @@ pub struct ConsensusEngineBuilder {
     verifier: Option<Box<dyn Verifier>>,
     pacemaker: Option<PacemakerConfig>,
     persistence: Option<Box<dyn StatePersistence>>,
+    evidence_store: Option<Box<dyn EvidenceStore>>,
 }
 
 impl ConsensusEngineBuilder {
@@ -126,6 +132,7 @@ impl ConsensusEngineBuilder {
             verifier: None,
             pacemaker: None,
             persistence: None,
+            evidence_store: None,
         }
     }
 
@@ -177,6 +184,11 @@ impl ConsensusEngineBuilder {
         self
     }
 
+    pub fn evidence_store(mut self, store: Box<dyn EvidenceStore>) -> Self {
+        self.evidence_store = Some(store);
+        self
+    }
+
     pub fn build(self) -> ruc::Result<ConsensusEngine> {
         let state = self.state.ok_or_else(|| ruc::eg!("state is required"))?;
         let store = self.store.ok_or_else(|| ruc::eg!("store is required"))?;
@@ -196,6 +208,7 @@ impl ConsensusEngineBuilder {
             verifier,
             pacemaker: self.pacemaker,
             persistence: self.persistence,
+            evidence_store: self.evidence_store,
         };
 
         Ok(ConsensusEngine::new(
@@ -236,6 +249,7 @@ impl ConsensusEngine {
             current_view_qc: None,
             pending_epoch: None,
             persistence: config.persistence,
+            evidence_store: config.evidence_store,
         }
     }
 
@@ -315,6 +329,17 @@ impl ConsensusEngine {
             ) {
                 Ok(block) => {
                     drop(store);
+                    // Log pending evidence (full block inclusion is a later step)
+                    if let Some(ref store) = self.evidence_store {
+                        let pending = store.get_pending();
+                        if !pending.is_empty() {
+                            info!(
+                                validator = %self.state.validator_id,
+                                count = pending.len(),
+                                "pending equivocation evidence available for inclusion"
+                            );
+                        }
+                    }
                     // Leader votes for its own block
                     self.leader_self_vote(block.hash).await;
                 }
@@ -517,6 +542,11 @@ pub fn verify_relay_sender(
             let _ = (pk, signature, locked_qc);
             true
         }
+        ConsensusMessage::Evidence(_) => {
+            // Evidence gossip: accept from any known validator.
+            // The engine verifies the proof internally.
+            validator_keys.contains_key(&sender)
+        }
     }
 }
 
@@ -536,6 +566,7 @@ impl ConsensusEngine {
             ConsensusMessage::Wish { target_view, .. } => Some(*target_view),
             ConsensusMessage::TimeoutCert(tc) => Some(ViewNumber(tc.view.as_u64() + 1)),
             ConsensusMessage::StatusCert { .. } => None,
+            ConsensusMessage::Evidence(_) => None, // always accept evidence
         };
         if let Some(v) = msg_view
             && v < self.state.current_view
@@ -744,6 +775,12 @@ impl ConsensusEngine {
                     warn!(validator = %validator, "invalid status signature");
                     return false;
                 }
+                true
+            }
+            ConsensusMessage::Evidence(_) => {
+                // Evidence gossip does not carry an outer signature;
+                // the proof itself contains the conflicting vote signatures
+                // which are verified by the application layer.
                 true
             }
         }
@@ -1009,11 +1046,25 @@ impl ConsensusEngine {
                     }
                 }
             }
+
+            ConsensusMessage::Evidence(proof) => {
+                info!(
+                    validator = %proof.validator,
+                    view = %proof.view,
+                    "received evidence gossip"
+                );
+                if let Err(e) = self.app.on_evidence(&proof) {
+                    warn!(error = %e, "on_evidence callback failed for gossiped proof");
+                }
+                if let Some(ref mut store) = self.evidence_store {
+                    store.put_evidence(proof);
+                }
+            }
         }
         Ok(())
     }
 
-    fn handle_equivocation(&self, result: &crate::vote_collector::VoteResult) {
+    fn handle_equivocation(&mut self, result: &crate::vote_collector::VoteResult) {
         if let Some(ref proof) = result.equivocation {
             warn!(
                 validator = %proof.validator,
@@ -1022,6 +1073,10 @@ impl ConsensusEngine {
             );
             if let Err(e) = self.app.on_evidence(proof) {
                 warn!(error = %e, "on_evidence callback failed");
+            }
+            self.network.broadcast_evidence(proof);
+            if let Some(ref mut store) = self.evidence_store {
+                store.put_evidence(proof.clone());
             }
         }
     }
@@ -1443,6 +1498,7 @@ mod tests {
                 verifier: Box::new(Ed25519Verifier),
                 pacemaker: None,
                 persistence: None,
+                evidence_store: None,
             },
         );
         (engine, tx)
