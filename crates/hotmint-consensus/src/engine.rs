@@ -1275,10 +1275,15 @@ impl ConsensusEngine {
         // Epoch transition: apply pending validator set change when we reach the
         // epoch's start_view. The start_view is set deterministically (commit_view + 2)
         // so all honest nodes apply the transition at the same view.
-        if let Some(ref epoch) = self.pending_epoch
-            && new_view >= epoch.start_view
+        if self
+            .pending_epoch
+            .as_ref()
+            .is_some_and(|e| new_view >= e.start_view)
         {
-            let new_epoch = self.pending_epoch.take().unwrap();
+            // SAFETY: we just verified `pending_epoch` is `Some` above.
+            let Some(new_epoch) = self.pending_epoch.take() else {
+                unreachable!("pending_epoch was Some in the condition check");
+            };
             info!(
                 validator = %self.state.validator_id,
                 old_epoch = %self.state.current_epoch.number,
