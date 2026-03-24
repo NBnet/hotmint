@@ -83,6 +83,7 @@ fn bench_aggregate_verify(c: &mut Criterion) {
                 validator: s.validator_id(),
                 signature: s.sign(&bytes),
                 vote_type: VoteType::Vote,
+                extension: None,
             }
         })
         .collect();

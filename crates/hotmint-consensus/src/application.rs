@@ -1,8 +1,10 @@
 use ruc::*;
 
 use hotmint_types::Block;
+use hotmint_types::block::BlockHash;
 use hotmint_types::context::{BlockContext, TxContext};
 use hotmint_types::evidence::EquivocationProof;
+use hotmint_types::validator::ValidatorId;
 use hotmint_types::validator_update::EndBlockResponse;
 
 /// Result of transaction validation, including priority for mempool ordering.
@@ -96,6 +98,25 @@ pub trait Application: Send + Sync {
     /// The application can use this to implement slashing.
     fn on_evidence(&self, _proof: &EquivocationProof) -> Result<()> {
         Ok(())
+    }
+
+    /// Generate a vote extension for the given block (ABCI++ Vote Extensions).
+    /// Called before casting a Vote2 (second-phase vote).
+    /// Returns None to skip extension (default behavior).
+    fn extend_vote(&self, _block: &Block, _ctx: &BlockContext) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Verify a vote extension received from another validator.
+    /// Called when processing Vote2 messages that carry extensions.
+    /// Returns true if the extension is valid (default: accept all).
+    fn verify_vote_extension(
+        &self,
+        _extension: &[u8],
+        _block_hash: &BlockHash,
+        _validator: ValidatorId,
+    ) -> bool {
+        true
     }
 
     /// Query application state (returns opaque bytes).

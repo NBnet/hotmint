@@ -369,6 +369,7 @@ impl ConsensusEngine {
             validator: self.state.validator_id,
             signature,
             vote_type: VoteType::Vote,
+            extension: None,
         };
         match self.vote_collector.add_vote(
             &self.state.validator_set,
@@ -919,9 +920,10 @@ impl ConsensusEngine {
                     // store. Prevents locking onto a block whose app_hash diverges from
                     // our local state. When the block is absent (node caught up via TC),
                     // we defer to the QC's 2f+1 signatures for safety.
+                    let store = self.store.read().await;
+                    let block_opt = store.get_block(&certificate.block_hash);
                     if self.app.tracks_app_hash() {
-                        let store = self.store.read().await;
-                        if let Some(block) = store.get_block(&certificate.block_hash)
+                        if let Some(ref block) = block_opt
                             && block.app_hash != self.state.last_app_hash
                         {
                             warn!(
@@ -932,11 +934,28 @@ impl ConsensusEngine {
                             return Ok(());
                         }
                     }
+
+                    // Generate vote extension for Vote2 (ABCI++ Vote Extensions).
+                    // Only if we have the block available and have voting power.
+                    let vote_extension = block_opt.and_then(|block| {
+                        let ctx = BlockContext {
+                            height: block.height,
+                            view: self.state.current_view,
+                            proposer: block.proposer,
+                            epoch: self.state.current_epoch.number,
+                            epoch_start_view: self.state.current_epoch.start_view,
+                            validator_set: &self.state.validator_set,
+                        };
+                        self.app.extend_vote(&block, &ctx)
+                    });
+                    drop(store);
+
                     view_protocol::on_prepare(
                         &mut self.state,
                         certificate,
                         self.network.as_ref(),
                         self.signer.as_ref(),
+                        vote_extension,
                     );
                 }
             }
@@ -945,6 +964,23 @@ impl ConsensusEngine {
                 if vote.view != self.state.current_view {
                     return Ok(());
                 }
+
+                // Verify vote extension (ABCI++ Vote Extensions) if present.
+                if let Some(ref ext) = vote.extension {
+                    if !self.app.verify_vote_extension(
+                        ext,
+                        &vote.block_hash,
+                        vote.validator,
+                    ) {
+                        warn!(
+                            validator = %vote.validator,
+                            view = %vote.view,
+                            "rejecting vote2: invalid vote extension"
+                        );
+                        return Ok(());
+                    }
+                }
+
                 let result = self
                     .vote_collector
                     .add_vote(
@@ -1093,6 +1129,21 @@ impl ConsensusEngine {
         );
 
         // Leader also does vote2 for its own prepare (self-vote for step 5)
+        // Generate vote extension (ABCI++ Vote Extensions) if the block is available.
+        let vote_extension = {
+            let store = self.store.read().await;
+            store.get_block(&qc.block_hash).and_then(|block| {
+                let ctx = BlockContext {
+                    height: block.height,
+                    view: self.state.current_view,
+                    proposer: block.proposer,
+                    epoch: self.state.current_epoch.number,
+                    epoch_start_view: self.state.current_epoch.start_view,
+                    validator_set: &self.state.validator_set,
+                };
+                self.app.extend_vote(&block, &ctx)
+            })
+        };
         let vote_bytes = Vote::signing_bytes(
             &self.state.chain_id_hash,
             self.state.current_epoch.number,
@@ -1107,6 +1158,7 @@ impl ConsensusEngine {
             validator: self.state.validator_id,
             signature,
             vote_type: VoteType::Vote2,
+            extension: vote_extension,
         };
 
         // Lock on this QC

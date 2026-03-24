@@ -72,6 +72,7 @@ mod tests {
                     validator: s.validator_id(),
                     signature: s.sign(&bytes),
                     vote_type: VoteType::Vote,
+                    extension: None,
                 }
             })
             .collect();
@@ -98,6 +99,7 @@ mod tests {
                     validator: s.validator_id(),
                     signature: s.sign(&bytes),
                     vote_type: VoteType::Vote,
+                    extension: None,
                 }
             })
             .collect();
@@ -125,6 +127,7 @@ mod tests {
             validator: ValidatorId(99),
             signature: unknown_signer.sign(&bytes),
             vote_type: VoteType::Vote,
+            extension: None,
         };
         assert!(aggregate_votes(&vs, &[vote]).is_err());
     }

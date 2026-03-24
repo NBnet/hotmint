@@ -331,6 +331,7 @@ pub fn on_proposal(
             validator: state.validator_id,
             signature,
             vote_type: VoteType::Vote,
+            extension: None,
         };
 
         let leader_id = state
@@ -379,11 +380,16 @@ pub fn on_votes_collected(
 }
 
 /// Execute step (5): Replica receives prepare → update lock → send vote2 to next leader
+///
+/// `vote_extension` is an optional ABCI++ vote extension to attach to the
+/// Vote2 message.  The caller (engine) is responsible for generating the
+/// extension via `Application::extend_vote` before invoking this function.
 pub fn on_prepare(
     state: &mut ConsensusState,
     qc: QuorumCertificate,
     network: &dyn NetworkSink,
     signer: &dyn Signer,
+    vote_extension: Option<Vec<u8>>,
 ) {
     // Update lock to this QC
     state.update_locked_qc(&qc);
@@ -405,6 +411,7 @@ pub fn on_prepare(
             validator: state.validator_id,
             signature,
             vote_type: VoteType::Vote2,
+            extension: vote_extension,
         };
 
         let next_leader_id = leader::next_leader(&state.validator_set, state.current_view);

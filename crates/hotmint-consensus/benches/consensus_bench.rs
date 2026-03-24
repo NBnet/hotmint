@@ -40,6 +40,7 @@ fn bench_vote_collection_4(c: &mut Criterion) {
                 validator: s.validator_id(),
                 signature: s.sign(&bytes),
                 vote_type: VoteType::Vote,
+                extension: None,
             }
         })
         .collect();
@@ -72,6 +73,7 @@ fn bench_vote_collection_100(c: &mut Criterion) {
                 validator: s.validator_id(),
                 signature: s.sign(&bytes),
                 vote_type: VoteType::Vote,
+                extension: None,
             }
         })
         .collect();

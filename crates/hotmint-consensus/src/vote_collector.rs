@@ -142,6 +142,7 @@ mod tests {
             validator: signer.validator_id(),
             signature: signer.sign(&bytes),
             vote_type,
+            extension: None,
         }
     }
 

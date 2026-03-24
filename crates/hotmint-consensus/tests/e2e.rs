@@ -463,6 +463,7 @@ async fn test_equivocation_detected_via_injected_votes() {
         validator: signers[0].validator_id(),
         signature: signers[0].sign(&bytes_a),
         vote_type: VoteType::Vote,
+        extension: None,
     };
     let vote_b = Vote {
         block_hash: hash_b,
@@ -470,6 +471,7 @@ async fn test_equivocation_detected_via_injected_votes() {
         validator: signers[0].validator_id(),
         signature: signers[0].sign(&bytes_b),
         vote_type: VoteType::Vote,
+        extension: None,
     };
 
     // Create channels manually so we can pre-load V1's queue

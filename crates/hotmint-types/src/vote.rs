@@ -21,6 +21,10 @@ pub struct Vote {
     pub validator: ValidatorId,
     pub signature: Signature,
     pub vote_type: VoteType,
+    /// Optional vote extension data (ABCI++ Vote Extensions).
+    /// Only meaningful for Vote2 (second-phase votes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extension: Option<Vec<u8>>,
 }
 
 impl Vote {
