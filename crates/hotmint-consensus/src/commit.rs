@@ -115,12 +115,25 @@ pub fn try_commit(
         info!(height = block.height.as_u64(), hash = %block.hash, "committing block");
 
         let txs = decode_payload(&block.payload);
-        let response = app
-            .execute_block(&txs, &ctx)
-            .c(d!("execute_block failed"))?;
+        // A committed block MUST be executed successfully. If the application
+        // returns an error here, the node's state is irrecoverably corrupted
+        // (partial batch commit). Panicking causes a restart from persistent
+        // state, which is safer than continuing with a diverged app_hash.
+        let response = app.execute_block(&txs, &ctx).unwrap_or_else(|e| {
+            panic!(
+                "FATAL: execute_block failed for committed block height={} hash={}: {:?}. \
+                 Node state is corrupt; restart from last committed height.",
+                block.height, block.hash, e
+            )
+        });
 
-        app.on_commit(block, &ctx)
-            .c(d!("application commit failed"))?;
+        app.on_commit(block, &ctx).unwrap_or_else(|e| {
+            panic!(
+                "FATAL: on_commit failed for committed block height={} hash={}: {:?}. \
+                 Node state is corrupt; restart from last committed height.",
+                block.height, block.hash, e
+            )
+        });
 
         // When the application does not track state roots, carry the block's
         // authoritative app_hash forward so the engine state stays coherent
