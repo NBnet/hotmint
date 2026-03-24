@@ -802,7 +802,11 @@ impl Application for AppWithStatus {
         self.inner.validate_block(block, ctx)
     }
 
-    fn validate_tx(&self, tx: &[u8], ctx: Option<&hotmint_types::context::TxContext>) -> TxValidationResult {
+    fn validate_tx(
+        &self,
+        tx: &[u8],
+        ctx: Option<&hotmint_types::context::TxContext>,
+    ) -> TxValidationResult {
         self.inner.validate_tx(tx, ctx)
     }
 
@@ -863,7 +867,11 @@ impl Application for ArcApp {
     fn validate_block(&self, block: &Block, ctx: &BlockContext) -> bool {
         self.0.validate_block(block, ctx)
     }
-    fn validate_tx(&self, tx: &[u8], ctx: Option<&hotmint_types::context::TxContext>) -> TxValidationResult {
+    fn validate_tx(
+        &self,
+        tx: &[u8],
+        ctx: Option<&hotmint_types::context::TxContext>,
+    ) -> TxValidationResult {
         self.0.validate_tx(tx, ctx)
     }
     fn execute_block(&self, txs: &[&[u8]], ctx: &BlockContext) -> Result<EndBlockResponse> {

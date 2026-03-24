@@ -25,6 +25,12 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, trace, warn};
 
+/// Type alias for the epoch update payload: (EpochNumber, validator public keys).
+type EpochUpdate = Option<(
+    EpochNumber,
+    Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>,
+)>;
+
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -162,12 +168,7 @@ pub struct NetworkService {
     seen_active: HashSet<u64>,
     seen_backup: HashSet<u64>,
     /// Reliable channel for epoch changes (F-02).
-    epoch_rx: watch::Receiver<
-        Option<(
-            EpochNumber,
-            Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>,
-        )>,
-    >,
+    epoch_rx: watch::Receiver<EpochUpdate>,
     /// Per-peer rate limiting for PEX requests (F-09).
     pex_rate_limit: HashMap<PeerId, Instant>,
 }
@@ -942,12 +943,7 @@ impl NetworkService {
 #[derive(Clone)]
 pub struct Litep2pNetworkSink {
     cmd_tx: mpsc::Sender<NetCommand>,
-    epoch_tx: watch::Sender<
-        Option<(
-            EpochNumber,
-            Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>,
-        )>,
-    >,
+    epoch_tx: watch::Sender<EpochUpdate>,
 }
 
 impl Litep2pNetworkSink {

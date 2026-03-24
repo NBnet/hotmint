@@ -11,7 +11,7 @@ use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
-use crate::rpc::{RpcState, TxRateLimiter, TX_RATE_LIMIT_PER_SEC, handle_request};
+use crate::rpc::{RpcState, TX_RATE_LIMIT_PER_SEC, TxRateLimiter, handle_request};
 use crate::types::RpcResponse;
 
 /// Events broadcast to WebSocket subscribers.

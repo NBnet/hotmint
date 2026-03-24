@@ -922,17 +922,16 @@ impl ConsensusEngine {
                     // we defer to the QC's 2f+1 signatures for safety.
                     let store = self.store.read().await;
                     let block_opt = store.get_block(&certificate.block_hash);
-                    if self.app.tracks_app_hash() {
-                        if let Some(ref block) = block_opt
-                            && block.app_hash != self.state.last_app_hash
-                        {
-                            warn!(
-                                block_app_hash = %block.app_hash,
-                                local_app_hash = %self.state.last_app_hash,
-                                "prepare block app_hash mismatch, ignoring"
-                            );
-                            return Ok(());
-                        }
+                    if self.app.tracks_app_hash()
+                        && let Some(ref block) = block_opt
+                        && block.app_hash != self.state.last_app_hash
+                    {
+                        warn!(
+                            block_app_hash = %block.app_hash,
+                            local_app_hash = %self.state.last_app_hash,
+                            "prepare block app_hash mismatch, ignoring"
+                        );
+                        return Ok(());
                     }
 
                     // Generate vote extension for Vote2 (ABCI++ Vote Extensions).
@@ -966,19 +965,17 @@ impl ConsensusEngine {
                 }
 
                 // Verify vote extension (ABCI++ Vote Extensions) if present.
-                if let Some(ref ext) = vote.extension {
-                    if !self.app.verify_vote_extension(
-                        ext,
-                        &vote.block_hash,
-                        vote.validator,
-                    ) {
-                        warn!(
-                            validator = %vote.validator,
-                            view = %vote.view,
-                            "rejecting vote2: invalid vote extension"
-                        );
-                        return Ok(());
-                    }
+                if let Some(ref ext) = vote.extension
+                    && !self
+                        .app
+                        .verify_vote_extension(ext, &vote.block_hash, vote.validator)
+                {
+                    warn!(
+                        validator = %vote.validator,
+                        view = %vote.view,
+                        "rejecting vote2: invalid vote extension"
+                    );
+                    return Ok(());
                 }
 
                 let result = self

@@ -122,9 +122,9 @@ impl LightClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hotmint_crypto::aggregate::aggregate_votes;
     use hotmint_crypto::Ed25519Signer;
     use hotmint_crypto::Ed25519Verifier;
+    use hotmint_crypto::aggregate::aggregate_votes;
     use hotmint_types::crypto::Signer;
     use hotmint_types::epoch::EpochNumber;
     use hotmint_types::validator::ValidatorInfo;
@@ -169,13 +169,8 @@ mod tests {
             .iter()
             .take(count)
             .map(|s| {
-                let bytes = Vote::signing_bytes(
-                    &TEST_CHAIN,
-                    epoch,
-                    view,
-                    &block_hash,
-                    VoteType::Vote,
-                );
+                let bytes =
+                    Vote::signing_bytes(&TEST_CHAIN, epoch, view, &block_hash, VoteType::Vote);
                 hotmint_types::vote::Vote {
                     block_hash,
                     view,

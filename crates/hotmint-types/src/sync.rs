@@ -21,10 +21,7 @@ pub enum SyncRequest {
     /// Request the list of available state snapshots
     GetSnapshots,
     /// Request a specific chunk of a snapshot at the given height
-    GetSnapshotChunk {
-        height: Height,
-        chunk_index: u32,
-    },
+    GetSnapshotChunk { height: Height, chunk_index: u32 },
 }
 
 /// Sync response from a node serving blocks

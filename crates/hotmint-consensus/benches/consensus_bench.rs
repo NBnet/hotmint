@@ -49,7 +49,7 @@ fn bench_vote_collection_4(c: &mut Criterion) {
         b.iter(|| {
             let mut vc = VoteCollector::new();
             for vote in &votes {
-                vc.add_vote(black_box(&vs), black_box(vote.clone()))
+                vc.add_vote(black_box(&vs), black_box(vote.clone()), EpochNumber(0))
                     .unwrap();
             }
         })
@@ -82,7 +82,7 @@ fn bench_vote_collection_100(c: &mut Criterion) {
         b.iter(|| {
             let mut vc = VoteCollector::new();
             for vote in &votes {
-                vc.add_vote(black_box(&vs), black_box(vote.clone()))
+                vc.add_vote(black_box(&vs), black_box(vote.clone()), EpochNumber(0))
                     .unwrap();
             }
         })

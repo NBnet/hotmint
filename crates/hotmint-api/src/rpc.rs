@@ -126,8 +126,7 @@ impl RpcServer {
                                 }
                                 _ => break, // EOF or timeout
                             };
-                            let response =
-                                handle_request(&state, &line, &mut tx_limiter).await;
+                            let response = handle_request(&state, &line, &mut tx_limiter).await;
                             let mut json = serde_json::to_string(&response).unwrap_or_default();
                             json.push('\n');
                             if writer.write_all(json.as_bytes()).await.is_err() {

@@ -326,14 +326,35 @@ mod tests {
         // V3 should be selected ~70% of the time
         let vs = make_vs(&[10, 10, 10, 70]);
         // Slots 0..9 → V0, 10..19 → V1, 20..29 → V2, 30..99 → V3
-        assert_eq!(vs.leader_for_view(ViewNumber(0)).unwrap().id, ValidatorId(0));
-        assert_eq!(vs.leader_for_view(ViewNumber(9)).unwrap().id, ValidatorId(0));
-        assert_eq!(vs.leader_for_view(ViewNumber(10)).unwrap().id, ValidatorId(1));
-        assert_eq!(vs.leader_for_view(ViewNumber(20)).unwrap().id, ValidatorId(2));
-        assert_eq!(vs.leader_for_view(ViewNumber(30)).unwrap().id, ValidatorId(3));
-        assert_eq!(vs.leader_for_view(ViewNumber(99)).unwrap().id, ValidatorId(3));
+        assert_eq!(
+            vs.leader_for_view(ViewNumber(0)).unwrap().id,
+            ValidatorId(0)
+        );
+        assert_eq!(
+            vs.leader_for_view(ViewNumber(9)).unwrap().id,
+            ValidatorId(0)
+        );
+        assert_eq!(
+            vs.leader_for_view(ViewNumber(10)).unwrap().id,
+            ValidatorId(1)
+        );
+        assert_eq!(
+            vs.leader_for_view(ViewNumber(20)).unwrap().id,
+            ValidatorId(2)
+        );
+        assert_eq!(
+            vs.leader_for_view(ViewNumber(30)).unwrap().id,
+            ValidatorId(3)
+        );
+        assert_eq!(
+            vs.leader_for_view(ViewNumber(99)).unwrap().id,
+            ValidatorId(3)
+        );
         // Wrap around: view 100 → slot 0 → V0
-        assert_eq!(vs.leader_for_view(ViewNumber(100)).unwrap().id, ValidatorId(0));
+        assert_eq!(
+            vs.leader_for_view(ViewNumber(100)).unwrap().id,
+            ValidatorId(0)
+        );
     }
 
     #[test]

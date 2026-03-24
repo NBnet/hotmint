@@ -52,11 +52,9 @@ pub async fn sync_to_tip(
         })) => peer_height,
         Ok(Some(SyncResponse::Error(e))) => return Err(eg!("peer error: {}", e)),
         Ok(Some(SyncResponse::Blocks(_))) => return Err(eg!("unexpected blocks response")),
-        Ok(Some(SyncResponse::Snapshots(_))) => {
-            return Err(eg!("unexpected snapshots response"))
-        }
+        Ok(Some(SyncResponse::Snapshots(_))) => return Err(eg!("unexpected snapshots response")),
         Ok(Some(SyncResponse::SnapshotChunk { .. })) => {
-            return Err(eg!("unexpected snapshot chunk response"))
+            return Err(eg!("unexpected snapshot chunk response"));
         }
         Ok(None) => return Err(eg!("sync channel closed")),
         Err(_) => {
@@ -101,10 +99,10 @@ pub async fn sync_to_tip(
             Ok(Some(SyncResponse::Error(e))) => return Err(eg!("peer error: {}", e)),
             Ok(Some(SyncResponse::Status { .. })) => return Err(eg!("unexpected status response")),
             Ok(Some(SyncResponse::Snapshots(_))) => {
-                return Err(eg!("unexpected snapshots response"))
+                return Err(eg!("unexpected snapshots response"));
             }
             Ok(Some(SyncResponse::SnapshotChunk { .. })) => {
-                return Err(eg!("unexpected snapshot chunk response"))
+                return Err(eg!("unexpected snapshot chunk response"));
             }
             Ok(None) => return Err(eg!("sync channel closed")),
             Err(_) => return Err(eg!("sync request timed out")),
@@ -236,7 +234,10 @@ pub async fn sync_via_snapshot(
             ChunkApplyResult::Retry => {
                 // For now, treat retry as a fatal error; a more sophisticated
                 // implementation could retry the chunk download.
-                warn!(chunk = chunk_index, "application requested chunk retry — aborting snapshot sync");
+                warn!(
+                    chunk = chunk_index,
+                    "application requested chunk retry — aborting snapshot sync"
+                );
                 return Err(eg!(
                     "snapshot chunk {} apply requested retry (not yet supported)",
                     chunk_index
@@ -257,10 +258,7 @@ pub async fn sync_via_snapshot(
     // (the application should set its own state root internally).
     *state.last_app_hash = BlockHash(snapshot.hash);
 
-    info!(
-        height = snapshot.height.as_u64(),
-        "snapshot sync complete"
-    );
+    info!(height = snapshot.height.as_u64(), "snapshot sync complete");
     Ok(true)
 }
 
