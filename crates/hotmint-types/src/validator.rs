@@ -124,14 +124,27 @@ impl ValidatorSet {
         self.total_power - self.quorum_threshold()
     }
 
-    /// Round-robin leader selection: v mod n.
+    /// Power-weighted leader selection.
+    ///
+    /// Maps `view` into the range `[0, total_power)` and picks the validator
+    /// whose cumulative power range contains that slot.  A validator with
+    /// twice the power of another will be selected roughly twice as often.
+    ///
     /// Returns `None` if the validator set is empty.
     pub fn leader_for_view(&self, view: ViewNumber) -> Option<&ValidatorInfo> {
-        if self.validators.is_empty() {
+        if self.validators.is_empty() || self.total_power == 0 {
             return None;
         }
-        let idx = (view.as_u64() as usize) % self.validators.len();
-        Some(&self.validators[idx])
+        let slot = view.as_u64() % self.total_power;
+        let mut cumulative = 0u64;
+        for vi in &self.validators {
+            cumulative += vi.power;
+            if slot < cumulative {
+                return Some(vi);
+            }
+        }
+        // Fallback (should be unreachable with valid total_power)
+        self.validators.last()
     }
 
     pub fn validator_count(&self) -> usize {
@@ -305,6 +318,22 @@ mod tests {
         assert_eq!(new_vs.validator_count(), 4);
         assert_eq!(new_vs.power_of(ValidatorId(0)), 10);
         assert_eq!(new_vs.total_power(), 13);
+    }
+
+    #[test]
+    fn test_leader_weighted() {
+        // Powers: V0=10, V1=10, V2=10, V3=70 → total=100
+        // V3 should be selected ~70% of the time
+        let vs = make_vs(&[10, 10, 10, 70]);
+        // Slots 0..9 → V0, 10..19 → V1, 20..29 → V2, 30..99 → V3
+        assert_eq!(vs.leader_for_view(ViewNumber(0)).unwrap().id, ValidatorId(0));
+        assert_eq!(vs.leader_for_view(ViewNumber(9)).unwrap().id, ValidatorId(0));
+        assert_eq!(vs.leader_for_view(ViewNumber(10)).unwrap().id, ValidatorId(1));
+        assert_eq!(vs.leader_for_view(ViewNumber(20)).unwrap().id, ValidatorId(2));
+        assert_eq!(vs.leader_for_view(ViewNumber(30)).unwrap().id, ValidatorId(3));
+        assert_eq!(vs.leader_for_view(ViewNumber(99)).unwrap().id, ValidatorId(3));
+        // Wrap around: view 100 → slot 0 → V0
+        assert_eq!(vs.leader_for_view(ViewNumber(100)).unwrap().id, ValidatorId(0));
     }
 
     #[test]
