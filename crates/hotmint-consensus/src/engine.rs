@@ -555,6 +555,10 @@ impl ConsensusEngine {
     /// Verify the cryptographic signature on an inbound consensus message.
     /// Returns false (and logs a warning) if verification fails.
     /// Messages from past views are skipped (they'll be dropped by handle_message anyway).
+    ///
+    /// Crypto-heavy paths (aggregate signature verification) are run via
+    /// `tokio::task::block_in_place` so the async event loop remains responsive
+    /// while Ed25519 batch verification runs on the current OS thread.
     fn verify_message(&self, msg: &ConsensusMessage) -> bool {
         // Skip verification for non-Propose past-view messages — these may have
         // been signed by a previous epoch's validator set. They'll be dropped by
@@ -792,7 +796,12 @@ impl ConsensusEngine {
         _sender: Option<ValidatorId>,
         msg: ConsensusMessage,
     ) -> Result<()> {
-        if !self.verify_message(&msg) {
+        // Run signature verification in a blocking context so that the tokio
+        // event loop is not stalled by CPU-intensive Ed25519 batch operations.
+        // block_in_place yields the current thread to the scheduler while the
+        // blocking work runs, keeping timers and I/O tasks responsive.
+        let verified = tokio::task::block_in_place(|| self.verify_message(&msg));
+        if !verified {
             return Ok(());
         }
 
@@ -810,7 +819,7 @@ impl ConsensusEngine {
                 // If proposal is from a future view, advance to it first
                 if block.view > self.state.current_view {
                     if let Some(ref dc) = double_cert {
-                        if !self.validate_double_cert(dc) {
+                        if !tokio::task::block_in_place(|| self.validate_double_cert(dc)) {
                             return Ok(());
                         }
 
@@ -846,7 +855,7 @@ impl ConsensusEngine {
                 // passes the DC straight to on_proposal → try_commit without verification.
                 // A Byzantine leader could inject a forged DC to trigger incorrect commits.
                 if let Some(ref dc) = double_cert
-                    && !self.validate_double_cert(dc)
+                    && !tokio::task::block_in_place(|| self.validate_double_cert(dc))
                 {
                     return Ok(());
                 }
@@ -1010,11 +1019,13 @@ impl ConsensusEngine {
                         &qc.block_hash,
                         VoteType::Vote,
                     );
-                    if !self.verifier.verify_aggregate(
-                        &self.state.validator_set,
-                        &qc_bytes,
-                        &qc.aggregate_signature,
-                    ) {
+                    if !tokio::task::block_in_place(|| {
+                        self.verifier.verify_aggregate(
+                            &self.state.validator_set,
+                            &qc_bytes,
+                            &qc.aggregate_signature,
+                        )
+                    }) {
                         warn!(validator = %validator, "wish carries invalid highest_qc signature");
                         return Ok(());
                     }

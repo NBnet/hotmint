@@ -100,7 +100,7 @@ fn spawn_network(n: u64) -> (Vec<Arc<AtomicU64>>, Vec<tokio::task::JoinHandle<()
     (counters, handles)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_four_node_consensus_commits_blocks() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
@@ -139,7 +139,7 @@ async fn test_four_node_consensus_commits_blocks() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_consensus_tolerates_one_silent_validator() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)

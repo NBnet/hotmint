@@ -149,7 +149,7 @@ impl Application for CountingApp {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_basic_four_node_dynamic_network() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
@@ -225,7 +225,7 @@ impl Application for ValidatorJoinApp {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_validator_join() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
@@ -341,7 +341,7 @@ impl Application for ValidatorLeaveApp {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_validator_leave() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
@@ -423,7 +423,7 @@ impl Application for EquivocationWatchApp {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_equivocation_detected_via_injected_votes() {
     use hotmint_types::epoch::EpochNumber;
     use hotmint_types::vote::VoteType;
@@ -572,7 +572,7 @@ impl Application for EpochTrackingApp {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_epoch_transition_increments_correctly() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
@@ -677,7 +677,7 @@ impl Application for MultiEpochApp {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_multiple_consecutive_epoch_transitions() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
@@ -734,7 +734,7 @@ async fn test_multiple_consecutive_epoch_transitions() {
 // TEST 7: Node crash — one node crashes mid-run, others continue
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_node_crash_does_not_halt_consensus() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
@@ -820,7 +820,7 @@ impl Application for TwoRemoveApp {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_validator_set_shrinks_to_two_nodes() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
