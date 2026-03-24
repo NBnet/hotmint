@@ -83,3 +83,23 @@ pub struct EpochInfo {
 pub struct TxResult {
     pub accepted: bool,
 }
+
+/// Block header info returned by get_header (lightweight, no payload)
+#[derive(Debug, Serialize)]
+pub struct HeaderInfo {
+    pub height: u64,
+    pub hash: String,
+    pub parent_hash: String,
+    pub view: u64,
+    pub proposer: u64,
+    pub app_hash: String,
+}
+
+/// Commit QC info returned by get_commit_qc
+#[derive(Debug, Serialize)]
+pub struct CommitQcInfo {
+    pub block_hash: String,
+    pub view: u64,
+    pub signer_count: usize,
+    pub epoch: u64,
+}

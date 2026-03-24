@@ -7,7 +7,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::types::{
-    BlockInfo, EpochInfo, RpcRequest, RpcResponse, StatusInfo, TxResult, ValidatorInfoResponse,
+    BlockInfo, CommitQcInfo, EpochInfo, HeaderInfo, RpcRequest, RpcResponse, StatusInfo, TxResult,
+    ValidatorInfoResponse,
 };
 use hotmint_consensus::application::Application;
 use hotmint_consensus::store::BlockStore;
@@ -294,6 +295,68 @@ pub(crate) async fn handle_request(
         "get_peers" => {
             let peers = state.peer_info_rx.borrow().clone();
             json_ok(req.id, &peers)
+        }
+
+        "get_header" => {
+            let height = match req.params.get("height").and_then(|v| v.as_u64()) {
+                Some(h) => h,
+                None => {
+                    return RpcResponse::err(
+                        req.id,
+                        -32602,
+                        "missing or invalid 'height' parameter".to_string(),
+                    );
+                }
+            };
+            let store = state.store.read().await;
+            match store.get_block_by_height(Height(height)) {
+                Some(block) => {
+                    let info = HeaderInfo {
+                        height: block.height.as_u64(),
+                        hash: hex_encode(&block.hash.0),
+                        parent_hash: hex_encode(&block.parent_hash.0),
+                        view: block.view.as_u64(),
+                        proposer: block.proposer.0,
+                        app_hash: hex_encode(&block.app_hash.0),
+                    };
+                    json_ok(req.id, &info)
+                }
+                None => RpcResponse::err(
+                    req.id,
+                    -32602,
+                    format!("block at height {height} not found"),
+                ),
+            }
+        }
+
+        "get_commit_qc" => {
+            let height = match req.params.get("height").and_then(|v| v.as_u64()) {
+                Some(h) => h,
+                None => {
+                    return RpcResponse::err(
+                        req.id,
+                        -32602,
+                        "missing or invalid 'height' parameter".to_string(),
+                    );
+                }
+            };
+            let store = state.store.read().await;
+            match store.get_commit_qc(Height(height)) {
+                Some(qc) => {
+                    let info = CommitQcInfo {
+                        block_hash: hex_encode(&qc.block_hash.0),
+                        view: qc.view.as_u64(),
+                        signer_count: qc.aggregate_signature.count(),
+                        epoch: qc.epoch.as_u64(),
+                    };
+                    json_ok(req.id, &info)
+                }
+                None => RpcResponse::err(
+                    req.id,
+                    -32602,
+                    format!("commit QC at height {height} not found"),
+                ),
+            }
         }
 
         _ => RpcResponse::err(req.id, -32601, format!("unknown method: {}", req.method)),

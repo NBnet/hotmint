@@ -1,0 +1,17 @@
+[package]
+name = "hotmint-light"
+description = "Light client verification for Hotmint BFT consensus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+
+[dependencies]
+hotmint-types.workspace = true
+hotmint-crypto.workspace = true
+ruc.workspace = true
+
+[dev-dependencies]
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
