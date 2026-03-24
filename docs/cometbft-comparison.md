@@ -207,7 +207,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ### 🔴 Critical — 安全漏洞（阻塞正式上线）
 
-#### [ ] C-1. Eclipse 攻击：P2P 验证者连接槽缺乏保护 `[安全漏洞]`
+#### [x] C-1. Eclipse 攻击：P2P 验证者连接槽缺乏保护 `[安全漏洞]`
 
 **位置：** `crates/hotmint-network/src/service.rs`
 
@@ -222,7 +222,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] C-2. FIFO Mempool DoS：垃圾交易阻断合法交易 `[安全漏洞 × 功能缺失]`
+#### [x] C-2. FIFO Mempool DoS：垃圾交易阻断合法交易 `[安全漏洞 × 功能缺失]`
 
 **位置：** `crates/hotmint-mempool/src/lib.rs`、`crates/hotmint-api/src/rpc.rs`
 
@@ -242,7 +242,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] C-3. 证据广播缺失：双签者可免于惩罚 `[安全漏洞 × 功能缺失]`
+#### [x] C-3. 证据广播缺失：双签者可免于惩罚 `[安全漏洞 × 功能缺失]`
 
 **位置：** `crates/hotmint-consensus/src/vote_collector.rs`、`crates/hotmint-consensus/src/engine.rs`（约第 991 行）
 
@@ -262,7 +262,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ### 🟡 High — 工程安全（生产部署前应修复）
 
-#### [ ] H-1. O(N) 签名验证 CPU DoS 风险 `[安全漏洞]`
+#### [x] H-1. O(N) 签名验证 CPU DoS 风险 `[安全漏洞]`
 
 **位置：** `crates/hotmint-crypto/src/aggregate.rs`
 
@@ -278,7 +278,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] H-2. `pending_epoch` 强制解包 Panic 向量 `[工程缺陷]`
+#### [x] H-2. `pending_epoch` 强制解包 Panic 向量 `[工程缺陷]`
 
 **位置：** `crates/hotmint-consensus/src/engine.rs`（Epoch 切换逻辑）
 
@@ -295,7 +295,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] H-3. zstd 压缩端 `unwrap()` Panic 向量 `[工程缺陷]`
+#### [x] H-3. zstd 压缩端 `unwrap()` Panic 向量 `[工程缺陷]`
 
 **位置：** `crates/hotmint-network/src/codec.rs`
 
@@ -311,7 +311,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] H-4. ABCI IPC 通信无超时保护 `[工程缺陷]`
+#### [x] H-4. ABCI IPC 通信无超时保护 `[工程缺陷]`
 
 **位置：** `crates/hotmint-abci/src/client.rs`
 
@@ -327,7 +327,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] H-5. 投票签名缺少 `epoch_number`，存在跨 Epoch 重放风险 `[安全隐患]`
+#### [x] H-5. 投票签名缺少 `epoch_number`，存在跨 Epoch 重放风险 `[安全隐患]`
 
 **位置：** `crates/hotmint-types/src/vote.rs`（`signing_bytes` 方法）
 
@@ -346,7 +346,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ### 🟢 P0 — 功能演进：生产链必需
 
-#### [ ] P0-1. 标准 HTTP/WebSocket RPC + 事件订阅 `[功能缺失]`
+#### [x] P0-1. 标准 HTTP/WebSocket RPC + 事件订阅 `[功能缺失]`
 
 **当前差距：** 原始 TCP 换行 JSON 协议对前端 dApp 不友好；无 WebSocket 事件订阅使 DApp 无法实时监听链上状态。
 
@@ -362,7 +362,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ### 🟢 P1 — 功能演进：网络健壮性
 
-#### [ ] P1-1. 快照状态同步（State Sync via Snapshots） `[功能缺失]`
+#### [x] P1-1. 快照状态同步（State Sync via Snapshots） `[功能缺失]`
 
 **当前差距：** 新节点必须从高度 0 全量重放，链运行数月后入网时间不可接受，是招募新验证者的障碍。
 
@@ -382,7 +382,7 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 
 ---
 
-#### [ ] P1-2. 加权提议者选举（Weighted Proposer Selection） `[功能缺失]`
+#### [x] P1-2. 加权提议者选举（Weighted Proposer Selection） `[功能缺失]`
 
 **当前差距：** `view % validator_count` 不考虑质押权重，对不均匀质押分布不公平。
 
@@ -397,7 +397,7 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 
 ### 🟢 P2 — 功能演进：生态扩展
 
-#### [ ] P2-1. 轻客户端验证协议（Light Client Protocol） `[功能缺失]`
+#### [x] P2-1. 轻客户端验证协议（Light Client Protocol） `[功能缺失]`
 
 **当前差距：** 无法支持 IBC 跨链通讯，无法支持移动端钱包无信任验证。
 
@@ -411,7 +411,7 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 
 ---
 
-#### [ ] P2-2. ABCI++ Vote Extensions（投票扩展） `[功能缺失]`
+#### [x] P2-2. ABCI++ Vote Extensions（投票扩展） `[功能缺失]`
 
 **当前差距：** 无法实现内置预言机、阈值签名聚合、抗 MEV 机制。
 
