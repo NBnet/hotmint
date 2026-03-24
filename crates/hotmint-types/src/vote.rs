@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::block::BlockHash;
 use crate::crypto::Signature;
+use crate::epoch::EpochNumber;
 use crate::validator::ValidatorId;
 use crate::view::ViewNumber;
 
@@ -23,20 +24,22 @@ pub struct Vote {
 }
 
 impl Vote {
-    /// Canonical bytes for signing: domain_tag || chain_id_hash || view || block_hash || vote_type
+    /// Canonical bytes for signing: domain_tag || chain_id_hash || epoch || view || block_hash || vote_type
     ///
-    /// The domain tag and chain_id_hash prevent cross-chain and cross-message-type
-    /// signature replay attacks.
+    /// The domain tag, chain_id_hash, and epoch prevent cross-chain, cross-epoch,
+    /// and cross-message-type signature replay attacks.
     pub fn signing_bytes(
         chain_id_hash: &[u8; 32],
+        epoch: EpochNumber,
         view: ViewNumber,
         block_hash: &BlockHash,
         vote_type: VoteType,
     ) -> Vec<u8> {
-        let tag = b"HOTMINT_VOTE_V1\0";
-        let mut buf = Vec::with_capacity(tag.len() + 32 + 8 + 32 + 1);
+        let tag = b"HOTMINT_VOTE_V2\0";
+        let mut buf = Vec::with_capacity(tag.len() + 32 + 8 + 8 + 32 + 1);
         buf.extend_from_slice(tag);
         buf.extend_from_slice(chain_id_hash);
+        buf.extend_from_slice(&epoch.as_u64().to_le_bytes());
         buf.extend_from_slice(&view.as_u64().to_le_bytes());
         buf.extend_from_slice(&block_hash.0);
         buf.push(vote_type as u8);
@@ -47,30 +50,31 @@ impl Vote {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::epoch::EpochNumber;
 
     const TEST_CHAIN: [u8; 32] = [0u8; 32];
 
     #[test]
     fn test_signing_bytes_deterministic() {
         let hash = BlockHash([42u8; 32]);
-        let a = Vote::signing_bytes(&TEST_CHAIN, ViewNumber(5), &hash, VoteType::Vote);
-        let b = Vote::signing_bytes(&TEST_CHAIN, ViewNumber(5), &hash, VoteType::Vote);
+        let a = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(5), &hash, VoteType::Vote);
+        let b = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(5), &hash, VoteType::Vote);
         assert_eq!(a, b);
     }
 
     #[test]
     fn test_signing_bytes_differ_by_type() {
         let hash = BlockHash([1u8; 32]);
-        let a = Vote::signing_bytes(&TEST_CHAIN, ViewNumber(1), &hash, VoteType::Vote);
-        let b = Vote::signing_bytes(&TEST_CHAIN, ViewNumber(1), &hash, VoteType::Vote2);
+        let a = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote);
+        let b = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote2);
         assert_ne!(a, b);
     }
 
     #[test]
     fn test_signing_bytes_differ_by_view() {
         let hash = BlockHash([1u8; 32]);
-        let a = Vote::signing_bytes(&TEST_CHAIN, ViewNumber(1), &hash, VoteType::Vote);
-        let b = Vote::signing_bytes(&TEST_CHAIN, ViewNumber(2), &hash, VoteType::Vote);
+        let a = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote);
+        let b = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(2), &hash, VoteType::Vote);
         assert_ne!(a, b);
     }
 
@@ -79,8 +83,16 @@ mod tests {
         let hash = BlockHash([1u8; 32]);
         let chain_a = [1u8; 32];
         let chain_b = [2u8; 32];
-        let a = Vote::signing_bytes(&chain_a, ViewNumber(1), &hash, VoteType::Vote);
-        let b = Vote::signing_bytes(&chain_b, ViewNumber(1), &hash, VoteType::Vote);
+        let a = Vote::signing_bytes(&chain_a, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote);
+        let b = Vote::signing_bytes(&chain_b, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_signing_bytes_differ_by_epoch() {
+        let hash = BlockHash([1u8; 32]);
+        let a = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote);
+        let b = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(1), ViewNumber(1), &hash, VoteType::Vote);
         assert_ne!(a, b);
     }
 }

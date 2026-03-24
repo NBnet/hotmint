@@ -424,6 +424,7 @@ impl Application for EquivocationWatchApp {
 
 #[tokio::test]
 async fn test_equivocation_detected_via_injected_votes() {
+    use hotmint_types::epoch::EpochNumber;
     use hotmint_types::vote::VoteType;
 
     let _ = tracing_subscriber::fmt()
@@ -441,8 +442,8 @@ async fn test_equivocation_detected_via_injected_votes() {
 
     // Use the default chain_id_hash (blake3("")) — must match ConsensusState::new()
     let chain_id_hash = *blake3::hash(b"").as_bytes();
-    let bytes_a = Vote::signing_bytes(&chain_id_hash, view, &hash_a, VoteType::Vote);
-    let bytes_b = Vote::signing_bytes(&chain_id_hash, view, &hash_b, VoteType::Vote);
+    let bytes_a = Vote::signing_bytes(&chain_id_hash, EpochNumber(0), view, &hash_a, VoteType::Vote);
+    let bytes_b = Vote::signing_bytes(&chain_id_hash, EpochNumber(0), view, &hash_b, VoteType::Vote);
     let vote_a = Vote {
         block_hash: hash_a,
         view,

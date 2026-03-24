@@ -8,7 +8,7 @@ Hotmint uses [litep2p](https://crates.io/crates/litep2p) for P2P networking. The
 pub trait NetworkSink: Send + Sync {
     fn broadcast(&self, msg: ConsensusMessage);
     fn send_to(&self, target: ValidatorId, msg: ConsensusMessage);
-    fn on_epoch_change(&self, new_validator_set: &ValidatorSet) {}
+    fn on_epoch_change(&self, _epoch: EpochNumber, _new_validator_set: &ValidatorSet) {}
 }
 ```
 

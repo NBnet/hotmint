@@ -168,6 +168,7 @@ pub fn replay_blocks(
             let verifier = hotmint_crypto::Ed25519Verifier;
             let qc_bytes = hotmint_types::vote::Vote::signing_bytes(
                 state.chain_id_hash,
+                cert.epoch,
                 cert.view,
                 &cert.block_hash,
                 hotmint_types::vote::VoteType::Vote,
@@ -292,6 +293,7 @@ mod tests {
     use super::*;
     use crate::application::NoopApplication;
     use crate::store::MemoryBlockStore;
+    use hotmint_types::epoch::EpochNumber;
     use hotmint_types::{BlockHash, QuorumCertificate, ValidatorId, ViewNumber};
 
     const TEST_CHAIN: [u8; 32] = [0u8; 32];
@@ -299,6 +301,7 @@ mod tests {
     fn make_qc(block: &Block, signer: &hotmint_crypto::Ed25519Signer) -> QuorumCertificate {
         let vote_bytes = hotmint_types::vote::Vote::signing_bytes(
             &TEST_CHAIN,
+            EpochNumber(0),
             block.view,
             &block.hash,
             hotmint_types::vote::VoteType::Vote,
@@ -310,6 +313,7 @@ mod tests {
             block_hash: block.hash,
             view: block.view,
             aggregate_signature: agg,
+            epoch: EpochNumber(0),
         }
     }
 

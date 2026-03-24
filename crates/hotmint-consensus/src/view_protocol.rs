@@ -8,7 +8,7 @@ use crate::state::{ConsensusState, ViewRole, ViewStep};
 use crate::store::BlockStore;
 use hotmint_crypto::hash::compute_block_hash;
 use hotmint_types::context::BlockContext;
-use hotmint_types::epoch::Epoch;
+use hotmint_types::epoch::{Epoch, EpochNumber};
 use hotmint_types::vote::VoteType;
 use hotmint_types::*;
 use tracing::{debug, info, warn};
@@ -67,7 +67,7 @@ pub fn enter_view(
                     .leader_for_view(view)
                     .expect("empty validator set")
                     .id;
-                let msg_bytes = status_signing_bytes(&state.chain_id_hash, view, &state.locked_qc);
+                let msg_bytes = status_signing_bytes(&state.chain_id_hash, state.current_epoch.number, view, &state.locked_qc);
                 let sig = signer.sign(&msg_bytes);
                 network.send_to(
                     leader_id,
@@ -92,7 +92,7 @@ pub fn enter_view(
                     .leader_for_view(view)
                     .expect("empty validator set")
                     .id;
-                let msg_bytes = status_signing_bytes(&state.chain_id_hash, view, &state.locked_qc);
+                let msg_bytes = status_signing_bytes(&state.chain_id_hash, state.current_epoch.number, view, &state.locked_qc);
                 let sig = signer.sign(&msg_bytes);
                 network.send_to(
                     leader_id,
@@ -151,7 +151,7 @@ pub fn propose(
 
     store.put_block(block.clone());
 
-    let msg_bytes = proposal_signing_bytes(&state.chain_id_hash, &block, &justify);
+    let msg_bytes = proposal_signing_bytes(&state.chain_id_hash, state.current_epoch.number, &block, &justify);
     let signature = signer.sign(&msg_bytes);
 
     info!(
@@ -304,6 +304,7 @@ pub fn on_proposal(
     if state.validator_set.power_of(state.validator_id) > 0 {
         let vote_bytes = Vote::signing_bytes(
             &state.chain_id_hash,
+            state.current_epoch.number,
             state.current_view,
             &block.hash,
             VoteType::Vote,
@@ -351,7 +352,7 @@ pub fn on_votes_collected(
 
     state.update_highest_qc(&qc);
 
-    let msg_bytes = prepare_signing_bytes(&state.chain_id_hash, &qc);
+    let msg_bytes = prepare_signing_bytes(&state.chain_id_hash, state.current_epoch.number, &qc);
     let signature = signer.sign(&msg_bytes);
 
     network.broadcast(ConsensusMessage::Prepare {
@@ -377,6 +378,7 @@ pub fn on_prepare(
     if state.validator_set.power_of(state.validator_id) > 0 {
         let vote_bytes = Vote::signing_bytes(
             &state.chain_id_hash,
+            state.current_epoch.number,
             state.current_view,
             &qc.block_hash,
             VoteType::Vote2,
@@ -408,13 +410,15 @@ pub fn on_prepare(
 
 pub(crate) fn status_signing_bytes(
     chain_id_hash: &[u8; 32],
+    epoch: EpochNumber,
     view: ViewNumber,
     locked_qc: &Option<QuorumCertificate>,
 ) -> Vec<u8> {
     let tag = b"HOTMINT_STATUS_V1\0";
-    let mut buf = Vec::with_capacity(tag.len() + 32 + 8 + 40);
+    let mut buf = Vec::with_capacity(tag.len() + 32 + 8 + 8 + 40);
     buf.extend_from_slice(tag);
     buf.extend_from_slice(chain_id_hash);
+    buf.extend_from_slice(&epoch.as_u64().to_le_bytes());
     buf.extend_from_slice(&view.as_u64().to_le_bytes());
     if let Some(qc) = locked_qc {
         buf.extend_from_slice(&qc.block_hash.0);
@@ -425,24 +429,27 @@ pub(crate) fn status_signing_bytes(
 
 pub(crate) fn proposal_signing_bytes(
     chain_id_hash: &[u8; 32],
+    epoch: EpochNumber,
     block: &Block,
     justify: &QuorumCertificate,
 ) -> Vec<u8> {
     let tag = b"HOTMINT_PROPOSAL_V1\0";
-    let mut buf = Vec::with_capacity(tag.len() + 32 + 32 + 32 + 8);
+    let mut buf = Vec::with_capacity(tag.len() + 32 + 8 + 32 + 32 + 8);
     buf.extend_from_slice(tag);
     buf.extend_from_slice(chain_id_hash);
+    buf.extend_from_slice(&epoch.as_u64().to_le_bytes());
     buf.extend_from_slice(&block.hash.0);
     buf.extend_from_slice(&justify.block_hash.0);
     buf.extend_from_slice(&justify.view.as_u64().to_le_bytes());
     buf
 }
 
-pub(crate) fn prepare_signing_bytes(chain_id_hash: &[u8; 32], qc: &QuorumCertificate) -> Vec<u8> {
+pub(crate) fn prepare_signing_bytes(chain_id_hash: &[u8; 32], epoch: EpochNumber, qc: &QuorumCertificate) -> Vec<u8> {
     let tag = b"HOTMINT_PREPARE_V1\0";
-    let mut buf = Vec::with_capacity(tag.len() + 32 + 32 + 8);
+    let mut buf = Vec::with_capacity(tag.len() + 32 + 8 + 32 + 8);
     buf.extend_from_slice(tag);
     buf.extend_from_slice(chain_id_hash);
+    buf.extend_from_slice(&epoch.as_u64().to_le_bytes());
     buf.extend_from_slice(&qc.block_hash.0);
     buf.extend_from_slice(&qc.view.as_u64().to_le_bytes());
     buf

@@ -1,5 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use hotmint_crypto::{Ed25519Signer, Ed25519Verifier, compute_block_hash};
+use hotmint_types::epoch::EpochNumber;
 use hotmint_types::validator::{ValidatorId, ValidatorInfo, ValidatorSet};
 use hotmint_types::{Block, BlockHash, Height, Signer, Verifier, ViewNumber};
 
@@ -74,7 +75,7 @@ fn bench_aggregate_verify(c: &mut Criterion) {
         .iter()
         .take(67)
         .map(|s| {
-            let bytes = Vote::signing_bytes(&[0u8; 32], view, &hash, VoteType::Vote);
+            let bytes = Vote::signing_bytes(&[0u8; 32], EpochNumber(0), view, &hash, VoteType::Vote);
             Vote {
                 block_hash: hash,
                 view,

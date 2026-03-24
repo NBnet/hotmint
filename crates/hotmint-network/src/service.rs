@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use futures::StreamExt;
 use hotmint_consensus::network::NetworkSink;
+use hotmint_types::epoch::EpochNumber;
 use hotmint_types::sync::{SyncRequest, SyncResponse};
 use hotmint_types::{ConsensusMessage, ValidatorId};
 use litep2p::config::ConfigBuilder;
@@ -141,6 +142,8 @@ pub struct NetworkService {
     validator_ids_ordered: Vec<ValidatorId>,
     /// Blake3 hash of the chain identifier — used for relay signature verification.
     chain_id_hash: [u8; 32],
+    /// Current epoch number — used for relay signature verification.
+    current_epoch: EpochNumber,
     msg_tx: mpsc::Sender<(Option<ValidatorId>, ConsensusMessage)>,
     cmd_rx: mpsc::Receiver<NetCommand>,
     sync_req_tx: mpsc::Sender<IncomingSyncRequest>,
@@ -159,7 +162,7 @@ pub struct NetworkService {
     seen_active: HashSet<u64>,
     seen_backup: HashSet<u64>,
     /// Reliable channel for epoch changes (F-02).
-    epoch_rx: watch::Receiver<Option<Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>>>,
+    epoch_rx: watch::Receiver<Option<(EpochNumber, Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>)>>,
     /// Per-peer rate limiting for PEX requests (F-09).
     pex_rate_limit: HashMap<PeerId, Instant>,
 }
@@ -266,7 +269,7 @@ impl NetworkService {
         let (peer_info_tx, peer_info_rx) = watch::channel(initial_peers);
 
         let (epoch_tx, epoch_rx) =
-            watch::channel::<Option<Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>>>(None);
+            watch::channel::<Option<(EpochNumber, Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>)>>(None);
 
         let sink = Litep2pNetworkSink {
             cmd_tx: cmd_tx.clone(),
@@ -300,6 +303,7 @@ impl NetworkService {
                 validator_keys,
                 validator_ids_ordered,
                 chain_id_hash,
+                current_epoch: EpochNumber::GENESIS,
                 msg_tx,
                 cmd_rx,
                 sync_req_tx,
@@ -374,7 +378,8 @@ impl NetworkService {
                 }
                 Ok(()) = self.epoch_rx.changed() => {
                     let epoch_val = self.epoch_rx.borrow_and_update().clone();
-                    if let Some(validators) = epoch_val {
+                    if let Some((epoch_number, validators)) = epoch_val {
+                        self.current_epoch = epoch_number;
                         self.handle_epoch_change(validators).await;
                     }
                 }
@@ -436,6 +441,7 @@ impl NetworkService {
                                 &self.validator_keys,
                                 &self.validator_ids_ordered,
                                 &self.chain_id_hash,
+                                self.current_epoch,
                             )
                         {
                             let msg_hash = u64::from_le_bytes(
@@ -924,7 +930,7 @@ impl NetworkService {
 #[derive(Clone)]
 pub struct Litep2pNetworkSink {
     cmd_tx: mpsc::Sender<NetCommand>,
-    epoch_tx: watch::Sender<Option<Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>>>,
+    epoch_tx: watch::Sender<Option<(EpochNumber, Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>)>>,
 }
 
 impl Litep2pNetworkSink {
@@ -992,13 +998,13 @@ impl NetworkSink for Litep2pNetworkSink {
         }
     }
 
-    fn on_epoch_change(&self, new_validator_set: &hotmint_types::ValidatorSet) {
+    fn on_epoch_change(&self, epoch: EpochNumber, new_validator_set: &hotmint_types::ValidatorSet) {
         let validators: Vec<_> = new_validator_set
             .validators()
             .iter()
             .map(|v| (v.id, v.public_key.clone()))
             .collect();
         // F-02: Use dedicated watch channel so epoch changes are never dropped.
-        let _ = self.epoch_tx.send(Some(validators));
+        let _ = self.epoch_tx.send(Some((epoch, validators)));
     }
 }

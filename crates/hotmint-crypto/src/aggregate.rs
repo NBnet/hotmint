@@ -32,6 +32,7 @@ pub fn has_quorum(vs: &ValidatorSet, agg: &AggregateSignature) -> bool {
 mod tests {
     use super::*;
     use crate::Ed25519Signer;
+    use hotmint_types::epoch::EpochNumber;
     use hotmint_types::validator::{ValidatorId, ValidatorInfo};
     use hotmint_types::view::ViewNumber;
     use hotmint_types::vote::VoteType;
@@ -63,7 +64,7 @@ mod tests {
             .iter()
             .take(3)
             .map(|s| {
-                let bytes = Vote::signing_bytes(&TEST_CHAIN, view, &hash, VoteType::Vote);
+                let bytes = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), view, &hash, VoteType::Vote);
                 Vote {
                     block_hash: hash,
                     view,
@@ -88,7 +89,7 @@ mod tests {
             .iter()
             .take(2)
             .map(|s| {
-                let bytes = Vote::signing_bytes(&TEST_CHAIN, view, &hash, VoteType::Vote);
+                let bytes = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), view, &hash, VoteType::Vote);
                 Vote {
                     block_hash: hash,
                     view,
@@ -109,7 +110,7 @@ mod tests {
         let (vs, _) = make_env();
         let unknown_signer = Ed25519Signer::generate(ValidatorId(99));
         let hash = BlockHash([3u8; 32]);
-        let bytes = Vote::signing_bytes(&TEST_CHAIN, ViewNumber(1), &hash, VoteType::Vote);
+        let bytes = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote);
         let vote = Vote {
             block_hash: hash,
             view: ViewNumber(1),

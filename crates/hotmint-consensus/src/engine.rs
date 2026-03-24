@@ -279,6 +279,7 @@ impl ConsensusEngine {
             aggregate_signature: AggregateSignature::new(
                 self.state.validator_set.validator_count(),
             ),
+            epoch: self.state.current_epoch.number,
         };
         self.state.highest_qc = Some(genesis_qc);
 
@@ -331,6 +332,7 @@ impl ConsensusEngine {
     async fn leader_self_vote(&mut self, block_hash: BlockHash) {
         let vote_bytes = Vote::signing_bytes(
             &self.state.chain_id_hash,
+            self.state.current_epoch.number,
             self.state.current_view,
             &block_hash,
             VoteType::Vote,
@@ -345,7 +347,7 @@ impl ConsensusEngine {
         };
         match self
             .vote_collector
-            .add_vote(&self.state.validator_set, vote)
+            .add_vote(&self.state.validator_set, vote, self.state.current_epoch.number)
         {
             Ok(result) => {
                 self.handle_equivocation(&result);
@@ -380,6 +382,7 @@ pub fn verify_relay_sender(
     validator_keys: &HashMap<ValidatorId, hotmint_types::crypto::PublicKey>,
     ordered_validators: &[ValidatorId],
     chain_id_hash: &[u8; 32],
+    epoch: hotmint_types::epoch::EpochNumber,
 ) -> bool {
     use hotmint_crypto::Ed25519Verifier;
     use hotmint_types::Verifier;
@@ -395,7 +398,7 @@ pub fn verify_relay_sender(
             let Some(pk) = validator_keys.get(&block.proposer) else {
                 return false;
             };
-            let bytes = crate::view_protocol::proposal_signing_bytes(chain_id_hash, block, justify);
+            let bytes = crate::view_protocol::proposal_signing_bytes(chain_id_hash, epoch, block, justify);
             Verifier::verify(&verifier, pk, &bytes, signature)
         }
         ConsensusMessage::VoteMsg(vote) | ConsensusMessage::Vote2Msg(vote) => {
@@ -403,7 +406,7 @@ pub fn verify_relay_sender(
                 return false;
             };
             let bytes =
-                Vote::signing_bytes(chain_id_hash, vote.view, &vote.block_hash, vote.vote_type);
+                Vote::signing_bytes(chain_id_hash, epoch, vote.view, &vote.block_hash, vote.vote_type);
             Verifier::verify(&verifier, pk, &bytes, &vote.signature)
         }
         ConsensusMessage::Prepare {
@@ -422,7 +425,7 @@ pub fn verify_relay_sender(
             let Some(pk) = validator_keys.get(&sender) else {
                 return false;
             };
-            let bytes = crate::view_protocol::prepare_signing_bytes(chain_id_hash, certificate);
+            let bytes = crate::view_protocol::prepare_signing_bytes(chain_id_hash, epoch, certificate);
             Verifier::verify(&verifier, pk, &bytes, signature)
         }
         ConsensusMessage::Wish {
@@ -436,6 +439,7 @@ pub fn verify_relay_sender(
             };
             let bytes = crate::pacemaker::wish_signing_bytes(
                 chain_id_hash,
+                epoch,
                 *target_view,
                 highest_qc.as_ref(),
             );
@@ -462,7 +466,7 @@ pub fn verify_relay_sender(
                     return false;
                 };
                 let hqc = tc.highest_qcs.get(i).and_then(|h| h.as_ref());
-                let bytes = crate::pacemaker::wish_signing_bytes(chain_id_hash, target_view, hqc);
+                let bytes = crate::pacemaker::wish_signing_bytes(chain_id_hash, epoch, target_view, hqc);
                 if sig_idx >= tc.aggregate_signature.signatures.len() {
                     return false;
                 }
@@ -545,6 +549,7 @@ impl ConsensusEngine {
                 };
                 let bytes = view_protocol::proposal_signing_bytes(
                     &self.state.chain_id_hash,
+                    self.state.current_epoch.number,
                     block,
                     justify,
                 );
@@ -556,6 +561,7 @@ impl ConsensusEngine {
                 if justify.aggregate_signature.count() > 0 {
                     let qc_bytes = Vote::signing_bytes(
                         &self.state.chain_id_hash,
+                        justify.epoch,
                         justify.view,
                         &justify.block_hash,
                         VoteType::Vote,
@@ -581,6 +587,7 @@ impl ConsensusEngine {
                 };
                 let bytes = Vote::signing_bytes(
                     &self.state.chain_id_hash,
+                    self.state.current_epoch.number,
                     vote.view,
                     &vote.block_hash,
                     vote.vote_type,
@@ -603,7 +610,7 @@ impl ConsensusEngine {
                     return false;
                 };
                 let bytes =
-                    view_protocol::prepare_signing_bytes(&self.state.chain_id_hash, certificate);
+                    view_protocol::prepare_signing_bytes(&self.state.chain_id_hash, self.state.current_epoch.number, certificate);
                 if !self.verifier.verify(&leader.public_key, &bytes, signature) {
                     warn!(view = %certificate.view, "invalid prepare signature");
                     return false;
@@ -611,6 +618,7 @@ impl ConsensusEngine {
                 // Also verify the QC's aggregate signature and quorum
                 let qc_bytes = Vote::signing_bytes(
                     &self.state.chain_id_hash,
+                    certificate.epoch,
                     certificate.view,
                     &certificate.block_hash,
                     VoteType::Vote,
@@ -641,6 +649,7 @@ impl ConsensusEngine {
                 // Signing bytes bind both target_view and highest_qc to prevent replay.
                 let bytes = crate::pacemaker::wish_signing_bytes(
                     &self.state.chain_id_hash,
+                    self.state.current_epoch.number,
                     *target_view,
                     highest_qc.as_ref(),
                 );
@@ -675,6 +684,7 @@ impl ConsensusEngine {
                     let hqc = tc.highest_qcs.get(i).and_then(|h| h.as_ref());
                     let bytes = crate::pacemaker::wish_signing_bytes(
                         &self.state.chain_id_hash,
+                        self.state.current_epoch.number,
                         target_view,
                         hqc,
                     );
@@ -714,6 +724,7 @@ impl ConsensusEngine {
                 };
                 let bytes = view_protocol::status_signing_bytes(
                     &self.state.chain_id_hash,
+                    self.state.current_epoch.number,
                     self.state.current_view,
                     locked_qc,
                 );
@@ -835,7 +846,7 @@ impl ConsensusEngine {
 
                 let result = self
                     .vote_collector
-                    .add_vote(&self.state.validator_set, vote)
+                    .add_vote(&self.state.validator_set, vote, self.state.current_epoch.number)
                     .c(d!())?;
                 self.handle_equivocation(&result);
                 if let Some(qc) = result.qc {
@@ -883,7 +894,7 @@ impl ConsensusEngine {
                 }
                 let result = self
                     .vote_collector
-                    .add_vote(&self.state.validator_set, vote)
+                    .add_vote(&self.state.validator_set, vote, self.state.current_epoch.number)
                     .c(d!())?;
                 self.handle_equivocation(&result);
                 if let Some(outer_qc) = result.qc {
@@ -904,6 +915,7 @@ impl ConsensusEngine {
                 {
                     let qc_bytes = Vote::signing_bytes(
                         &self.state.chain_id_hash,
+                        qc.epoch,
                         qc.view,
                         &qc.block_hash,
                         VoteType::Vote,
@@ -1008,6 +1020,7 @@ impl ConsensusEngine {
         // Leader also does vote2 for its own prepare (self-vote for step 5)
         let vote_bytes = Vote::signing_bytes(
             &self.state.chain_id_hash,
+            self.state.current_epoch.number,
             self.state.current_view,
             &qc.block_hash,
             VoteType::Vote2,
@@ -1030,7 +1043,7 @@ impl ConsensusEngine {
             // We are the next leader, collect vote2 locally
             match self
                 .vote_collector
-                .add_vote(&self.state.validator_set, vote)
+                .add_vote(&self.state.validator_set, vote, self.state.current_epoch.number)
             {
                 Ok(result) => {
                     self.handle_equivocation(&result);
@@ -1104,6 +1117,7 @@ impl ConsensusEngine {
 
         let wish = self.pacemaker.build_wish(
             &self.state.chain_id_hash,
+            self.state.current_epoch.number,
             self.state.current_view,
             self.state.validator_id,
             self.state.highest_qc.clone(),
@@ -1197,6 +1211,7 @@ impl ConsensusEngine {
         let vs = &self.state.validator_set;
         let inner_bytes = Vote::signing_bytes(
             &self.state.chain_id_hash,
+            dc.inner_qc.epoch,
             dc.inner_qc.view,
             &dc.inner_qc.block_hash,
             VoteType::Vote,
@@ -1214,6 +1229,7 @@ impl ConsensusEngine {
         }
         let outer_bytes = Vote::signing_bytes(
             &self.state.chain_id_hash,
+            dc.outer_qc.epoch,
             dc.outer_qc.view,
             &dc.outer_qc.block_hash,
             VoteType::Vote2,
@@ -1294,8 +1310,8 @@ impl ConsensusEngine {
             );
             self.state.validator_set = new_epoch.validator_set.clone();
             self.state.current_epoch = new_epoch;
-            // Notify network layer of the new validator set
-            self.network.on_epoch_change(&self.state.validator_set);
+            // Notify network layer of the new validator set and epoch
+            self.network.on_epoch_change(self.state.current_epoch.number, &self.state.validator_set);
             // Full clear: old votes/wishes are from the previous epoch's validator set
             self.vote_collector = VoteCollector::new();
             self.pacemaker = Pacemaker::with_config(self.pacemaker_config.clone());
@@ -1344,6 +1360,7 @@ mod tests {
     use hotmint_types::Signer as SignerTrait;
     use hotmint_types::certificate::QuorumCertificate;
     use hotmint_types::crypto::AggregateSignature;
+    use hotmint_types::epoch::EpochNumber;
     use hotmint_types::validator::{ValidatorId, ValidatorInfo};
     use hotmint_types::vote::{Vote, VoteType};
     use tokio::sync::mpsc;
@@ -1423,7 +1440,7 @@ mod tests {
         let chain_id_hash = test_chain_id_hash();
         let hash = BlockHash::GENESIS;
         let qc_view = ViewNumber::GENESIS;
-        let vote_bytes = Vote::signing_bytes(&chain_id_hash, qc_view, &hash, VoteType::Vote);
+        let vote_bytes = Vote::signing_bytes(&chain_id_hash, EpochNumber(0), qc_view, &hash, VoteType::Vote);
         let mut agg = AggregateSignature::new(4);
         agg.add(1, SignerTrait::sign(&signers[1], &vote_bytes))
             .unwrap();
@@ -1431,6 +1448,7 @@ mod tests {
             block_hash: hash,
             view: qc_view,
             aggregate_signature: agg,
+            epoch: EpochNumber(0),
         };
 
         // Construct a proposal from V1 carrying this sub-quorum justify.
@@ -1440,7 +1458,7 @@ mod tests {
         block.proposer = ValidatorId(1);
         block.hash = block.compute_hash();
         let proposal_bytes =
-            crate::view_protocol::proposal_signing_bytes(&chain_id_hash, &block, &sub_quorum_qc);
+            crate::view_protocol::proposal_signing_bytes(&chain_id_hash, EpochNumber(0), &block, &sub_quorum_qc);
         let signature = SignerTrait::sign(&signers[1], &proposal_bytes);
 
         let msg = ConsensusMessage::Propose {
@@ -1466,7 +1484,7 @@ mod tests {
         let chain_id_hash = test_chain_id_hash();
         let hash = BlockHash::GENESIS;
         let qc_view = ViewNumber::GENESIS;
-        let vote_bytes = Vote::signing_bytes(&chain_id_hash, qc_view, &hash, VoteType::Vote);
+        let vote_bytes = Vote::signing_bytes(&chain_id_hash, EpochNumber(0), qc_view, &hash, VoteType::Vote);
         // 3 of 4 signers — meets 2f+1 threshold.
         let mut agg = AggregateSignature::new(4);
         for (i, signer) in signers.iter().take(3).enumerate() {
@@ -1476,6 +1494,7 @@ mod tests {
             block_hash: hash,
             view: qc_view,
             aggregate_signature: agg,
+            epoch: EpochNumber(0),
         };
 
         let mut block = Block::genesis();
@@ -1484,7 +1503,7 @@ mod tests {
         block.proposer = ValidatorId(1);
         block.hash = block.compute_hash();
         let proposal_bytes =
-            crate::view_protocol::proposal_signing_bytes(&chain_id_hash, &block, &full_quorum_qc);
+            crate::view_protocol::proposal_signing_bytes(&chain_id_hash, EpochNumber(0), &block, &full_quorum_qc);
         let signature = SignerTrait::sign(&signers[1], &proposal_bytes);
 
         let msg = ConsensusMessage::Propose {
@@ -1514,7 +1533,7 @@ mod tests {
         let chain_id_hash = test_chain_id_hash();
         let hash = BlockHash([1u8; 32]);
         let qc_view = ViewNumber(1);
-        let vote_bytes = Vote::signing_bytes(&chain_id_hash, qc_view, &hash, VoteType::Vote);
+        let vote_bytes = Vote::signing_bytes(&chain_id_hash, EpochNumber(0), qc_view, &hash, VoteType::Vote);
 
         // Build a QC with only 1 signer — sub-quorum.
         let mut agg = AggregateSignature::new(4);

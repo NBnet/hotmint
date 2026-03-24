@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::block::BlockHash;
 use crate::crypto::AggregateSignature;
+use crate::epoch::EpochNumber;
 use crate::view::ViewNumber;
 
 /// C_v(B_k): quorum certificate — 2f+1 validators signed the block hash in view v
@@ -10,6 +11,10 @@ pub struct QuorumCertificate {
     pub block_hash: BlockHash,
     pub view: ViewNumber,
     pub aggregate_signature: AggregateSignature,
+    /// Epoch in which this QC was formed. Included in signing bytes (V2 protocol)
+    /// so cross-epoch QCs can be verified without ambiguity.
+    #[serde(default)]
+    pub epoch: EpochNumber,
 }
 
 impl QuorumCertificate {
@@ -54,6 +59,7 @@ mod tests {
             block_hash: BlockHash(hash),
             view: ViewNumber(view),
             aggregate_signature: AggregateSignature::new(4),
+            epoch: EpochNumber(0),
         }
     }
 

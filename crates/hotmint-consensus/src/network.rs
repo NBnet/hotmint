@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use hotmint_types::epoch::EpochNumber;
 use hotmint_types::{ConsensusMessage, ValidatorId, ValidatorSet};
 
 /// Message type for the consensus channel: `(sender_id, message)`.
@@ -11,7 +12,7 @@ pub trait NetworkSink: Send + Sync {
     fn send_to(&self, target: ValidatorId, msg: ConsensusMessage);
     /// Notify the network layer of a validator set change (epoch transition).
     /// Default is no-op for test stubs.
-    fn on_epoch_change(&self, _new_validator_set: &ValidatorSet) {}
+    fn on_epoch_change(&self, _epoch: EpochNumber, _new_validator_set: &ValidatorSet) {}
 }
 
 /// Channel-based network stub: routes messages via mpsc senders

@@ -1,6 +1,7 @@
 use ruc::*;
 
 use hotmint_crypto::aggregate::{aggregate_votes, has_quorum};
+use hotmint_types::epoch::EpochNumber;
 use hotmint_types::evidence::EquivocationProof;
 use hotmint_types::validator::ValidatorSet;
 use hotmint_types::view::ViewNumber;
@@ -36,7 +37,7 @@ impl VoteCollector {
     }
 
     /// Add a vote, detect equivocation, and check if quorum is reached.
-    pub fn add_vote(&mut self, vs: &ValidatorSet, vote: Vote) -> Result<VoteResult> {
+    pub fn add_vote(&mut self, vs: &ValidatorSet, vote: Vote, epoch: EpochNumber) -> Result<VoteResult> {
         // Detect equivocation: same (view, vote_type) but different block_hash
         let mut equivocation = None;
         for ((v, bh, vt), existing_votes) in &self.votes {
@@ -79,6 +80,7 @@ impl VoteCollector {
                 block_hash: key.1,
                 view: key.0,
                 aggregate_signature: agg,
+                epoch,
             })
         } else {
             None
@@ -102,6 +104,7 @@ mod tests {
     use super::*;
     use hotmint_crypto::Ed25519Signer;
     use hotmint_types::Signer;
+    use hotmint_types::epoch::EpochNumber;
     use hotmint_types::validator::{ValidatorId, ValidatorInfo};
 
     fn make_test_env() -> (ValidatorSet, Vec<Ed25519Signer>) {
@@ -127,7 +130,7 @@ mod tests {
         hash: BlockHash,
         vote_type: VoteType,
     ) -> Vote {
-        let bytes = Vote::signing_bytes(&TEST_CHAIN, view, &hash, vote_type);
+        let bytes = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), view, &hash, vote_type);
         Vote {
             block_hash: hash,
             view,
@@ -145,13 +148,13 @@ mod tests {
         let view = ViewNumber(1);
 
         let v0 = make_vote(&signers[0], view, hash, VoteType::Vote);
-        assert!(vc.add_vote(&vs, v0).unwrap().qc.is_none());
+        assert!(vc.add_vote(&vs, v0, EpochNumber(0)).unwrap().qc.is_none());
 
         let v1 = make_vote(&signers[1], view, hash, VoteType::Vote);
-        assert!(vc.add_vote(&vs, v1).unwrap().qc.is_none());
+        assert!(vc.add_vote(&vs, v1, EpochNumber(0)).unwrap().qc.is_none());
 
         let v2 = make_vote(&signers[2], view, hash, VoteType::Vote);
-        let result = vc.add_vote(&vs, v2).unwrap();
+        let result = vc.add_vote(&vs, v2, EpochNumber(0)).unwrap();
         assert!(result.qc.is_some());
         let qc = result.qc.unwrap();
         assert_eq!(qc.block_hash, hash);
@@ -166,10 +169,10 @@ mod tests {
         let view = ViewNumber(1);
 
         let v0 = make_vote(&signers[0], view, hash, VoteType::Vote);
-        assert!(vc.add_vote(&vs, v0).unwrap().qc.is_none());
+        assert!(vc.add_vote(&vs, v0, EpochNumber(0)).unwrap().qc.is_none());
 
         let v0_dup = make_vote(&signers[0], view, hash, VoteType::Vote);
-        let result = vc.add_vote(&vs, v0_dup).unwrap();
+        let result = vc.add_vote(&vs, v0_dup, EpochNumber(0)).unwrap();
         assert!(result.qc.is_none());
         assert!(result.equivocation.is_none());
     }
@@ -185,9 +188,9 @@ mod tests {
         let v1 = make_vote(&signers[1], view, hash, VoteType::Vote);
         let v2 = make_vote(&signers[2], view, hash, VoteType::Vote2);
 
-        assert!(vc.add_vote(&vs, v0).unwrap().qc.is_none());
-        assert!(vc.add_vote(&vs, v1).unwrap().qc.is_none());
-        assert!(vc.add_vote(&vs, v2).unwrap().qc.is_none());
+        assert!(vc.add_vote(&vs, v0, EpochNumber(0)).unwrap().qc.is_none());
+        assert!(vc.add_vote(&vs, v1, EpochNumber(0)).unwrap().qc.is_none());
+        assert!(vc.add_vote(&vs, v2, EpochNumber(0)).unwrap().qc.is_none());
     }
 
     #[test]
@@ -198,13 +201,13 @@ mod tests {
 
         let v0 = make_vote(&signers[0], ViewNumber(1), hash, VoteType::Vote);
         let v1 = make_vote(&signers[1], ViewNumber(1), hash, VoteType::Vote);
-        vc.add_vote(&vs, v0).unwrap();
-        vc.add_vote(&vs, v1).unwrap();
+        vc.add_vote(&vs, v0, EpochNumber(0)).unwrap();
+        vc.add_vote(&vs, v1, EpochNumber(0)).unwrap();
 
         vc.clear_view(ViewNumber(1));
 
         let v2 = make_vote(&signers[2], ViewNumber(1), hash, VoteType::Vote);
-        assert!(vc.add_vote(&vs, v2).unwrap().qc.is_none());
+        assert!(vc.add_vote(&vs, v2, EpochNumber(0)).unwrap().qc.is_none());
     }
 
     #[test]
@@ -217,12 +220,12 @@ mod tests {
 
         // Validator 0 votes for hash_a
         let v0a = make_vote(&signers[0], view, hash_a, VoteType::Vote);
-        let result = vc.add_vote(&vs, v0a).unwrap();
+        let result = vc.add_vote(&vs, v0a, EpochNumber(0)).unwrap();
         assert!(result.equivocation.is_none());
 
         // Validator 0 votes for hash_b (different block, same view) — equivocation!
         let v0b = make_vote(&signers[0], view, hash_b, VoteType::Vote);
-        let result = vc.add_vote(&vs, v0b).unwrap();
+        let result = vc.add_vote(&vs, v0b, EpochNumber(0)).unwrap();
         assert!(result.equivocation.is_some());
         let proof = result.equivocation.unwrap();
         assert_eq!(proof.validator, ValidatorId(0));
@@ -240,10 +243,10 @@ mod tests {
 
         // Same validator, same hash, same view — duplicate, not equivocation
         let v0 = make_vote(&signers[0], view, hash, VoteType::Vote);
-        vc.add_vote(&vs, v0).unwrap();
+        vc.add_vote(&vs, v0, EpochNumber(0)).unwrap();
 
         let v0_dup = make_vote(&signers[0], view, hash, VoteType::Vote);
-        let result = vc.add_vote(&vs, v0_dup).unwrap();
+        let result = vc.add_vote(&vs, v0_dup, EpochNumber(0)).unwrap();
         assert!(result.equivocation.is_none());
         assert!(result.qc.is_none());
     }
