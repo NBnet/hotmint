@@ -118,9 +118,9 @@ async fn ipc_roundtrip() {
     assert!(client.validate_block(&block, &ctx));
 
     // validate_tx — accepted
-    assert!(client.validate_tx(&[1, 2, 3], None));
+    assert!(client.validate_tx(&[1, 2, 3], None).valid);
     // validate_tx — rejected (first byte is zero)
-    assert!(!client.validate_tx(&[0, 1, 2], None));
+    assert!(!client.validate_tx(&[0, 1, 2], None).valid);
 
     // execute_block
     let result = client.execute_block(&[&[1, 2], &[3, 4]], &ctx);

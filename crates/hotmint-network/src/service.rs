@@ -162,7 +162,12 @@ pub struct NetworkService {
     seen_active: HashSet<u64>,
     seen_backup: HashSet<u64>,
     /// Reliable channel for epoch changes (F-02).
-    epoch_rx: watch::Receiver<Option<(EpochNumber, Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>)>>,
+    epoch_rx: watch::Receiver<
+        Option<(
+            EpochNumber,
+            Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>,
+        )>,
+    >,
     /// Per-peer rate limiting for PEX requests (F-09).
     pex_rate_limit: HashMap<PeerId, Instant>,
 }
@@ -268,8 +273,12 @@ impl NetworkService {
             .collect();
         let (peer_info_tx, peer_info_rx) = watch::channel(initial_peers);
 
-        let (epoch_tx, epoch_rx) =
-            watch::channel::<Option<(EpochNumber, Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>)>>(None);
+        let (epoch_tx, epoch_rx) = watch::channel::<
+            Option<(
+                EpochNumber,
+                Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>,
+            )>,
+        >(None);
 
         let sink = Litep2pNetworkSink {
             cmd_tx: cmd_tx.clone(),
@@ -933,7 +942,12 @@ impl NetworkService {
 #[derive(Clone)]
 pub struct Litep2pNetworkSink {
     cmd_tx: mpsc::Sender<NetCommand>,
-    epoch_tx: watch::Sender<Option<(EpochNumber, Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>)>>,
+    epoch_tx: watch::Sender<
+        Option<(
+            EpochNumber,
+            Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>,
+        )>,
+    >,
 }
 
 impl Litep2pNetworkSink {

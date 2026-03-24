@@ -37,7 +37,12 @@ impl VoteCollector {
     }
 
     /// Add a vote, detect equivocation, and check if quorum is reached.
-    pub fn add_vote(&mut self, vs: &ValidatorSet, vote: Vote, epoch: EpochNumber) -> Result<VoteResult> {
+    pub fn add_vote(
+        &mut self,
+        vs: &ValidatorSet,
+        vote: Vote,
+        epoch: EpochNumber,
+    ) -> Result<VoteResult> {
         // Detect equivocation: same (view, vote_type) but different block_hash
         let mut equivocation = None;
         for ((v, bh, vt), existing_votes) in &self.votes {

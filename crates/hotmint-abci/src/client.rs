@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use ruc::*;
 
-use hotmint_consensus::application::Application;
+use hotmint_consensus::application::{Application, TxValidationResult};
 use hotmint_types::Block;
 use hotmint_types::context::{BlockContext, OwnedBlockContext, TxContext};
 use hotmint_types::evidence::EquivocationProof;
@@ -161,20 +161,20 @@ impl Application for IpcApplicationClient {
         }
     }
 
-    fn validate_tx(&self, tx: &[u8], ctx: Option<&TxContext>) -> bool {
+    fn validate_tx(&self, tx: &[u8], ctx: Option<&TxContext>) -> TxValidationResult {
         let req = Request::ValidateTx {
             tx: tx.to_vec(),
             ctx: ctx.cloned(),
         };
         match self.call(&req) {
-            Ok(Response::ValidateTx(ok)) => ok,
+            Ok(Response::ValidateTx(ok)) => TxValidationResult { valid: ok, priority: 0 },
             Ok(other) => {
                 tracing::error!(?other, "IPC_FAULT: unexpected response for validate_tx");
-                false
+                TxValidationResult::reject()
             }
             Err(e) => {
                 tracing::error!(%e, "IPC_FAULT: validate_tx call failed — rejecting tx");
-                false
+                TxValidationResult::reject()
             }
         }
     }

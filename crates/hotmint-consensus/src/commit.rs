@@ -156,8 +156,8 @@ mod tests {
     use crate::application::NoopApplication;
     use crate::store::MemoryBlockStore;
     use hotmint_types::crypto::PublicKey;
-    use hotmint_types::validator::{ValidatorInfo, ValidatorSet};
     use hotmint_types::epoch::EpochNumber;
+    use hotmint_types::validator::{ValidatorInfo, ValidatorSet};
     use hotmint_types::{AggregateSignature, QuorumCertificate, ValidatorId, ViewNumber};
 
     fn make_block(height: u64, parent: BlockHash) -> Block {

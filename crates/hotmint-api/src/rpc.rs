@@ -24,6 +24,8 @@ const MAX_RPC_CONNECTIONS: usize = 256;
 const RPC_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum bytes per RPC line. Prevents OOM from clients sending huge data without newlines.
 const MAX_LINE_BYTES: usize = 1_048_576;
+/// Maximum submit_tx calls per second per connection (token bucket).
+const TX_RATE_LIMIT_PER_SEC: u32 = 100;
 
 /// Named consensus status shared via watch channel.
 #[derive(Debug, Clone, Copy)]
@@ -108,6 +110,7 @@ impl RpcServer {
                         let _permit = permit;
                         let (reader, mut writer) = stream.into_split();
                         let mut reader = BufReader::with_capacity(65_536, reader);
+                        let mut tx_limiter = TxRateLimiter::new(TX_RATE_LIMIT_PER_SEC);
                         loop {
                             let line = match timeout(
                                 RPC_READ_TIMEOUT,
@@ -122,7 +125,8 @@ impl RpcServer {
                                 }
                                 _ => break, // EOF or timeout
                             };
-                            let response = handle_request(&state, &line).await;
+                            let response =
+                                handle_request(&state, &line, &mut tx_limiter).await;
                             let mut json = serde_json::to_string(&response).unwrap_or_default();
                             json.push('\n');
                             if writer.write_all(json.as_bytes()).await.is_err() {
@@ -139,7 +143,43 @@ impl RpcServer {
     }
 }
 
-async fn handle_request(state: &RpcState, line: &str) -> RpcResponse {
+/// Per-connection token-bucket rate limiter for submit_tx.
+struct TxRateLimiter {
+    tokens: u32,
+    max_tokens: u32,
+    last_refill: tokio::time::Instant,
+}
+
+impl TxRateLimiter {
+    fn new(rate_per_sec: u32) -> Self {
+        Self {
+            tokens: rate_per_sec,
+            max_tokens: rate_per_sec,
+            last_refill: tokio::time::Instant::now(),
+        }
+    }
+
+    fn allow(&mut self) -> bool {
+        let now = tokio::time::Instant::now();
+        let elapsed = now.duration_since(self.last_refill);
+        if elapsed >= Duration::from_secs(1) {
+            self.tokens = self.max_tokens;
+            self.last_refill = now;
+        }
+        if self.tokens > 0 {
+            self.tokens -= 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+async fn handle_request(
+    state: &RpcState,
+    line: &str,
+    tx_limiter: &mut TxRateLimiter,
+) -> RpcResponse {
     let req: RpcRequest = match serde_json::from_str(line) {
         Ok(r) => r,
         Err(e) => {
@@ -162,6 +202,14 @@ async fn handle_request(state: &RpcState, line: &str) -> RpcResponse {
         }
 
         "submit_tx" => {
+            // Per-connection rate limiting
+            if !tx_limiter.allow() {
+                return RpcResponse::err(
+                    req.id,
+                    -32000,
+                    "rate limit exceeded for submit_tx".to_string(),
+                );
+            }
             let Some(tx_hex) = req.params.as_str() else {
                 return RpcResponse::err(req.id, -32602, "params must be a hex string".to_string());
             };
@@ -175,16 +223,20 @@ async fn handle_request(state: &RpcState, line: &str) -> RpcResponse {
                 }
             };
             // Validate via Application if available
-            if let Some(ref app) = state.app
-                && !app.validate_tx(&tx_bytes, None)
-            {
-                return RpcResponse::err(
-                    req.id,
-                    -32602,
-                    "transaction validation failed".to_string(),
-                );
-            }
-            let accepted = state.mempool.add_tx(tx_bytes).await;
+            let priority = if let Some(ref app) = state.app {
+                let result = app.validate_tx(&tx_bytes, None);
+                if !result.valid {
+                    return RpcResponse::err(
+                        req.id,
+                        -32602,
+                        "transaction validation failed".to_string(),
+                    );
+                }
+                result.priority
+            } else {
+                0
+            };
+            let accepted = state.mempool.add_tx(tx_bytes, priority).await;
             json_ok(req.id, &TxResult { accepted })
         }
 

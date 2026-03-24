@@ -57,24 +57,60 @@ mod tests {
     #[test]
     fn test_signing_bytes_deterministic() {
         let hash = BlockHash([42u8; 32]);
-        let a = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(5), &hash, VoteType::Vote);
-        let b = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(5), &hash, VoteType::Vote);
+        let a = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            ViewNumber(5),
+            &hash,
+            VoteType::Vote,
+        );
+        let b = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            ViewNumber(5),
+            &hash,
+            VoteType::Vote,
+        );
         assert_eq!(a, b);
     }
 
     #[test]
     fn test_signing_bytes_differ_by_type() {
         let hash = BlockHash([1u8; 32]);
-        let a = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote);
-        let b = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote2);
+        let a = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            ViewNumber(1),
+            &hash,
+            VoteType::Vote,
+        );
+        let b = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            ViewNumber(1),
+            &hash,
+            VoteType::Vote2,
+        );
         assert_ne!(a, b);
     }
 
     #[test]
     fn test_signing_bytes_differ_by_view() {
         let hash = BlockHash([1u8; 32]);
-        let a = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote);
-        let b = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(2), &hash, VoteType::Vote);
+        let a = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            ViewNumber(1),
+            &hash,
+            VoteType::Vote,
+        );
+        let b = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            ViewNumber(2),
+            &hash,
+            VoteType::Vote,
+        );
         assert_ne!(a, b);
     }
 
@@ -83,16 +119,40 @@ mod tests {
         let hash = BlockHash([1u8; 32]);
         let chain_a = [1u8; 32];
         let chain_b = [2u8; 32];
-        let a = Vote::signing_bytes(&chain_a, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote);
-        let b = Vote::signing_bytes(&chain_b, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote);
+        let a = Vote::signing_bytes(
+            &chain_a,
+            EpochNumber(0),
+            ViewNumber(1),
+            &hash,
+            VoteType::Vote,
+        );
+        let b = Vote::signing_bytes(
+            &chain_b,
+            EpochNumber(0),
+            ViewNumber(1),
+            &hash,
+            VoteType::Vote,
+        );
         assert_ne!(a, b);
     }
 
     #[test]
     fn test_signing_bytes_differ_by_epoch() {
         let hash = BlockHash([1u8; 32]);
-        let a = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote);
-        let b = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(1), ViewNumber(1), &hash, VoteType::Vote);
+        let a = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            ViewNumber(1),
+            &hash,
+            VoteType::Vote,
+        );
+        let b = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(1),
+            ViewNumber(1),
+            &hash,
+            VoteType::Vote,
+        );
         assert_ne!(a, b);
     }
 }

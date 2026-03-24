@@ -5,6 +5,32 @@ use hotmint_types::context::{BlockContext, TxContext};
 use hotmint_types::evidence::EquivocationProof;
 use hotmint_types::validator_update::EndBlockResponse;
 
+/// Result of transaction validation, including priority for mempool ordering.
+#[derive(Debug, Clone)]
+pub struct TxValidationResult {
+    /// Whether the transaction is valid.
+    pub valid: bool,
+    /// Priority for mempool ordering (higher = included first).
+    /// Applications typically derive this from gas price / fee.
+    pub priority: u64,
+}
+
+impl TxValidationResult {
+    pub fn accept(priority: u64) -> Self {
+        Self {
+            valid: true,
+            priority,
+        }
+    }
+
+    pub fn reject() -> Self {
+        Self {
+            valid: false,
+            priority: 0,
+        }
+    }
+}
+
 /// Application interface for the consensus engine.
 ///
 /// The lifecycle for each committed block:
@@ -40,10 +66,13 @@ pub trait Application: Send + Sync {
 
     /// Validate a single transaction for mempool admission.
     ///
+    /// Returns a [`TxValidationResult`] with `valid` and `priority`.
+    /// Priority determines ordering in the mempool (higher = included first).
+    ///
     /// An optional [`TxContext`] provides the current chain height and epoch,
     /// which can be useful for state-dependent validation (nonce checks, etc.).
-    fn validate_tx(&self, _tx: &[u8], _ctx: Option<&TxContext>) -> bool {
-        true
+    fn validate_tx(&self, _tx: &[u8], _ctx: Option<&TxContext>) -> TxValidationResult {
+        TxValidationResult::accept(0)
     }
 
     /// Execute an entire block in one call.

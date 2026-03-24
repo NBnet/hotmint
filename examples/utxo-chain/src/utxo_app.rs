@@ -5,7 +5,7 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use ruc::*;
 use tracing::{info, warn};
 
-use hotmint_consensus::application::Application;
+use hotmint_consensus::application::{Application, TxValidationResult};
 use hotmint_types::Block;
 use hotmint_types::context::BlockContext;
 use hotmint_types::validator_update::EndBlockResponse;
@@ -194,12 +194,16 @@ impl Application for UtxoApplication {
         &self,
         tx_bytes: &[u8],
         _ctx: Option<&hotmint_types::context::TxContext>,
-    ) -> bool {
+    ) -> TxValidationResult {
         let Some(tx) = UtxoTx::decode(tx_bytes) else {
-            return false;
+            return TxValidationResult::reject();
         };
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        self.validate_decoded_tx(&tx, tx_bytes.len(), &state)
+        if self.validate_decoded_tx(&tx, tx_bytes.len(), &state) {
+            TxValidationResult::accept(0)
+        } else {
+            TxValidationResult::reject()
+        }
     }
 
     fn execute_block(&self, txs: &[&[u8]], ctx: &BlockContext) -> Result<EndBlockResponse> {

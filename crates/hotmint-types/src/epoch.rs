@@ -5,7 +5,9 @@ use crate::validator::ValidatorSet;
 use crate::view::ViewNumber;
 
 /// Epoch number — changes when the validator set changes
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 pub struct EpochNumber(pub u64);
 
 impl EpochNumber {

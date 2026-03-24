@@ -64,7 +64,8 @@ mod tests {
             .iter()
             .take(3)
             .map(|s| {
-                let bytes = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), view, &hash, VoteType::Vote);
+                let bytes =
+                    Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), view, &hash, VoteType::Vote);
                 Vote {
                     block_hash: hash,
                     view,
@@ -89,7 +90,8 @@ mod tests {
             .iter()
             .take(2)
             .map(|s| {
-                let bytes = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), view, &hash, VoteType::Vote);
+                let bytes =
+                    Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), view, &hash, VoteType::Vote);
                 Vote {
                     block_hash: hash,
                     view,
@@ -110,7 +112,13 @@ mod tests {
         let (vs, _) = make_env();
         let unknown_signer = Ed25519Signer::generate(ValidatorId(99));
         let hash = BlockHash([3u8; 32]);
-        let bytes = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), ViewNumber(1), &hash, VoteType::Vote);
+        let bytes = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            ViewNumber(1),
+            &hash,
+            VoteType::Vote,
+        );
         let vote = Vote {
             block_hash: hash,
             view: ViewNumber(1),

@@ -67,7 +67,12 @@ pub fn enter_view(
                     .leader_for_view(view)
                     .expect("empty validator set")
                     .id;
-                let msg_bytes = status_signing_bytes(&state.chain_id_hash, state.current_epoch.number, view, &state.locked_qc);
+                let msg_bytes = status_signing_bytes(
+                    &state.chain_id_hash,
+                    state.current_epoch.number,
+                    view,
+                    &state.locked_qc,
+                );
                 let sig = signer.sign(&msg_bytes);
                 network.send_to(
                     leader_id,
@@ -92,7 +97,12 @@ pub fn enter_view(
                     .leader_for_view(view)
                     .expect("empty validator set")
                     .id;
-                let msg_bytes = status_signing_bytes(&state.chain_id_hash, state.current_epoch.number, view, &state.locked_qc);
+                let msg_bytes = status_signing_bytes(
+                    &state.chain_id_hash,
+                    state.current_epoch.number,
+                    view,
+                    &state.locked_qc,
+                );
                 let sig = signer.sign(&msg_bytes);
                 network.send_to(
                     leader_id,
@@ -151,7 +161,12 @@ pub fn propose(
 
     store.put_block(block.clone());
 
-    let msg_bytes = proposal_signing_bytes(&state.chain_id_hash, state.current_epoch.number, &block, &justify);
+    let msg_bytes = proposal_signing_bytes(
+        &state.chain_id_hash,
+        state.current_epoch.number,
+        &block,
+        &justify,
+    );
     let signature = signer.sign(&msg_bytes);
 
     info!(
@@ -444,7 +459,11 @@ pub(crate) fn proposal_signing_bytes(
     buf
 }
 
-pub(crate) fn prepare_signing_bytes(chain_id_hash: &[u8; 32], epoch: EpochNumber, qc: &QuorumCertificate) -> Vec<u8> {
+pub(crate) fn prepare_signing_bytes(
+    chain_id_hash: &[u8; 32],
+    epoch: EpochNumber,
+    qc: &QuorumCertificate,
+) -> Vec<u8> {
     let tag = b"HOTMINT_PREPARE_V1\0";
     let mut buf = Vec::with_capacity(tag.len() + 32 + 8 + 32 + 8);
     buf.extend_from_slice(tag);

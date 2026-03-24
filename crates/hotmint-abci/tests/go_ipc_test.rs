@@ -114,7 +114,7 @@ fn rust_to_go_ipc() {
 
     // Test validate_tx — BaseApplication returns true.
     assert!(
-        client.validate_tx(&[1, 2, 3], None),
+        client.validate_tx(&[1, 2, 3], None).valid,
         "validate_tx should return true"
     );
 

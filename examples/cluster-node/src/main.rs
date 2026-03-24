@@ -19,7 +19,7 @@ use tracing::info;
 
 use hotmint::api::rpc::ConsensusStatus;
 use hotmint::config::{self, GenesisDoc, NodeConfig, NodeKey, PrivValidatorKey};
-use hotmint::consensus::application::{Application, NoopApplication};
+use hotmint::consensus::application::{Application, NoopApplication, TxValidationResult};
 use hotmint::consensus::engine::{ConsensusEngine, EngineConfig};
 use hotmint::consensus::pacemaker::PacemakerConfig;
 use hotmint::consensus::state::ConsensusState;
@@ -423,7 +423,7 @@ impl<A: Application> Application for StatusApp<A> {
     fn validate_block(&self, block: &Block, ctx: &hotmint_types::context::BlockContext) -> bool {
         self.inner.validate_block(block, ctx)
     }
-    fn validate_tx(&self, tx: &[u8], ctx: Option<&hotmint_types::context::TxContext>) -> bool {
+    fn validate_tx(&self, tx: &[u8], ctx: Option<&hotmint_types::context::TxContext>) -> TxValidationResult {
         self.inner.validate_tx(tx, ctx)
     }
     fn execute_block(
