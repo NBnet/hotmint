@@ -319,16 +319,20 @@ impl ConsensusEngine {
         &mut self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         Box::pin(async move {
-            let mut store = self.store.write().await;
-            match view_protocol::propose(
-                &mut self.state,
-                store.as_mut(),
-                self.network.as_ref(),
-                self.app.as_ref(),
-                self.signer.as_ref(),
-            ) {
+            // Propose is synchronous; acquire, run, and release the lock before any await.
+            let proposed_block = {
+                let mut store = self.store.write().await;
+                view_protocol::propose(
+                    &mut self.state,
+                    store.as_mut(),
+                    self.network.as_ref(),
+                    self.app.as_ref(),
+                    self.signer.as_ref(),
+                )
+            }; // lock released here
+
+            match proposed_block {
                 Ok(block) => {
-                    drop(store);
                     // Log pending evidence (full block inclusion is a later step)
                     if let Some(ref store) = self.evidence_store {
                         let pending = store.get_pending();

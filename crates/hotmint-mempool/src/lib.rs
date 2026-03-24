@@ -102,7 +102,11 @@ impl Mempool {
             entries.remove(&old);
             seen.insert(hash, priority);
             entries.insert(TxEntry { tx, priority, hash });
-            debug!(old = existing_priority, new = priority, "replaced tx via RBF");
+            debug!(
+                old = existing_priority,
+                new = priority,
+                "replaced tx via RBF"
+            );
             return true;
         }
 
