@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use tokio::sync::Mutex;
 use tracing::debug;
@@ -19,17 +19,18 @@ impl Eq for TxEntry {}
 
 impl PartialEq for TxEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash
+        self.cmp(other) == Ordering::Equal
     }
 }
 
-/// Order by (priority DESC, hash ASC) so the *last* element in BTreeSet
-/// is the highest-priority tx and the *first* is the lowest.
+/// Order by (priority ASC, hash ASC) so the *first* element in BTreeSet
+/// is the lowest-priority tx and the *last* is the highest.
+/// `Eq` is derived from `Ord` for BTreeSet consistency.
 impl Ord for TxEntry {
     fn cmp(&self, other: &Self) -> Ordering {
         self.priority
             .cmp(&other.priority)
-            .then_with(|| other.hash.cmp(&self.hash)) // reverse hash for tie-break
+            .then_with(|| self.hash.cmp(&other.hash))
     }
 }
 
@@ -39,15 +40,19 @@ impl PartialOrd for TxEntry {
     }
 }
 
-/// Priority-based mempool with deduplication and eviction.
+/// Priority-based mempool with deduplication, eviction, and replace-by-fee (RBF).
 ///
 /// Transactions are ordered by priority (highest first). When the pool is
 /// full, a new transaction with higher priority than the lowest-priority
 /// entry will evict it. This prevents spam DoS and enables fee-based
 /// ordering for DeFi applications.
+///
+/// RBF: submitting the same tx bytes with a higher priority replaces the
+/// existing pending entry. This allows wallets to bump fees on stuck txs.
 pub struct Mempool {
     entries: Mutex<std::collections::BTreeSet<TxEntry>>,
-    seen: Mutex<HashSet<TxHash>>,
+    /// Maps tx hash → current priority for RBF and for safe removal from the BTreeSet.
+    seen: Mutex<HashMap<TxHash, u64>>,
     max_size: usize,
     max_tx_bytes: usize,
 }
@@ -56,7 +61,7 @@ impl Mempool {
     pub fn new(max_size: usize, max_tx_bytes: usize) -> Self {
         Self {
             entries: Mutex::new(std::collections::BTreeSet::new()),
-            seen: Mutex::new(HashSet::new()),
+            seen: Mutex::new(HashMap::new()),
             max_size,
             max_tx_bytes,
         }
@@ -67,6 +72,10 @@ impl Mempool {
     /// Returns `true` if accepted. When the pool is full, the new tx is
     /// accepted only if its priority exceeds the lowest-priority entry,
     /// which is then evicted.
+    ///
+    /// **Replace-by-fee (RBF):** if the same tx bytes are already pending
+    /// with a *lower* priority, the existing entry is replaced with the
+    /// new higher-priority one. This lets wallets bump stuck transactions.
     pub async fn add_tx(&self, tx: Vec<u8>, priority: u64) -> bool {
         if tx.len() > self.max_tx_bytes {
             debug!(size = tx.len(), max = self.max_tx_bytes, "tx too large");
@@ -79,8 +88,22 @@ impl Mempool {
         let mut entries = self.entries.lock().await;
         let mut seen = self.seen.lock().await;
 
-        if seen.contains(&hash) {
-            return false;
+        if let Some(&existing_priority) = seen.get(&hash) {
+            if priority <= existing_priority {
+                // Exact duplicate or lower-fee resubmission: reject.
+                return false;
+            }
+            // RBF: remove the old lower-priority entry and replace it.
+            let old = TxEntry {
+                tx: tx.clone(),
+                priority: existing_priority,
+                hash,
+            };
+            entries.remove(&old);
+            seen.insert(hash, priority);
+            entries.insert(TxEntry { tx, priority, hash });
+            debug!(old = existing_priority, new = priority, "replaced tx via RBF");
+            return true;
         }
 
         if entries.len() >= self.max_size {
@@ -105,7 +128,7 @@ impl Mempool {
             }
         }
 
-        seen.insert(hash);
+        seen.insert(hash, priority);
         entries.insert(TxEntry { tx, priority, hash });
         true
     }
@@ -188,8 +211,26 @@ mod tests {
     async fn test_dedup() {
         let pool = Mempool::new(100, 1024);
         assert!(pool.add_tx(b"tx1".to_vec(), 10).await);
-        assert!(!pool.add_tx(b"tx1".to_vec(), 10).await); // duplicate
+        assert!(!pool.add_tx(b"tx1".to_vec(), 10).await); // same priority → rejected
+        assert!(!pool.add_tx(b"tx1".to_vec(), 5).await); // lower priority → rejected
         assert_eq!(pool.size().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_rbf_replace_by_fee() {
+        let pool = Mempool::new(100, 1024);
+        // Submit tx with low priority
+        assert!(pool.add_tx(b"tx1".to_vec(), 5).await);
+        assert_eq!(pool.size().await, 1);
+        // Re-submit same bytes with higher priority → RBF accepted
+        assert!(pool.add_tx(b"tx1".to_vec(), 20).await);
+        // Pool should still have exactly 1 entry
+        assert_eq!(pool.size().await, 1);
+        // Collected tx should carry the new higher priority (collected first)
+        let payload = pool.collect_payload(1024).await;
+        let txs = Mempool::decode_payload(&payload);
+        assert_eq!(txs.len(), 1);
+        assert_eq!(txs[0], b"tx1");
     }
 
     #[tokio::test]
