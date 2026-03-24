@@ -253,6 +253,18 @@ async fn run(home: &std::path::Path) -> Result<()> {
                         drop(s);
                         SyncResponse::Blocks(blocks_with_qcs)
                     }
+                    SyncRequest::GetSnapshots => {
+                        // Cluster-node uses NoopApplication — no snapshots available
+                        SyncResponse::Snapshots(vec![])
+                    }
+                    SyncRequest::GetSnapshotChunk {
+                        height,
+                        chunk_index,
+                    } => SyncResponse::SnapshotChunk {
+                        height,
+                        chunk_index,
+                        data: vec![],
+                    },
                 };
                 sync_sink.send_sync_response(req.request_id, &resp);
             }

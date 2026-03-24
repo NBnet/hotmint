@@ -18,6 +18,13 @@ pub enum SyncRequest {
     },
     /// Request the peer's current tip status
     GetStatus,
+    /// Request the list of available state snapshots
+    GetSnapshots,
+    /// Request a specific chunk of a snapshot at the given height
+    GetSnapshotChunk {
+        height: Height,
+        chunk_index: u32,
+    },
 }
 
 /// Sync response from a node serving blocks
@@ -34,4 +41,36 @@ pub enum SyncResponse {
     },
     /// Error (e.g., invalid range)
     Error(String),
+    /// List of available state snapshots
+    Snapshots(Vec<SnapshotInfo>),
+    /// A chunk of a state snapshot
+    SnapshotChunk {
+        height: Height,
+        chunk_index: u32,
+        data: Vec<u8>,
+    },
+}
+
+/// Metadata for a state snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotInfo {
+    pub height: Height,
+    pub chunks: u32,
+    pub hash: [u8; 32],
+}
+
+/// Result of offering a snapshot to the application.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum SnapshotOfferResult {
+    Accept,
+    Reject,
+    Abort,
+}
+
+/// Result of applying a snapshot chunk.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ChunkApplyResult {
+    Accept,
+    Retry,
+    Abort,
 }

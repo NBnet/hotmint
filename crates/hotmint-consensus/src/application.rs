@@ -103,6 +103,33 @@ pub trait Application: Send + Sync {
         Ok(vec![])
     }
 
+    /// List available state snapshots for state sync.
+    fn list_snapshots(&self) -> Vec<hotmint_types::sync::SnapshotInfo> {
+        vec![]
+    }
+
+    /// Load a chunk of a snapshot at the given height.
+    fn load_snapshot_chunk(&self, _height: hotmint_types::Height, _chunk_index: u32) -> Vec<u8> {
+        vec![]
+    }
+
+    /// Offer a snapshot to the application for state sync.
+    fn offer_snapshot(
+        &self,
+        _snapshot: &hotmint_types::sync::SnapshotInfo,
+    ) -> hotmint_types::sync::SnapshotOfferResult {
+        hotmint_types::sync::SnapshotOfferResult::Reject
+    }
+
+    /// Apply a snapshot chunk received during state sync.
+    fn apply_snapshot_chunk(
+        &self,
+        _chunk: Vec<u8>,
+        _chunk_index: u32,
+    ) -> hotmint_types::sync::ChunkApplyResult {
+        hotmint_types::sync::ChunkApplyResult::Abort
+    }
+
     /// Whether this application produces and verifies `app_hash` state roots.
     ///
     /// Applications that do not maintain a deterministic state root (e.g. the

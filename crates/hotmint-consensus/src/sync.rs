@@ -10,11 +10,13 @@ use crate::commit;
 use crate::store::BlockStore;
 use hotmint_types::context::BlockContext;
 use hotmint_types::epoch::Epoch;
-use hotmint_types::sync::{MAX_SYNC_BATCH, SyncRequest, SyncResponse};
+use hotmint_types::sync::{
+    ChunkApplyResult, MAX_SYNC_BATCH, SnapshotOfferResult, SyncRequest, SyncResponse,
+};
 use hotmint_types::{Block, BlockHash, Height, ViewNumber};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
-use tracing::info;
+use tracing::{info, warn};
 
 const SYNC_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -50,6 +52,12 @@ pub async fn sync_to_tip(
         })) => peer_height,
         Ok(Some(SyncResponse::Error(e))) => return Err(eg!("peer error: {}", e)),
         Ok(Some(SyncResponse::Blocks(_))) => return Err(eg!("unexpected blocks response")),
+        Ok(Some(SyncResponse::Snapshots(_))) => {
+            return Err(eg!("unexpected snapshots response"))
+        }
+        Ok(Some(SyncResponse::SnapshotChunk { .. })) => {
+            return Err(eg!("unexpected snapshot chunk response"))
+        }
         Ok(None) => return Err(eg!("sync channel closed")),
         Err(_) => {
             info!("sync status request timed out, starting from current state");
@@ -92,6 +100,12 @@ pub async fn sync_to_tip(
             Ok(Some(SyncResponse::Blocks(blocks))) => blocks,
             Ok(Some(SyncResponse::Error(e))) => return Err(eg!("peer error: {}", e)),
             Ok(Some(SyncResponse::Status { .. })) => return Err(eg!("unexpected status response")),
+            Ok(Some(SyncResponse::Snapshots(_))) => {
+                return Err(eg!("unexpected snapshots response"))
+            }
+            Ok(Some(SyncResponse::SnapshotChunk { .. })) => {
+                return Err(eg!("unexpected snapshot chunk response"))
+            }
             Ok(None) => return Err(eg!("sync channel closed")),
             Err(_) => return Err(eg!("sync request timed out")),
         };
@@ -120,6 +134,134 @@ pub async fn sync_to_tip(
         "block sync complete"
     );
     Ok(())
+}
+
+/// Attempt state sync via snapshots. Returns `Ok(true)` if successful,
+/// `Ok(false)` if no snapshots are available (caller should fall back to block sync).
+pub async fn sync_via_snapshot(
+    state: &mut SyncState<'_>,
+    request_tx: &mpsc::Sender<SyncRequest>,
+    response_rx: &mut mpsc::Receiver<SyncResponse>,
+) -> Result<bool> {
+    // 1. Request snapshot list from peer
+    request_tx
+        .send(SyncRequest::GetSnapshots)
+        .await
+        .map_err(|_| eg!("sync channel closed"))?;
+
+    // 2. Wait for the snapshot list (10s timeout)
+    let snapshots = match timeout(SYNC_TIMEOUT, response_rx.recv()).await {
+        Ok(Some(SyncResponse::Snapshots(list))) => list,
+        Ok(Some(SyncResponse::Error(e))) => return Err(eg!("peer error: {}", e)),
+        Ok(Some(_)) => return Err(eg!("unexpected response to GetSnapshots")),
+        Ok(None) => return Err(eg!("sync channel closed")),
+        Err(_) => {
+            info!("snapshot list request timed out");
+            return Ok(false);
+        }
+    };
+
+    // 3. If no snapshots available, fall back to block sync
+    if snapshots.is_empty() {
+        info!("peer has no snapshots, falling back to block sync");
+        return Ok(false);
+    }
+
+    // 4. Pick the latest snapshot (highest height)
+    let snapshot = snapshots
+        .iter()
+        .max_by_key(|s| s.height.as_u64())
+        .unwrap()
+        .clone();
+
+    // Skip if we're already at or past this height
+    if snapshot.height <= *state.last_committed_height {
+        info!(
+            snapshot_height = snapshot.height.as_u64(),
+            our_height = state.last_committed_height.as_u64(),
+            "snapshot not ahead of our state, falling back to block sync"
+        );
+        return Ok(false);
+    }
+
+    info!(
+        snapshot_height = snapshot.height.as_u64(),
+        chunks = snapshot.chunks,
+        "offering snapshot to application"
+    );
+
+    // 5. Offer the snapshot to the application
+    let offer_result = state.app.offer_snapshot(&snapshot);
+    match offer_result {
+        SnapshotOfferResult::Accept => {}
+        SnapshotOfferResult::Reject => {
+            info!("application rejected snapshot, falling back to block sync");
+            return Ok(false);
+        }
+        SnapshotOfferResult::Abort => {
+            return Err(eg!("application aborted snapshot sync"));
+        }
+    }
+
+    // 6. Download and apply chunks one by one
+    for chunk_index in 0..snapshot.chunks {
+        // Request chunk from peer
+        request_tx
+            .send(SyncRequest::GetSnapshotChunk {
+                height: snapshot.height,
+                chunk_index,
+            })
+            .await
+            .map_err(|_| eg!("sync channel closed"))?;
+
+        // Wait for chunk response
+        let chunk_data = match timeout(SYNC_TIMEOUT, response_rx.recv()).await {
+            Ok(Some(SyncResponse::SnapshotChunk { data, .. })) => data,
+            Ok(Some(SyncResponse::Error(e))) => return Err(eg!("peer error: {}", e)),
+            Ok(Some(_)) => return Err(eg!("unexpected response to GetSnapshotChunk")),
+            Ok(None) => return Err(eg!("sync channel closed")),
+            Err(_) => return Err(eg!("snapshot chunk request timed out")),
+        };
+
+        // Apply chunk to the application
+        let apply_result = state.app.apply_snapshot_chunk(chunk_data, chunk_index);
+        match apply_result {
+            ChunkApplyResult::Accept => {
+                info!(
+                    chunk = chunk_index,
+                    total = snapshot.chunks,
+                    "applied snapshot chunk"
+                );
+            }
+            ChunkApplyResult::Retry => {
+                // For now, treat retry as a fatal error; a more sophisticated
+                // implementation could retry the chunk download.
+                warn!(chunk = chunk_index, "application requested chunk retry — aborting snapshot sync");
+                return Err(eg!(
+                    "snapshot chunk {} apply requested retry (not yet supported)",
+                    chunk_index
+                ));
+            }
+            ChunkApplyResult::Abort => {
+                return Err(eg!(
+                    "application aborted snapshot sync at chunk {}",
+                    chunk_index
+                ));
+            }
+        }
+    }
+
+    // 7. Update state to reflect the snapshot height
+    *state.last_committed_height = snapshot.height;
+    // The app_hash after snapshot restore is the snapshot's integrity hash
+    // (the application should set its own state root internally).
+    *state.last_app_hash = BlockHash(snapshot.hash);
+
+    info!(
+        height = snapshot.height.as_u64(),
+        "snapshot sync complete"
+    );
+    Ok(true)
 }
 
 /// Replay a batch of blocks: store them and run the application lifecycle.

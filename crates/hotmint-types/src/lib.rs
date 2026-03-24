@@ -18,7 +18,7 @@ pub use crypto::{AggregateSignature, PublicKey, Signature, Signer, Verifier};
 pub use epoch::{Epoch, EpochNumber};
 pub use evidence::EquivocationProof;
 pub use message::ConsensusMessage;
-pub use sync::{SyncRequest, SyncResponse};
+pub use sync::{ChunkApplyResult, SnapshotInfo, SnapshotOfferResult, SyncRequest, SyncResponse};
 pub use validator::{ValidatorId, ValidatorInfo, ValidatorSet};
 pub use validator_update::{EndBlockResponse, Event, EventAttribute, ValidatorUpdate};
 pub use view::ViewNumber;

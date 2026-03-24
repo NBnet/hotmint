@@ -441,6 +441,7 @@ async fn run_node(
         let sync_status_rx = sync_status_rx;
         let mut sync_req_rx = sync_req_rx;
         let sync_sink = sync_sink.clone();
+        let responder_app = app.clone();
         tokio::spawn(async move {
             use hotmint_types::sync::{SyncRequest, SyncResponse};
             while let Some(req) = sync_req_rx.recv().await {
@@ -473,6 +474,20 @@ async fn run_node(
                             .collect();
                         drop(s);
                         SyncResponse::Blocks(blocks_with_qcs)
+                    }
+                    SyncRequest::GetSnapshots => {
+                        SyncResponse::Snapshots(responder_app.list_snapshots())
+                    }
+                    SyncRequest::GetSnapshotChunk {
+                        height,
+                        chunk_index,
+                    } => {
+                        let data = responder_app.load_snapshot_chunk(height, chunk_index);
+                        SyncResponse::SnapshotChunk {
+                            height,
+                            chunk_index,
+                            data,
+                        }
                     }
                 };
                 sync_sink.send_sync_response(req.request_id, &resp);
