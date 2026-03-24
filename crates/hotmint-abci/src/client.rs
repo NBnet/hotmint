@@ -2,6 +2,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use ruc::*;
 
@@ -28,11 +29,26 @@ impl IpcApplicationClient {
         }
     }
 
+    /// IPC read/write timeout.  Prevents the consensus engine from hanging
+    /// indefinitely when the application process is deadlocked or unresponsive.
+    const IPC_TIMEOUT: Duration = Duration::from_secs(5);
+
     /// Try to connect to the ABCI socket. Returns an error if unreachable.
     pub fn check_connection(&self) -> Result<()> {
         let stream = UnixStream::connect(&self.socket_path).c(d!("connect to ABCI socket"))?;
+        Self::set_timeouts(&stream)?;
         let mut guard = self.conn.lock().map_err(|e| eg!(e.to_string()))?;
         *guard = Some(stream);
+        Ok(())
+    }
+
+    fn set_timeouts(stream: &UnixStream) -> Result<()> {
+        stream
+            .set_read_timeout(Some(Self::IPC_TIMEOUT))
+            .c(d!("set IPC read timeout"))?;
+        stream
+            .set_write_timeout(Some(Self::IPC_TIMEOUT))
+            .c(d!("set IPC write timeout"))?;
         Ok(())
     }
 
@@ -43,6 +59,7 @@ impl IpcApplicationClient {
         let mut guard = self.conn.lock().map_err(|e| eg!(e.to_string()))?;
         if guard.is_none() {
             let stream = UnixStream::connect(&self.socket_path).c(d!("connect to IPC socket"))?;
+            Self::set_timeouts(&stream)?;
             *guard = Some(stream);
         }
         let stream = guard.as_mut().unwrap();
@@ -55,6 +72,7 @@ impl IpcApplicationClient {
                 *guard = None;
                 let new_stream =
                     UnixStream::connect(&self.socket_path).c(d!("reconnect to IPC socket"))?;
+                Self::set_timeouts(&new_stream)?;
                 *guard = Some(new_stream);
                 let stream = guard.as_mut().unwrap();
                 write_frame_sync(stream, &payload).c(d!("write request frame (retry)"))?;
