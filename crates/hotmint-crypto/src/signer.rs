@@ -66,7 +66,14 @@ impl Verifier for Ed25519Verifier {
     }
 
     fn verify_aggregate(&self, vs: &ValidatorSet, msg: &[u8], agg: &AggregateSignature) -> bool {
+        // Collect all (public_key, signature) pairs for batch verification.
+        // ed25519_dalek::verify_batch is significantly faster than N individual
+        // verifications because it uses a random linear combination trick
+        // (Bos-Coster method) that amortises the expensive Ed25519 group ops.
+        let mut pks = Vec::new();
+        let mut sigs = Vec::new();
         let mut sig_idx = 0;
+
         for (i, signed) in agg.signers.iter().enumerate() {
             if !signed {
                 continue;
@@ -77,13 +84,30 @@ impl Verifier for Ed25519Verifier {
             let Some(vi) = vs.validators().get(i) else {
                 return false;
             };
-            let pk = &vi.public_key;
-            if !self.verify(pk, msg, &agg.signatures[sig_idx]) {
+            let pk_bytes: [u8; 32] = match vi.public_key.0.as_slice().try_into() {
+                Ok(b) => b,
+                Err(_) => return false,
+            };
+            let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes) else {
                 return false;
-            }
+            };
+            let sig_bytes: [u8; 64] = match agg.signatures[sig_idx].0.as_slice().try_into() {
+                Ok(b) => b,
+                Err(_) => return false,
+            };
+            let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+            pks.push(vk);
+            sigs.push(sig);
             sig_idx += 1;
         }
-        sig_idx == agg.signatures.len()
+
+        if sig_idx != agg.signatures.len() {
+            return false;
+        }
+
+        // All signatures verify the same message, so expand it for each entry.
+        let messages: Vec<&[u8]> = vec![msg; sigs.len()];
+        ed25519_dalek::verify_batch(&messages, &sigs, &pks).is_ok()
     }
 }
 
