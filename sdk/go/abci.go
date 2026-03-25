@@ -17,8 +17,9 @@ type Application interface {
 	ValidateBlock(block *pb.Block, ctx *pb.BlockContext) bool
 
 	// ValidateTx validates a single transaction for mempool admission.
+	// Returns (ok, priority) — priority determines mempool ordering.
 	// ctx may be nil.
-	ValidateTx(tx []byte, ctx *pb.TxContext) bool
+	ValidateTx(tx []byte, ctx *pb.TxContext) (bool, uint64)
 
 	// ExecuteBlock executes an entire block and returns validator updates and events.
 	ExecuteBlock(txs [][]byte, ctx *pb.BlockContext) (*pb.EndBlockResponse, error)
@@ -39,7 +40,7 @@ type BaseApplication struct{}
 
 func (BaseApplication) CreatePayload(_ *pb.BlockContext) []byte { return nil }
 func (BaseApplication) ValidateBlock(_ *pb.Block, _ *pb.BlockContext) bool { return true }
-func (BaseApplication) ValidateTx(_ []byte, _ *pb.TxContext) bool { return true }
+func (BaseApplication) ValidateTx(_ []byte, _ *pb.TxContext) (bool, uint64) { return true, 0 }
 func (BaseApplication) ExecuteBlock(_ [][]byte, _ *pb.BlockContext) (*pb.EndBlockResponse, error) {
 	return &pb.EndBlockResponse{}, nil
 }

@@ -25,9 +25,9 @@ impl ApplicationHandler for EchoHandler {
         true
     }
 
-    fn validate_tx(&self, tx: Vec<u8>, _ctx: Option<TxContext>) -> bool {
-        // Accept if first byte is non-zero.
-        tx.first().copied().unwrap_or(0) != 0
+    fn validate_tx(&self, tx: Vec<u8>, _ctx: Option<TxContext>) -> (bool, u64) {
+        let ok = tx.first().copied().unwrap_or(0) != 0;
+        (ok, 0)
     }
 
     fn execute_block(

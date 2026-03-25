@@ -134,6 +134,7 @@ message ValidateBlockResponse {
 
 message ValidateTxResponse {
   bool ok = 1;
+  uint64 priority = 2;
 }
 
 message ExecuteBlockResponse {

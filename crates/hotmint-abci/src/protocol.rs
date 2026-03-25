@@ -40,7 +40,7 @@ pub enum Request {
 pub enum Response {
     CreatePayload(Vec<u8>),
     ValidateBlock(bool),
-    ValidateTx(bool),
+    ValidateTx { ok: bool, priority: u64 },
     ExecuteBlock(Result<EndBlockResponse, String>),
     OnCommit(Result<(), String>),
     OnEvidence(Result<(), String>),
@@ -158,9 +158,10 @@ pub fn encode_response(resp: &Response) -> Vec<u8> {
                 pb::ValidateBlockResponse { ok: *ok },
             )),
         },
-        Response::ValidateTx(ok) => pb::Response {
+        Response::ValidateTx { ok, priority } => pb::Response {
             response: Some(pb::response::Response::ValidateTx(pb::ValidateTxResponse {
                 ok: *ok,
+                priority: *priority,
             })),
         },
         Response::ExecuteBlock(result) => pb::Response {
@@ -199,7 +200,10 @@ pub fn decode_response(buf: &[u8]) -> Result<Response, prost::DecodeError> {
     {
         pb::response::Response::CreatePayload(r) => Response::CreatePayload(r.payload),
         pb::response::Response::ValidateBlock(r) => Response::ValidateBlock(r.ok),
-        pb::response::Response::ValidateTx(r) => Response::ValidateTx(r.ok),
+        pb::response::Response::ValidateTx(r) => Response::ValidateTx {
+            ok: r.ok,
+            priority: r.priority,
+        },
         pb::response::Response::ExecuteBlock(r) => {
             if r.error.is_empty() {
                 let ebr = r.result.map(Into::into).unwrap_or_default();

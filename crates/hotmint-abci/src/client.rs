@@ -167,9 +167,9 @@ impl Application for IpcApplicationClient {
             ctx: ctx.cloned(),
         };
         match self.call(&req) {
-            Ok(Response::ValidateTx(ok)) => TxValidationResult {
+            Ok(Response::ValidateTx { ok, priority }) => TxValidationResult {
                 valid: ok,
-                priority: 0,
+                priority,
             },
             Ok(other) => {
                 tracing::error!(?other, "IPC_FAULT: unexpected response for validate_tx");
