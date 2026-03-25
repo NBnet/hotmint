@@ -44,6 +44,8 @@ pub struct HttpRpcState {
     pub event_tx: broadcast::Sender<ChainEvent>,
     /// Per-IP rate limiter for submit_tx (C-2: prevents bypass via multiple connections).
     pub ip_limiter: Mutex<PerIpRateLimiter>,
+    /// Current number of active WebSocket connections.
+    ws_connection_count: std::sync::atomic::AtomicUsize,
 }
 
 /// HTTP JSON-RPC server (runs alongside the existing TCP RPC server).
@@ -63,6 +65,7 @@ impl HttpRpcServer {
                 rpc,
                 event_tx,
                 ip_limiter: Mutex::new(PerIpRateLimiter::new()),
+                ws_connection_count: std::sync::atomic::AtomicUsize::new(0),
             }),
             addr,
         }
@@ -121,12 +124,26 @@ async fn json_rpc_handler(
     axum::Json(response)
 }
 
+/// Maximum concurrent WebSocket connections to prevent resource exhaustion.
+const MAX_WS_CONNECTIONS: usize = 1024;
+
 /// GET /ws handler: upgrade to WebSocket and stream chain events.
 async fn ws_upgrade_handler(
     State(state): State<Arc<HttpRpcState>>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    let current = state
+        .ws_connection_count
+        .load(std::sync::atomic::Ordering::Relaxed);
+    if current >= MAX_WS_CONNECTIONS {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "too many WebSocket connections",
+        )
+            .into_response();
+    }
     ws.on_upgrade(move |socket| handle_ws(socket, state))
+        .into_response()
 }
 
 /// Client-sent subscription filter for WebSocket events.
@@ -200,6 +217,9 @@ impl SubscribeFilter {
 
 /// WebSocket connection handler: subscribe to chain events and forward them.
 async fn handle_ws(mut socket: WebSocket, state: Arc<HttpRpcState>) {
+    state
+        .ws_connection_count
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut rx = state.event_tx.subscribe();
     let mut filter = SubscribeFilter::default();
 
@@ -247,4 +267,7 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<HttpRpcState>) {
             }
         }
     }
+    state
+        .ws_connection_count
+        .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 }

@@ -245,8 +245,14 @@ async fn run_node(
         ValidatorId(gv.id)
     } else {
         is_fullnode = true;
-        // Use u64::MAX as sentinel to avoid collision with any real validator ID.
-        ValidatorId(u64::MAX)
+        // Sentinel ID for fullnodes — they never sign votes or propose blocks.
+        // Verify no real validator uses this ID to prevent confusion.
+        let sentinel = ValidatorId(u64::MAX);
+        assert!(
+            !validator_set.validators().iter().any(|v| v.id == sentinel),
+            "genesis contains a validator with ID u64::MAX which collides with the fullnode sentinel"
+        );
+        sentinel
     };
 
     if is_fullnode {
