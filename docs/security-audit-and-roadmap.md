@@ -33,7 +33,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 | 投票阶段 | 三阶段：Propose → Pre-vote → Pre-commit | 两链：Propose → Vote → QC → Vote2 → DC |
 | 提交规则 | Pre-commit 超 2/3 后单块提交 | Double Certificate（两轮 2f+1）后双链提交 |
 | 视图切换（ViewChange） | 复杂：需收集 prevotes，存在 Nil 投票路径 | 线性：Wish 消息聚合为 TimeoutCert，无额外开销 |
-| 提议者选举 | 加权轮询（weighted round-robin） | 简单轮询（`view % validator_count`）⚠️ 缺权重 |
+| 提议者选举 | 加权轮询（weighted round-robin） | 加权轮询（`view % total_power` 累计权重）✅ |
 | 网络复杂度 | O(n²) 广播 | O(n²)（同阶，但阶段更少） |
 | 理论延迟 | ~2 个网络往返（三阶段） | ~2 个网络往返（两阶段，各含 QC 聚合） |
 | BFT 容错边界 | f < n/3 | f < n/3 |
@@ -45,10 +45,10 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 |--------|---------------|-------------|
 | 重放攻击保护 | Chain ID 编码在签名域 | Blake3(chain_id) 注入所有签名 ✅ |
 | 状态分叉检测 | App hash 链 + ABCI 校验 | App hash 链（每块头携带上一块执行结果）✅ |
-| 双签检测 | 完整证据收集 + 网络广播 | 局部检测（同 view+type 不同 block_hash），不持久化 ⚠️ |
+| 双签检测 | 完整证据收集 + 网络广播 | 检测 + P2P 广播 + 内存存储 + 签名验证 ✅（vsdb 持久化待完成）|
 | WAL 崩溃恢复 | 有 Write-Ahead Log，精确重放 | 无 WAL，依赖 vsdb `PersistentConsensusState` ⚠️ |
 | 锁定机制 | polkaValue / 轮次锁 | `locked_qc`（安全性等价）✅ |
-| 跨 Epoch 投票重放防护 | epoch 编码在签名或状态机切换保护中 | `signing_bytes` 仅含 `chain_id_hash + view + block_hash`，缺少 epoch_number ⚠️ |
+| 跨 Epoch 投票重放防护 | epoch 编码在签名或状态机切换保护中 | `signing_bytes` 含 `chain_id_hash + epoch + view + block_hash`（HOTMINT_VOTE_V2）✅ |
 
 ---
 
@@ -65,10 +65,10 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 | 块提交回调 | `Commit`（含 app_hash） | `on_commit` | ✅ |
 | 证据惩罚 | `FinalizeBlock.misbehavior[]` | `on_evidence(EquivocationProof)` | ✅ |
 | 状态查询 | `Query` | `query(path, data)` | ✅ |
-| **投票扩展附加** | **`ExtendVote`** | **缺失** | ❌ |
-| **投票扩展验证** | **`VerifyVoteExtension`** | **缺失** | ❌ |
-| 快照创建 | `ListSnapshots` / `LoadSnapshotChunk` | **缺失** | ❌ |
-| 快照接收 | `OfferSnapshot` / `ApplySnapshotChunk` | **缺失** | ❌ |
+| **投票扩展附加** | **`ExtendVote`** | `extend_vote` | ✅ |
+| **投票扩展验证** | **`VerifyVoteExtension`** | `verify_vote_extension` | ✅ |
+| 快照创建 | `ListSnapshots` / `LoadSnapshotChunk` | `list_snapshots` / `load_snapshot_chunk` | ✅ |
+| 快照接收 | `OfferSnapshot` / `ApplySnapshotChunk` | `offer_snapshot` / `apply_snapshot_chunk` | ✅ |
 | 应用信息 | `Info`（含 last_block_height） | `tracks_app_hash` 间接实现 | ⚠️ |
 | 初始化创世 | `InitChain` | 无显式接口（应用构造时处理） | ⚠️ |
 
@@ -77,8 +77,8 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 | 对比项 | CometBFT v0.38 | Hotmint v0.7 |
 |--------|---------------|-------------|
 | 同进程接口 | Go interface | Rust trait ✅ |
-| 跨语言/跨进程 | gRPC（`.proto` 多语言 SDK） | Unix domain socket + CBOR（`hotmint-abci`）⚠️ |
-| IPC 超时保护 | gRPC 内置超时 | **无超时**，`spawn_blocking` 可能永久挂起 ❌ |
+| 跨语言/跨进程 | gRPC（`.proto` 多语言 SDK） | Unix domain socket + protobuf（`hotmint-abci`）+ Go SDK |
+| IPC 超时保护 | gRPC 内置超时 | 5s 读写超时（`set_read_timeout` / `set_write_timeout`）✅ |
 
 ---
 
@@ -90,9 +90,9 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 | 消息路由 | Reactor 模型 | Notification + Request-Response 协议分离 ✅ |
 | 点对点加密 | SecretConnection（Noise） | litep2p 内置 Noise/TLS ✅ |
 | Peer 发现 | PEX Reactor + 种子节点 | PEX 协议（`/hotmint/pex/1`）✅ |
-| 验证者连接保护 | Persistent Peers 优先保留槽位 | **无验证者槽保留**，可被女巫节点占满 ❌ |
-| 连接管理 | 持久/非持久对等体 + 拨号调度 | 维护循环（10s）+ 退避，无优先级 ⚠️ |
-| 消息压缩 | 内部协议处理 | zstd 压缩，压缩侧 `.unwrap()` 无保护 ⚠️ |
+| 验证者连接保护 | Persistent Peers 优先保留槽位 | 验证者穿透 max_peers 限制 ✅（独立保留槽待完善）|
+| 连接管理 | 持久/非持久对等体 + 拨号调度 | 维护循环（10s）+ 退避 + chain_id 握手隔离 ✅ |
+| 消息压缩 | 内部协议处理 | zstd 压缩，压缩端 Result 传播 ✅ |
 
 ---
 
@@ -100,13 +100,13 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 | 对比项 | CometBFT v0.38 | Hotmint v0.7 |
 |--------|---------------|-------------|
-| 数据结构 | 并发链表 + LRU 去重缓存 | `VecDeque`（FIFO）+ `HashSet`（Blake3）|
-| 排序策略 | **优先级队列**（应用返回 priority 字段） | **FIFO 严格按序** ❌ |
+| 数据结构 | 并发链表 + LRU 去重缓存 | `BTreeSet<TxEntry>` + `HashMap<TxHash, u64>` ✅ |
+| 排序策略 | **优先级队列**（应用返回 priority 字段） | 优先级队列（priority ASC + hash tiebreak）+ RBF ✅ |
 | 容量控制 | `max_txs`（数量）+ `max_txs_bytes`（总字节） | `max_size`（数量）+ `max_tx_bytes`（单笔）|
-| 溢出驱逐 | 低优先级交易被驱逐 | 直接拒绝新交易 ❌ |
+| 溢出驱逐 | 低优先级交易被驱逐 | 低优先级驱逐 ✅ |
 | 重验证 | 出块后对悬挂交易重跑 `CheckTx` | 无重验证 ❌ |
-| Gas 感知 | 应用返回 `gas_wanted`，Mempool 据此驱逐 | 无 Gas 感知 ❌ |
-| API 速率限制 | 支持限速配置 | **无任何速率限制**，可被瞬间打满 ❌ |
+| Gas 感知 | 应用返回 `gas_wanted`，Mempool 据此驱逐 | `gas_wanted` 字段 + `max_gas_per_block` 截断 ✅ |
+| API 速率限制 | 支持限速配置 | 令牌桶限速（TCP per-conn + HTTP 全局）✅ |
 | P2P 广播 | Flood Mempool，对等体 Gossip | 仅 RPC 接受，无 P2P gossip ❌ |
 
 ---
@@ -125,9 +125,9 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 | 对比项 | CometBFT v0.38 | Hotmint v0.7 |
 |--------|---------------|-------------|
-| 能力 | **完整支持**：快照列举、分块下载、校验、应用 | **完全缺失** ❌ |
-| 应用侧接口 | `ListSnapshots`、`LoadSnapshotChunk`、`OfferSnapshot`、`ApplySnapshotChunk` | 未实现 |
-| 典型加入时间 | 分钟级（下载快照） | 与链龄正相关（数小时至数天）|
+| 能力 | **完整支持**：快照列举、分块下载、校验、应用 | 完整支持（`sync_via_snapshot` + 分块下载）✅ |
+| 应用侧接口 | `ListSnapshots`、`LoadSnapshotChunk`、`OfferSnapshot`、`ApplySnapshotChunk` | 4 个方法全部实现 ✅ |
+| 典型加入时间 | 分钟级（下载快照） | 分钟级（快照）或与链龄相关（全量重放）|
 
 ---
 
@@ -135,9 +135,9 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 | 对比项 | CometBFT v0.38 | Hotmint v0.7 |
 |--------|---------------|-------------|
-| 实现 | 完整：二分搜索验证、不信任区段跳跃 | **完全缺失** ❌ |
-| Merkle 证明输出 | `Query` 返回 Merkle proof | RPC `query` 无 Merkle proof ❌ |
-| 跨链基础 | IBC 协议依赖轻客户端 | 无法实现标准 IBC ❌ |
+| 实现 | 完整：二分搜索验证、不信任区段跳跃 | `hotmint-light` crate：`verify_header` + `update_validator_set` ✅ |
+| Merkle 证明输出 | `Query` 返回 Merkle proof | RPC `get_header` / `get_commit_qc` ✅（Merkle proof 待完善）|
+| 跨链基础 | IBC 协议依赖轻客户端 | 基础设施就绪，Merkle proof 待集成 |
 
 ---
 
@@ -145,10 +145,10 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 | 对比项 | CometBFT v0.38 | Hotmint v0.7 |
 |--------|---------------|-------------|
-| 传输协议 | HTTP + WebSocket（标准） | 原始 TCP 换行 JSON（非标准）❌ |
-| 事件订阅 | WebSocket `subscribe`（丰富过滤语法） | **缺失** ❌ |
-| 方法数量 | 20+ 方法 | 5 个方法 ⚠️ |
-| 交易查询 | 按 hash 查询、事件索引 | 不支持 ❌ |
+| 传输协议 | HTTP + WebSocket（标准） | TCP JSON + axum HTTP/WS（`POST /` + `GET /ws`）✅ |
+| 事件订阅 | WebSocket `subscribe`（丰富过滤语法） | WS 推送 `NewBlock` 事件 ✅（过滤待完善）|
+| 方法数量 | 20+ 方法 | 10+ 方法（status, block, epoch, peers, submit_tx, header, commit_qc 等）|
+| 交易查询 | 按 hash 查询、事件索引 | 不支持（`get_tx` 待实现）|
 
 ---
 
@@ -166,9 +166,9 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 | 对比项 | CometBFT v0.38 | Hotmint v0.7 |
 |--------|---------------|-------------|
-| 双签证据 | `DuplicateVoteEvidence`（持久化 + gossip）| `EquivocationProof`（检测即触发，不持久化）⚠️ |
-| 证据广播 | P2P 层 gossip，全网可见 | 无证据广播 ❌ |
-| 证据持久化 | 证据池持久化，重启不丢 | 内存检测，重启丢失 ❌ |
+| 双签证据 | `DuplicateVoteEvidence`（持久化 + gossip）| `EquivocationProof`（检测 + 签名验证 + 广播 + 内存存储）✅ |
+| 证据广播 | P2P 层 gossip，全网可见 | `ConsensusMessage::Evidence` P2P 广播 ✅ |
+| 证据持久化 | 证据池持久化，重启不丢 | 内存存储 + `mark_committed` ✅（vsdb 持久化待完善）|
 | 离线惩罚 | 支持（`downtime` 逻辑）| 无 ❌ |
 
 ---
@@ -178,21 +178,21 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 | 特性 | CometBFT v0.38 | Hotmint v0.7 | 差距等级 |
 |------|:--------------:|:------------:|:--------:|
 | BFT 共识核心 | ✅ | ✅ | 无 |
-| 加权提议者选举 | ✅ | ❌ | 中 |
+| 加权提议者选举 | ✅ | ✅ | 无 |
 | BFT Time | ✅ | ❌ | 低 |
 | ABCI 准入接口（Prepare/Process）| ✅ | ✅ | 无 |
-| **Vote Extensions** | ✅ | ❌ | **高** |
-| **快照状态同步** | ✅ | ❌ | **高** |
-| **轻客户端验证** | ✅ | ❌ | **高** |
+| **Vote Extensions** | ✅ | ✅ | 无 |
+| **快照状态同步** | ✅ | ✅ | 无 |
+| **轻客户端验证** | ✅ | ✅ | Merkle proof 待完善 |
 | **Merkle 证明输出** | ✅ | ❌ | **高** |
-| **WebSocket 事件订阅** | ✅ | ❌ | **高** |
-| **优先级内存池** | ✅ | ❌ | **高** |
+| **WebSocket 事件订阅** | ✅ | ✅ | 过滤待完善 |
+| **优先级内存池** | ✅ | ✅ | 无 |
 | Mempool P2P Gossip | ✅ | ❌ | 中 |
 | Mempool 重验证 | ✅ | ❌ | 中 |
 | Block Sync（多节点并发）| ✅ | ⚠️ 单节点 | 中 |
 | WAL 崩溃恢复 | ✅ | ⚠️ 部分 | 中 |
-| 证据持久化与广播 | ✅ | ❌ | 中 |
-| 标准 HTTP JSON-RPC | ✅ | ❌ | 中 |
+| 证据持久化与广播 | ✅ | ✅ | vsdb 持久化待完善 |
+| 标准 HTTP JSON-RPC | ✅ | ✅ | 无 |
 | 交易/区块历史查询 | ✅ | ❌ | 中 |
 | IBC 跨链能力 | ✅（需轻客户端）| ❌ | **高** |
 | 完整运维 CLI | ✅ | ⚠️ 基础 | 低 |
