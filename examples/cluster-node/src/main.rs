@@ -139,6 +139,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
         peer_info_rx,
         connected_count_rx: _,
         notif_connected_count_rx: mut notif_count_rx,
+        mempool_tx_rx: _,
     } = {
         let peer_book_path = home.join("data").join("peer_book.json");
         let peer_book = hotmint::network::peer::PeerBook::load(&peer_book_path)
@@ -204,6 +205,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
         peer_info_rx,
         validator_set_rx: vs_rx,
         app: None,
+        tx_gossip: None,
     };
     let rpc_server = hotmint::api::rpc::RpcServer::bind(&config.rpc.laddr, rpc_state)
         .await

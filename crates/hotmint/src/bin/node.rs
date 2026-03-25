@@ -318,6 +318,7 @@ async fn run_node(
         peer_info_rx,
         connected_count_rx: _,
         notif_connected_count_rx: mut notif_count_rx,
+        mut mempool_tx_rx,
     } = {
         let peer_book_path = home.join("data").join("peer_book.json");
         let peer_book = hotmint::network::peer::PeerBook::load(&peer_book_path)
@@ -400,6 +401,9 @@ async fn run_node(
         config.mempool.max_tx_bytes,
     ));
 
+    // Channel for tx gossip: RPC → network sink.
+    let (tx_gossip_tx, mut tx_gossip_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4096);
+
     let app: Arc<dyn Application> = Arc::new(AppWithStatus {
         inner: app_box,
         status_tx,
@@ -418,6 +422,7 @@ async fn run_node(
         peer_info_rx,
         validator_set_rx: vs_rx,
         app: Some(app.clone()),
+        tx_gossip: Some(tx_gossip_tx),
     };
     // 12. Spawn network + RPC before sync (sync needs the network running).
     // Capture JoinHandles to detect unexpected exits and abort the process.
@@ -436,6 +441,33 @@ async fn run_node(
     };
 
     let sync_sink = network_sink.clone();
+
+    // Mempool gossip: forward locally accepted txs to peers via the network.
+    let gossip_sink = network_sink.clone();
+    tokio::spawn(async move {
+        while let Some(tx_bytes) = tx_gossip_rx.recv().await {
+            gossip_sink.broadcast_tx(tx_bytes);
+        }
+    });
+
+    // Mempool gossip: receive txs from peers and add to local mempool.
+    let gossip_mempool = mempool.clone();
+    let gossip_app = app.clone();
+    tokio::spawn(async move {
+        while let Some(tx_bytes) = mempool_tx_rx.recv().await {
+            // Validate the gossipped tx before adding.
+            let (priority, gas_wanted) = {
+                let result = gossip_app.validate_tx(&tx_bytes, None);
+                if !result.valid {
+                    continue;
+                }
+                (result.priority, result.gas_wanted)
+            };
+            let _ = gossip_mempool
+                .add_tx_with_gas(tx_bytes, priority, gas_wanted)
+                .await;
+        }
+    });
 
     // Sync responder: answer incoming sync requests from peers.
     // Gated by config.node.serve_sync; when disabled, spawn a permanently-pending

@@ -29,10 +29,7 @@ pub enum ChainEvent {
         timestamp: u64,
     },
     /// Emitted when a transaction is included in a committed block.
-    TxCommitted {
-        tx_hash: String,
-        height: u64,
-    },
+    TxCommitted { tx_hash: String, height: u64 },
     /// Emitted when a new epoch begins (validator set change).
     EpochChange {
         epoch: u64,

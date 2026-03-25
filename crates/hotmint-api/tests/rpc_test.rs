@@ -23,6 +23,7 @@ async fn setup_server() -> (String, tokio::task::JoinHandle<()>) {
         peer_info_rx,
         validator_set_rx,
         app: None,
+        tx_gossip: None,
     };
 
     // Probe IPv4 loopback; fall back to IPv6 (e.g. FreeBSD without IPv4 on lo0)

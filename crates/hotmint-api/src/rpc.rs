@@ -5,7 +5,7 @@ use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::types::{
     BlockInfo, CommitQcInfo, EpochInfo, HeaderInfo, RpcRequest, RpcResponse, StatusInfo, TxResult,
@@ -72,6 +72,8 @@ pub struct RpcState {
     pub validator_set_rx: watch::Receiver<Vec<ValidatorInfoResponse>>,
     /// Application reference for tx validation (optional for backward compatibility).
     pub app: Option<Arc<dyn Application>>,
+    /// Optional sender to gossip accepted transactions to peers.
+    pub tx_gossip: Option<mpsc::Sender<Vec<u8>>>,
 }
 
 /// Simple JSON-RPC server over TCP (one JSON object per line)
@@ -288,8 +290,14 @@ pub(crate) async fn handle_request(
             };
             let accepted = state
                 .mempool
-                .add_tx_with_gas(tx_bytes, priority, gas_wanted)
+                .add_tx_with_gas(tx_bytes.clone(), priority, gas_wanted)
                 .await;
+            // Gossip accepted transactions to peers.
+            if accepted {
+                if let Some(ref gossip) = state.tx_gossip {
+                    let _ = gossip.try_send(tx_bytes);
+                }
+            }
             json_ok(req.id, &TxResult { accepted })
         }
 

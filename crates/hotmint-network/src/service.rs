@@ -40,10 +40,13 @@ use crate::peer::{PeerBook, PeerInfo, PeerRole};
 use crate::pex::{PexConfig, PexRequest, PexResponse};
 
 const NOTIF_PROTOCOL: &str = "/hotmint/consensus/notif/1";
+const MEMPOOL_NOTIF_PROTOCOL: &str = "/hotmint/mempool/notif/1";
 const REQ_RESP_PROTOCOL: &str = "/hotmint/consensus/reqresp/1";
 const SYNC_PROTOCOL: &str = "/hotmint/sync/1";
 const PEX_PROTOCOL: &str = "/hotmint/pex/1";
 const MAX_NOTIFICATION_SIZE: usize = 16 * 1024 * 1024;
+/// Max size for a single mempool tx gossip message (512 KB).
+const MAX_MEMPOOL_NOTIF_SIZE: usize = 512 * 1024;
 const MAINTENANCE_INTERVAL_SECS: u64 = 10;
 
 /// Maps ValidatorId <-> PeerId for routing
@@ -101,6 +104,8 @@ pub enum NetCommand {
     SyncRespond(RequestId, Vec<u8>),
     /// Update peer_map from new validator set (epoch transition)
     EpochChange(Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>),
+    /// Broadcast a raw transaction to all connected peers via mempool gossip.
+    BroadcastTx(Vec<u8>),
 }
 
 /// Incoming sync request forwarded to the sync responder
@@ -123,12 +128,15 @@ pub struct NetworkServiceHandles {
     /// Reaches >0 once the notification handshake completes, which is
     /// later than the raw connection and avoids the need for a fixed sleep.
     pub notif_connected_count_rx: watch::Receiver<usize>,
+    /// Receiver for transactions gossipped from peers via the mempool protocol.
+    pub mempool_tx_rx: mpsc::Receiver<Vec<u8>>,
 }
 
 /// NetworkService wraps litep2p and provides consensus-level networking
 pub struct NetworkService {
     litep2p: Litep2p,
     notif_handle: NotificationHandle,
+    mempool_notif_handle: NotificationHandle,
     reqresp_handle: RequestResponseHandle,
     sync_handle: RequestResponseHandle,
     pex_handle: RequestResponseHandle,
@@ -171,6 +179,10 @@ pub struct NetworkService {
     epoch_rx: watch::Receiver<EpochUpdate>,
     /// Per-peer rate limiting for PEX requests (F-09).
     pex_rate_limit: HashMap<PeerId, Instant>,
+    /// Sender for transactions received via mempool gossip.
+    mempool_tx_tx: mpsc::Sender<Vec<u8>>,
+    /// Dedup set for mempool gossip (blake3 hash of tx bytes).
+    mempool_seen: HashSet<[u8; 32]>,
 }
 
 /// Configuration for creating a [`NetworkService`].
@@ -222,12 +234,22 @@ impl NetworkService {
             .with_max_size(1024 * 1024) // 1MB for peer lists
             .build();
 
+        let (mempool_notif_config, mempool_notif_handle) =
+            NotifConfigBuilder::new(MEMPOOL_NOTIF_PROTOCOL.into())
+                .with_max_size(MAX_MEMPOOL_NOTIF_SIZE)
+                .with_handshake(chain_id_hash.to_vec())
+                .with_auto_accept_inbound(true)
+                .with_sync_channel_size(2048)
+                .with_async_channel_size(2048)
+                .build();
+
         let mut config_builder = ConfigBuilder::new()
             .with_tcp(TcpConfig {
                 listen_addresses: vec![listen_addr],
                 ..Default::default()
             })
             .with_notification_protocol(notif_config)
+            .with_notification_protocol(mempool_notif_config)
             .with_request_response_protocol(reqresp_config)
             .with_request_response_protocol(sync_config)
             .with_request_response_protocol(pex_config_proto);
@@ -264,6 +286,7 @@ impl NetworkService {
         let (cmd_tx, cmd_rx) = mpsc::channel(4096);
         let (sync_req_tx, sync_req_rx) = mpsc::channel(256);
         let (sync_resp_tx, sync_resp_rx) = mpsc::channel(256);
+        let (mempool_tx_tx, mempool_tx_rx) = mpsc::channel(4096);
 
         // Build initial peer info
         let initial_peers: Vec<PeerStatus> = peer_map
@@ -303,6 +326,7 @@ impl NetworkService {
             service: Self {
                 litep2p,
                 notif_handle,
+                mempool_notif_handle,
                 reqresp_handle,
                 sync_handle,
                 pex_handle,
@@ -329,6 +353,8 @@ impl NetworkService {
                 seen_backup: HashSet::new(),
                 epoch_rx,
                 pex_rate_limit: HashMap::new(),
+                mempool_tx_tx,
+                mempool_seen: HashSet::new(),
             },
             sink,
             msg_rx,
@@ -337,6 +363,7 @@ impl NetworkService {
             peer_info_rx,
             connected_count_rx,
             notif_connected_count_rx,
+            mempool_tx_rx,
         })
     }
 
@@ -363,6 +390,11 @@ impl NetworkService {
                 event = self.notif_handle.next() => {
                     if let Some(event) = event {
                         self.handle_notification_event(event).await;
+                    }
+                }
+                event = self.mempool_notif_handle.next() => {
+                    if let Some(event) = event {
+                        self.handle_mempool_notification_event(event).await;
                     }
                 }
                 event = self.reqresp_handle.next() => {
@@ -935,6 +967,48 @@ impl NetworkService {
             NetCommand::EpochChange(validators) => {
                 self.handle_epoch_change(validators).await;
             }
+            NetCommand::BroadcastTx(bytes) => {
+                for &peer in &self.connected_peers {
+                    let _ = self
+                        .mempool_notif_handle
+                        .send_sync_notification(peer, bytes.clone());
+                }
+            }
+        }
+    }
+
+    async fn handle_mempool_notification_event(&mut self, event: NotificationEvent) {
+        match event {
+            NotificationEvent::ValidateSubstream { peer, .. } => {
+                // Auto-accept is true, but handle explicitly if called.
+                self.mempool_notif_handle
+                    .send_validation_result(peer, ValidationResult::Accept);
+            }
+            NotificationEvent::NotificationStreamOpened { peer, .. } => {
+                trace!(peer = %peer, "mempool notif stream opened");
+            }
+            NotificationEvent::NotificationStreamClosed { peer } => {
+                trace!(peer = %peer, "mempool notif stream closed");
+            }
+            NotificationEvent::NotificationReceived {
+                peer: _,
+                notification,
+            } => {
+                let hash = blake3::hash(&notification);
+                let hash_bytes: [u8; 32] = *hash.as_bytes();
+                if self.mempool_seen.contains(&hash_bytes) {
+                    return;
+                }
+                self.mempool_seen.insert(hash_bytes);
+                // Cap the seen set to prevent unbounded growth.
+                if self.mempool_seen.len() > 100_000 {
+                    self.mempool_seen.clear();
+                }
+                let _ = self.mempool_tx_tx.try_send(notification.freeze().to_vec());
+            }
+            NotificationEvent::NotificationStreamOpenFailure { peer, error } => {
+                debug!(peer = %peer, ?error, "mempool notif stream open failed");
+            }
         }
     }
 
@@ -1023,6 +1097,13 @@ impl Litep2pNetworkSink {
                 }
             }
             Err(e) => warn!("sync response encode failed: {e}"),
+        }
+    }
+
+    /// Broadcast a raw transaction to all connected peers via the mempool gossip protocol.
+    pub fn broadcast_tx(&self, tx_bytes: Vec<u8>) {
+        if let Err(e) = self.cmd_tx.try_send(NetCommand::BroadcastTx(tx_bytes)) {
+            warn!("broadcast_tx cmd dropped: {e}");
         }
     }
 }

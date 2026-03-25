@@ -255,7 +255,11 @@ impl Mempool {
         }
 
         if removed > 0 {
-            debug!(removed, remaining = entries.len(), "mempool recheck complete");
+            debug!(
+                removed,
+                remaining = entries.len(),
+                "mempool recheck complete"
+            );
         }
     }
 
