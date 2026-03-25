@@ -1,6 +1,9 @@
 //! Light client verification for Hotmint BFT consensus.
 //!
 //! Verifies block headers using QC signatures without downloading full blocks.
+//! Also provides MPT state proof verification via [`LightClient::verify_state_proof`].
+
+pub use vsdb::MptProof;
 
 use ruc::*;
 
@@ -118,6 +121,23 @@ impl LightClient {
     /// Return a reference to the current trusted validator set.
     pub fn trusted_validator_set(&self) -> &ValidatorSet {
         &self.trusted_validator_set
+    }
+
+    /// Verify an MPT state proof against a trusted app_hash.
+    ///
+    /// The `app_hash` should come from a verified block header (after
+    /// `verify_header` succeeds). The `proof_bytes` are the serialized
+    /// `MptProof` nodes (as returned by the `query` RPC `proof` field).
+    /// The `expected_key` is the raw key the caller expects the proof to cover.
+    ///
+    /// Returns `Ok(true)` if the proof is valid against the given root.
+    pub fn verify_state_proof(
+        app_hash: &[u8; 32],
+        expected_key: &[u8],
+        proof: &vsdb::MptProof,
+    ) -> ruc::Result<bool> {
+        vsdb::MptCalc::verify_proof(app_hash, expected_key, proof)
+            .map_err(|e| ruc::eg!(format!("MPT proof verification failed: {e}")))
     }
 }
 

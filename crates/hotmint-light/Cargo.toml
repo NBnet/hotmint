@@ -12,6 +12,7 @@ hotmint-types.workspace = true
 hotmint-crypto.workspace = true
 ruc.workspace = true
 serde = { workspace = true }
+vsdb = { workspace = true }
 
 [dev-dependencies]
 ed25519-dalek = { workspace = true }
