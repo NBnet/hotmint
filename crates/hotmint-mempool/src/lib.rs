@@ -222,6 +222,43 @@ impl Mempool {
         self.entries.lock().await.len()
     }
 
+    /// Re-validate all pending transactions after a block commit.
+    ///
+    /// Calls `validator` on each pending tx. If it returns `None`, the tx
+    /// is evicted (no longer valid against updated state). If it returns
+    /// `Some((priority, gas_wanted))`, the tx is kept with possibly updated
+    /// priority.
+    pub async fn recheck(&self, validator: impl Fn(&[u8]) -> Option<(u64, u64)>) {
+        let mut entries = self.entries.lock().await;
+        let mut seen = self.seen.lock().await;
+
+        let old: Vec<TxEntry> = entries.iter().cloned().collect();
+        entries.clear();
+        seen.clear();
+
+        let mut removed = 0usize;
+        for entry in old {
+            match validator(&entry.tx) {
+                Some((new_priority, new_gas)) => {
+                    seen.insert(entry.hash, new_priority);
+                    entries.insert(TxEntry {
+                        tx: entry.tx,
+                        priority: new_priority,
+                        gas_wanted: new_gas,
+                        hash: entry.hash,
+                    });
+                }
+                None => {
+                    removed += 1;
+                }
+            }
+        }
+
+        if removed > 0 {
+            debug!(removed, remaining = entries.len(), "mempool recheck complete");
+        }
+    }
+
     fn hash_tx(tx: &[u8]) -> TxHash {
         *blake3::hash(tx).as_bytes()
     }

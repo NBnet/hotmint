@@ -26,8 +26,19 @@ pub enum ChainEvent {
         hash: String,
         view: u64,
         proposer: u64,
+        timestamp: u64,
     },
-    // Future: TxCommitted, EpochChange, etc.
+    /// Emitted when a transaction is included in a committed block.
+    TxCommitted {
+        tx_hash: String,
+        height: u64,
+    },
+    /// Emitted when a new epoch begins (validator set change).
+    EpochChange {
+        epoch: u64,
+        start_view: u64,
+        validator_count: usize,
+    },
 }
 
 /// Shared state for the HTTP RPC server.

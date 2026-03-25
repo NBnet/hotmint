@@ -27,6 +27,8 @@ use hotmint::network::service::{NetworkService, PeerMap};
 use hotmint::prelude::*;
 use hotmint::storage::block_store::VsdbBlockStore;
 use hotmint::storage::consensus_state::PersistentConsensusState;
+use hotmint_api::http_rpc::ChainEvent;
+use tokio::sync::broadcast;
 
 #[derive(Parser)]
 #[command(name = "hotmint-node", about = "Hotmint BFT consensus node")]
@@ -392,18 +394,20 @@ async fn run_node(
     let (vs_tx, vs_rx) = watch::channel(initial_vs);
     let (epoch_tx, epoch_rx) = watch::channel(state.current_epoch.clone());
 
+    // 10. Create mempool (before AppWithStatus so recheck can use it)
+    let mempool = Arc::new(Mempool::new(
+        config.mempool.max_txs,
+        config.mempool.max_tx_bytes,
+    ));
+
     let app: Arc<dyn Application> = Arc::new(AppWithStatus {
         inner: app_box,
         status_tx,
         vs_tx,
         epoch_tx,
+        mempool: mempool.clone(),
+        event_tx: None, // set after HTTP server is created
     });
-
-    // 10. Create mempool
-    let mempool = Arc::new(Mempool::new(
-        config.mempool.max_txs,
-        config.mempool.max_tx_bytes,
-    ));
 
     // 11. Create RPC server
     let rpc_state = hotmint::api::rpc::RpcState {
@@ -798,6 +802,8 @@ struct AppWithStatus {
     status_tx: watch::Sender<ConsensusStatus>,
     vs_tx: watch::Sender<Vec<hotmint::api::types::ValidatorInfoResponse>>,
     epoch_tx: watch::Sender<hotmint_types::epoch::Epoch>,
+    mempool: Arc<Mempool>,
+    event_tx: Option<broadcast::Sender<ChainEvent>>,
 }
 
 impl Application for AppWithStatus {
@@ -848,6 +854,35 @@ impl Application for AppWithStatus {
             ctx.epoch_start_view,
             ctx.validator_set.clone(),
         ));
+        // Publish NewBlock event to WebSocket subscribers.
+        if let Some(ref tx) = self.event_tx {
+            let _ = tx.send(ChainEvent::NewBlock {
+                height: block.height.as_u64(),
+                hash: format!("{}", block.hash),
+                view: block.view.as_u64(),
+                proposer: block.proposer.0,
+                timestamp: block.timestamp,
+            });
+        }
+        // Mempool re-validation: evict txs that are no longer valid after commit.
+        let app = self.inner.as_ref();
+        let mempool = self.mempool.clone();
+        // Use tokio::task::block_in_place since on_commit runs in a sync context
+        // within the consensus engine (via spawn_blocking or block_in_place).
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                mempool
+                    .recheck(|tx| {
+                        let result = app.validate_tx(tx, None);
+                        if result.valid {
+                            Some((result.priority, result.gas_wanted))
+                        } else {
+                            None
+                        }
+                    })
+                    .await;
+            });
+        });
         Ok(())
     }
 
