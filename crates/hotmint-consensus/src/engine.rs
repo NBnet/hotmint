@@ -556,6 +556,19 @@ pub fn verify_relay_sender(
 }
 
 impl ConsensusEngine {
+    /// Epoch numbers to try when verifying signatures. During epoch transitions,
+    /// some nodes may still be in the previous epoch. We try the current epoch
+    /// first, then fall back to epoch - 1 to tolerate the transition window.
+    fn verification_epochs(&self) -> [EpochNumber; 2] {
+        let cur = self.state.current_epoch.number;
+        let prev = if cur.as_u64() > 0 {
+            EpochNumber(cur.as_u64() - 1)
+        } else {
+            cur
+        };
+        [cur, prev]
+    }
+
     /// Verify the cryptographic signature on an inbound consensus message.
     /// Returns false (and logs a warning) if verification fails.
     /// Messages from past views are skipped (they'll be dropped by handle_message anyway).
@@ -596,13 +609,20 @@ impl ConsensusEngine {
                     warn!(proposer = %block.proposer, "propose from unknown validator");
                     return false;
                 };
-                let bytes = view_protocol::proposal_signing_bytes(
-                    &self.state.chain_id_hash,
-                    self.state.current_epoch.number,
-                    block,
-                    justify,
-                );
-                if !self.verifier.verify(&vi.public_key, &bytes, signature) {
+                let mut proposal_ok = false;
+                for epoch in self.verification_epochs() {
+                    let bytes = view_protocol::proposal_signing_bytes(
+                        &self.state.chain_id_hash,
+                        epoch,
+                        block,
+                        justify,
+                    );
+                    if self.verifier.verify(&vi.public_key, &bytes, signature) {
+                        proposal_ok = true;
+                        break;
+                    }
+                }
+                if !proposal_ok {
                     warn!(proposer = %block.proposer, "invalid proposal signature");
                     return false;
                 }
@@ -634,17 +654,24 @@ impl ConsensusEngine {
                     warn!(validator = %vote.validator, "vote from unknown validator");
                     return false;
                 };
-                let bytes = Vote::signing_bytes(
-                    &self.state.chain_id_hash,
-                    self.state.current_epoch.number,
-                    vote.view,
-                    &vote.block_hash,
-                    vote.vote_type,
-                );
-                if !self
-                    .verifier
-                    .verify(&vi.public_key, &bytes, &vote.signature)
-                {
+                let mut ok = false;
+                for epoch in self.verification_epochs() {
+                    let bytes = Vote::signing_bytes(
+                        &self.state.chain_id_hash,
+                        epoch,
+                        vote.view,
+                        &vote.block_hash,
+                        vote.vote_type,
+                    );
+                    if self
+                        .verifier
+                        .verify(&vi.public_key, &bytes, &vote.signature)
+                    {
+                        ok = true;
+                        break;
+                    }
+                }
+                if !ok {
                     warn!(validator = %vote.validator, "invalid vote signature");
                     return false;
                 }
@@ -658,12 +685,19 @@ impl ConsensusEngine {
                 let Some(leader) = vs.leader_for_view(certificate.view) else {
                     return false;
                 };
-                let bytes = view_protocol::prepare_signing_bytes(
-                    &self.state.chain_id_hash,
-                    self.state.current_epoch.number,
-                    certificate,
-                );
-                if !self.verifier.verify(&leader.public_key, &bytes, signature) {
+                let mut prepare_ok = false;
+                for epoch in self.verification_epochs() {
+                    let bytes = view_protocol::prepare_signing_bytes(
+                        &self.state.chain_id_hash,
+                        epoch,
+                        certificate,
+                    );
+                    if self.verifier.verify(&leader.public_key, &bytes, signature) {
+                        prepare_ok = true;
+                        break;
+                    }
+                }
+                if !prepare_ok {
                     warn!(view = %certificate.view, "invalid prepare signature");
                     return false;
                 }
@@ -699,13 +733,20 @@ impl ConsensusEngine {
                     return false;
                 };
                 // Signing bytes bind both target_view and highest_qc to prevent replay.
-                let bytes = crate::pacemaker::wish_signing_bytes(
-                    &self.state.chain_id_hash,
-                    self.state.current_epoch.number,
-                    *target_view,
-                    highest_qc.as_ref(),
-                );
-                if !self.verifier.verify(&vi.public_key, &bytes, signature) {
+                let mut wish_ok = false;
+                for epoch in self.verification_epochs() {
+                    let bytes = crate::pacemaker::wish_signing_bytes(
+                        &self.state.chain_id_hash,
+                        epoch,
+                        *target_view,
+                        highest_qc.as_ref(),
+                    );
+                    if self.verifier.verify(&vi.public_key, &bytes, signature) {
+                        wish_ok = true;
+                        break;
+                    }
+                }
+                if !wish_ok {
                     warn!(validator = %validator, "invalid wish signature");
                     return false;
                 }
@@ -734,21 +775,28 @@ impl ConsensusEngine {
                         return false;
                     };
                     let hqc = tc.highest_qcs.get(i).and_then(|h| h.as_ref());
-                    let bytes = crate::pacemaker::wish_signing_bytes(
-                        &self.state.chain_id_hash,
-                        self.state.current_epoch.number,
-                        target_view,
-                        hqc,
-                    );
                     if sig_idx >= tc.aggregate_signature.signatures.len() {
                         warn!(view = %tc.view, "TC aggregate_signature has fewer sigs than signers");
                         return false;
                     }
-                    if !self.verifier.verify(
-                        &vi.public_key,
-                        &bytes,
-                        &tc.aggregate_signature.signatures[sig_idx],
-                    ) {
+                    let mut tc_sig_ok = false;
+                    for epoch in self.verification_epochs() {
+                        let bytes = crate::pacemaker::wish_signing_bytes(
+                            &self.state.chain_id_hash,
+                            epoch,
+                            target_view,
+                            hqc,
+                        );
+                        if self.verifier.verify(
+                            &vi.public_key,
+                            &bytes,
+                            &tc.aggregate_signature.signatures[sig_idx],
+                        ) {
+                            tc_sig_ok = true;
+                            break;
+                        }
+                    }
+                    if !tc_sig_ok {
                         warn!(view = %tc.view, validator = %vi.id, "TC signer signature invalid");
                         return false;
                     }
@@ -774,13 +822,20 @@ impl ConsensusEngine {
                     warn!(validator = %validator, "status from unknown validator");
                     return false;
                 };
-                let bytes = view_protocol::status_signing_bytes(
-                    &self.state.chain_id_hash,
-                    self.state.current_epoch.number,
-                    self.state.current_view,
-                    locked_qc,
-                );
-                if !self.verifier.verify(&vi.public_key, &bytes, signature) {
+                let mut status_ok = false;
+                for epoch in self.verification_epochs() {
+                    let bytes = view_protocol::status_signing_bytes(
+                        &self.state.chain_id_hash,
+                        epoch,
+                        self.state.current_view,
+                        locked_qc,
+                    );
+                    if self.verifier.verify(&vi.public_key, &bytes, signature) {
+                        status_ok = true;
+                        break;
+                    }
+                }
+                if !status_ok {
                     warn!(validator = %validator, "invalid status signature");
                     return false;
                 }
