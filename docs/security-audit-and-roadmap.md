@@ -1,6 +1,6 @@
 # Hotmint Security Audit & Evolution Roadmap
 
-> **Report Version:** Based on Hotmint v0.7 / CometBFT v0.38
+> **Report Version:** Based on Hotmint v0.8 / CometBFT v0.38
 > **Generated:** 2026-03-24 | **Last Audit:** 2026-03-25
 > **Sources:** CometBFT feature gap analysis + two rounds of code security audit
 > **Purpose:** Serves as a reference baseline for the long-term evolution roadmap. Update completion status after each iteration (change `[ ]` to `[x]`, partially complete marked `[~]`).
@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary
 
-| Dimension | CometBFT v0.38 | Hotmint v0.7 |
+| Dimension | CometBFT v0.38 | Hotmint v0.8 |
 |-----------|---------------|-------------|
 | Language | Go | Rust |
 | Consensus Algorithm | Tendermint (three-phase BFT) | HotStuff-2 (two-chain commit BFT) |
@@ -27,7 +27,7 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ### 2.1 Algorithm Layer
 
-| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.8 |
 |-----------------|---------------|-------------|
 | Protocol Family | Tendermint BFT | HotStuff-2 (arXiv:2301.03253) |
 | Voting Phases | Three-phase: Propose → Pre-vote → Pre-commit | Two-chain: Propose → Vote → QC → Vote2 → DC |
@@ -41,7 +41,7 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ### 2.2 Security Mechanisms
 
-| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.8 |
 |-----------------|---------------|-------------|
 | Replay Attack Protection | Chain ID encoded in signature domain | Blake3(chain_id) injected into all signatures ✅ |
 | State Fork Detection | App hash chain + ABCI verification | App hash chain (each block header carries previous block's execution result) ✅ |
@@ -74,7 +74,7 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ### 3.2 Cross-Process Communication
 
-| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.8 |
 |-----------------|---------------|-------------|
 | In-Process Interface | Go interface | Rust trait ✅ |
 | Cross-Language/Cross-Process | gRPC (`.proto` multi-language SDK) | Unix domain socket + protobuf (`hotmint-abci`) + Go SDK |
@@ -84,7 +84,7 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ## 4. P2P Network Layer Comparison
 
-| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.8 |
 |-----------------|---------------|-------------|
 | Underlying Framework | Custom MConnTransport (multiplexed TCP) | litep2p (Rust, derived from Polkadot ecosystem) ✅ |
 | Message Routing | Reactor model | Notification + Request-Response protocol separation ✅ |
@@ -98,7 +98,7 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ## 5. Mempool Comparison
 
-| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.8 |
 |-----------------|---------------|-------------|
 | Data Structure | Concurrent linked list + LRU dedup cache | `BTreeSet<TxEntry>` + `HashMap<TxHash, u64>` ✅ |
 | Ordering Strategy | **Priority queue** (application returns priority field) | Priority queue (priority ASC + hash tiebreak) + RBF ✅ |
@@ -113,7 +113,7 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ## 6. Block Sync Comparison
 
-| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.8 |
 |-----------------|---------------|-------------|
 | Implementation | Block Sync Reactor, concurrent multi-node download | Single-node serial batch pull (max 100 blocks/batch) ⚠️ |
 | Verification Strength | Per-block commit signature verification (2/3+) | Relies on `app_hash` comparison (optional) + QC verification |
@@ -123,7 +123,7 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ## 7. State Sync Comparison
 
-| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.8 |
 |-----------------|---------------|-------------|
 | Capability | **Full support:** snapshot listing, chunked download, verification, application | Full support (`sync_via_snapshot` + chunked download) ✅ |
 | Application-Side Interface | `ListSnapshots`, `LoadSnapshotChunk`, `OfferSnapshot`, `ApplySnapshotChunk` | All 4 methods implemented ✅ |
@@ -133,7 +133,7 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ## 8. Light Client Comparison
 
-| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.8 |
 |-----------------|---------------|-------------|
 | Implementation | Complete: bisection verification, untrusted range skipping | `hotmint-light` crate: `verify_header` + `update_validator_set` ✅ |
 | Merkle Proof Output | `Query` returns Merkle proof | RPC `get_header` / `get_commit_qc` ✅ (Merkle proof pending) |
@@ -143,7 +143,7 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ## 9. RPC / API Layer Comparison
 
-| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.8 |
 |-----------------|---------------|-------------|
 | Transport Protocol | HTTP + WebSocket (standard) | TCP JSON + axum HTTP/WS (`POST /` + `GET /ws`) ✅ |
 | Event Subscription | WebSocket `subscribe` (rich filter syntax) | WS push `NewBlock` events ✅ (filtering pending) |
@@ -154,7 +154,7 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ## 10. Observability & Operations Comparison
 
-| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.8 |
 |-----------------|---------------|-------------|
 | Prometheus Metrics | Rich (consensus round, P2P traffic, Mempool depth, etc.) | Basic (view, height, blocks, votes, timeouts) ✅ |
 | Structured Logging | slog/zap | `tracing` crate ✅ |
@@ -164,7 +164,7 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ## 11. Slashing & Evidence Mechanism Comparison
 
-| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.8 |
 |-----------------|---------------|-------------|
 | Double-Signing Evidence | `DuplicateVoteEvidence` (persistent + gossip) | `EquivocationProof` (detection + signature verification + broadcast + in-memory storage) ✅ |
 | Evidence Broadcast | P2P layer gossip, network-wide visibility | `ConsensusMessage::Evidence` P2P broadcast ✅ |
@@ -175,7 +175,7 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ## 12. Feature Overview Summary
 
-| Feature | CometBFT v0.38 | Hotmint v0.7 | Gap Level |
+| Feature | CometBFT v0.38 | Hotmint v0.8 | Gap Level |
 |---------|:--------------:|:------------:|:---------:|
 | BFT Consensus Core | ✅ | ✅ | None |
 | Weighted Proposer Election | ✅ | ✅ | None |
