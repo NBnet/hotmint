@@ -23,7 +23,7 @@ hotmint-crypto = { workspace = true }
 revm = { workspace = true }
 vsdb = { workspace = true }
 serde = { workspace = true }
-serde_cbor_2 = { workspace = true }
+postcard = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

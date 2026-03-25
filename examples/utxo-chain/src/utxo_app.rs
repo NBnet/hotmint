@@ -271,7 +271,7 @@ impl Application for UtxoApplication {
                 let key: [u8; 36] = data.try_into().unwrap();
                 let outpoint = OutPoint::from_key(&key);
                 match state.get_utxo(&outpoint) {
-                    Some(output) => Ok(serde_cbor_2::to_vec(&output).unwrap_or_default()),
+                    Some(output) => Ok(postcard::to_allocvec(&output).unwrap_or_default()),
                     None => Ok(vec![]),
                 }
             }

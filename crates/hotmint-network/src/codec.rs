@@ -3,8 +3,8 @@
 //! Applies optional zstd compression based on payload size:
 //!
 //! ```text
-//! [0x00][raw CBOR]     — uncompressed (small messages)
-//! [0x01][zstd bytes]   — zstd-compressed CBOR
+//! [0x00][raw postcard]     — uncompressed (small messages)
+//! [0x01][zstd bytes]       — zstd-compressed postcard
 //! ```
 //!
 //! This is part of the hotmint wire protocol — all node implementations
@@ -29,31 +29,30 @@ const MAX_DECOMPRESSED_SIZE: usize = 16 * 1024 * 1024;
 const TAG_RAW: u8 = 0x00;
 const TAG_ZSTD: u8 = 0x01;
 
-/// Serialize a value to CBOR, then conditionally zstd-compress.
+/// Serialize a value to postcard, then conditionally zstd-compress.
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, EncodeError> {
-    let cbor = serde_cbor_2::to_vec(value).map_err(EncodeError::Cbor)?;
-    if cbor.len() > COMPRESS_THRESHOLD {
-        let compressed =
-            zstd::encode_all(cbor.as_slice(), ZSTD_LEVEL).map_err(EncodeError::Zstd)?;
+    let raw = postcard::to_allocvec(value).map_err(EncodeError::Postcard)?;
+    if raw.len() > COMPRESS_THRESHOLD {
+        let compressed = zstd::encode_all(raw.as_slice(), ZSTD_LEVEL).map_err(EncodeError::Zstd)?;
         let mut out = Vec::with_capacity(1 + compressed.len());
         out.push(TAG_ZSTD);
         out.extend_from_slice(&compressed);
         Ok(out)
     } else {
-        let mut out = Vec::with_capacity(1 + cbor.len());
+        let mut out = Vec::with_capacity(1 + raw.len());
         out.push(TAG_RAW);
-        out.extend_from_slice(&cbor);
+        out.extend_from_slice(&raw);
         Ok(out)
     }
 }
 
-/// Decode a wire frame: check tag byte, optionally decompress, then CBOR-decode.
+/// Decode a wire frame: check tag byte, optionally decompress, then postcard-decode.
 pub fn decode<T: for<'de> Deserialize<'de>>(data: &[u8]) -> Result<T, DecodeError> {
     if data.is_empty() {
         return Err(DecodeError::EmptyFrame);
     }
     match data[0] {
-        TAG_RAW => serde_cbor_2::from_slice(&data[1..]).map_err(DecodeError::Cbor),
+        TAG_RAW => postcard::from_bytes(&data[1..]).map_err(DecodeError::Postcard),
         TAG_ZSTD => {
             let decoder = zstd::stream::read::Decoder::new(&data[1..])
                 .map_err(|e| DecodeError::Zstd(e.to_string()))?;
@@ -65,7 +64,7 @@ pub fn decode<T: for<'de> Deserialize<'de>>(data: &[u8]) -> Result<T, DecodeErro
             if decompressed.len() > MAX_DECOMPRESSED_SIZE {
                 return Err(DecodeError::DecompressedTooLarge);
             }
-            serde_cbor_2::from_slice(&decompressed).map_err(DecodeError::Cbor)
+            postcard::from_bytes(&decompressed).map_err(DecodeError::Postcard)
         }
         tag => Err(DecodeError::UnknownTag(tag)),
     }
@@ -75,7 +74,7 @@ pub fn decode<T: for<'de> Deserialize<'de>>(data: &[u8]) -> Result<T, DecodeErro
 pub enum DecodeError {
     EmptyFrame,
     UnknownTag(u8),
-    Cbor(serde_cbor_2::Error),
+    Postcard(postcard::Error),
     Zstd(String),
     DecompressedTooLarge,
 }
@@ -85,7 +84,7 @@ impl fmt::Display for DecodeError {
         match self {
             Self::EmptyFrame => write!(f, "empty frame"),
             Self::UnknownTag(tag) => write!(f, "unknown codec tag: 0x{tag:02x}"),
-            Self::Cbor(e) => write!(f, "cbor: {e}"),
+            Self::Postcard(e) => write!(f, "postcard: {e}"),
             Self::Zstd(e) => write!(f, "zstd: {e}"),
             Self::DecompressedTooLarge => write!(
                 f,
@@ -100,14 +99,14 @@ impl Error for DecodeError {}
 
 #[derive(Debug)]
 pub enum EncodeError {
-    Cbor(serde_cbor_2::Error),
+    Postcard(postcard::Error),
     Zstd(io::Error),
 }
 
 impl fmt::Display for EncodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Cbor(e) => write!(f, "cbor: {e}"),
+            Self::Postcard(e) => write!(f, "postcard: {e}"),
             Self::Zstd(e) => write!(f, "zstd: {e}"),
         }
     }
@@ -133,9 +132,9 @@ mod tests {
         let data = vec![42u8; 1024];
         let encoded = encode(&data).unwrap();
         assert_eq!(encoded[0], TAG_ZSTD);
-        // Compressed should be smaller than raw CBOR
-        let cbor_len = serde_cbor_2::to_vec(&data).unwrap().len();
-        assert!(encoded.len() < cbor_len);
+        // Compressed should be smaller than raw postcard
+        let raw_len = postcard::to_allocvec(&data).unwrap().len();
+        assert!(encoded.len() < raw_len);
         let decoded: Vec<u8> = decode(&encoded).unwrap();
         assert_eq!(decoded, data);
     }
@@ -154,11 +153,8 @@ mod tests {
 
     #[test]
     fn decompressed_too_large_rejected() {
-        // Build a zstd frame that decompresses to just over the limit.
-        // Use a highly-compressible byte pattern so the compressed size stays small.
         let oversized: Vec<u8> = vec![0xAAu8; MAX_DECOMPRESSED_SIZE + 1];
         let mut compressed = zstd::encode_all(oversized.as_slice(), ZSTD_LEVEL).unwrap();
-        // Prepend the zstd tag byte to form a valid-looking wire frame
         compressed.insert(0, TAG_ZSTD);
         let result: Result<Vec<u8>, _> = decode(&compressed);
         assert!(

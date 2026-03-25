@@ -11,6 +11,3 @@ keywords.workspace = true
 hotmint-types = { workspace = true }
 serde = { workspace = true }
 ruc = { workspace = true }
-
-[dev-dependencies]
-serde_cbor_2 = { workspace = true }

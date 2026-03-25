@@ -13,4 +13,4 @@ ruc = { workspace = true }
 blake3 = { workspace = true }
 
 [dev-dependencies]
-serde_cbor_2 = { workspace = true }
+postcard = { workspace = true }

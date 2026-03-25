@@ -64,7 +64,7 @@ impl UtxoTx {
         for input in &mut tx_copy.inputs {
             input.signature = vec![0u8; 64];
         }
-        let bytes = serde_cbor_2::to_vec(&tx_copy).unwrap_or_default();
+        let bytes = postcard::to_allocvec(&tx_copy).unwrap_or_default();
         *blake3::hash(&bytes).as_bytes()
     }
 
@@ -75,12 +75,12 @@ impl UtxoTx {
 
     /// CBOR-encode this transaction.
     pub fn encode(&self) -> Vec<u8> {
-        serde_cbor_2::to_vec(self).unwrap_or_default()
+        postcard::to_allocvec(self).unwrap_or_default()
     }
 
     /// Decode a transaction from CBOR bytes.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        serde_cbor_2::from_slice(bytes).ok()
+        postcard::from_bytes(bytes).ok()
     }
 }
 

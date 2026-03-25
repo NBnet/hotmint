@@ -54,11 +54,11 @@ impl EvmTx {
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        serde_cbor_2::to_vec(self).unwrap_or_default()
+        postcard::to_allocvec(self).unwrap_or_default()
     }
 
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        serde_cbor_2::from_slice(bytes).ok()
+        postcard::from_bytes(bytes).ok()
     }
 }
 

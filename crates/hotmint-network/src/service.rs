@@ -639,7 +639,7 @@ impl NetworkService {
                     return;
                 }
                 self.pex_rate_limit.insert(peer, now);
-                match serde_cbor_2::from_slice::<PexRequest>(&request) {
+                match postcard::from_bytes::<PexRequest>(&request) {
                     Ok(PexRequest::GetPeers) => {
                         let book = self.peer_book.read().await;
                         let private = &self.pex_config.private_peer_ids;
@@ -652,7 +652,7 @@ impl NetworkService {
                             .cloned()
                             .collect();
                         let resp = PexResponse::Peers(peers);
-                        if let Ok(bytes) = serde_cbor_2::to_vec(&resp) {
+                        if let Ok(bytes) = postcard::to_allocvec(&resp) {
                             self.pex_handle.send_response(request_id, bytes);
                         }
                     }
@@ -692,7 +692,7 @@ impl NetworkService {
                             info = info.with_validator(ValidatorId(vid));
                         }
                         self.peer_book.write().await.add_peer(info);
-                        if let Ok(bytes) = serde_cbor_2::to_vec(&PexResponse::Ack) {
+                        if let Ok(bytes) = postcard::to_allocvec(&PexResponse::Ack) {
                             self.pex_handle.send_response(request_id, bytes);
                         }
                     }
@@ -703,7 +703,7 @@ impl NetworkService {
                 }
             }
             RequestResponseEvent::ResponseReceived { response, .. } => {
-                if let Ok(PexResponse::Peers(peers)) = serde_cbor_2::from_slice(&response) {
+                if let Ok(PexResponse::Peers(peers)) = postcard::from_bytes(&response) {
                     let mut book = self.peer_book.write().await;
                     for peer in peers {
                         if !peer.is_banned() {
@@ -792,7 +792,7 @@ impl NetworkService {
         let idx = rand::random::<usize>() % peers.len();
         let target = peers[idx];
 
-        if let Ok(bytes) = serde_cbor_2::to_vec(&PexRequest::GetPeers) {
+        if let Ok(bytes) = postcard::to_allocvec(&PexRequest::GetPeers) {
             let _ = self
                 .pex_handle
                 .send_request(target, bytes, DialOptions::Reject)

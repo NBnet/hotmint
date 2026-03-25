@@ -12,7 +12,7 @@ hotmint-types = { workspace = true }
 hotmint-consensus = { workspace = true }
 blake3 = { workspace = true }
 serde = { workspace = true }
-serde_cbor_2 = { workspace = true }
+postcard = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 ruc = { workspace = true }

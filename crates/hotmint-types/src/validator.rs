@@ -360,8 +360,8 @@ mod tests {
     #[test]
     fn test_serialization_roundtrip() {
         let vs = make_vs(&[1, 2, 3]);
-        let bytes = serde_cbor_2::to_vec(&vs).unwrap();
-        let vs2: ValidatorSet = serde_cbor_2::from_slice(&bytes).unwrap();
+        let bytes = postcard::to_allocvec(&vs).unwrap();
+        let vs2: ValidatorSet = postcard::from_bytes(&bytes).unwrap();
         // index_map is auto-rebuilt during deserialization
         assert_eq!(vs2.validator_count(), 3);
         assert_eq!(vs2.index_of(ValidatorId(1)), Some(1));
