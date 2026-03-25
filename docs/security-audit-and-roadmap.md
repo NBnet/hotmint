@@ -585,9 +585,9 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 
 | ID | Severity | Description | Status | Missing Items |
 |----|----------|-------------|:------:|---------------|
-| C-1 | 🔴 High | Eclipse attack: validator connection slots unprotected | ✅ | Dedicated reserved slot counter, proactive non-validator eviction |
-| C-2 | 🔴 High | FIFO Mempool DoS + no API rate limiting | ⚠️ | per-IP source quotas |
-| C-3 | 🔴 High | Missing evidence broadcast, double-signers escape punishment | ⚠️ | vsdb persistence, evidence inclusion in block payload |
+| C-1 | 🔴 High | Eclipse attack: validator connection slots unprotected | ✅ | — |
+| C-2 | 🔴 High | FIFO Mempool DoS + no API rate limiting | ✅ | — |
+| C-3 | 🔴 High | Missing evidence broadcast, double-signers escape punishment | ✅ | — |
 | H-1 | 🟡 Medium | O(N) signature verification CPU DoS risk | ✅ | — |
 | H-2 | 🟡 Medium | `pending_epoch.unwrap()` panic vector | ✅ | — |
 | H-3 | 🟡 Medium | zstd compression-side `unwrap()` panic vector | ✅ | — |
@@ -604,12 +604,12 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 | **H-10** | 🟡 High | HTTP rate limiter per-request — effectively disabled | ✅ | — |
 | **H-11** | 🟡 Medium | ABCI IPC ValidateTx returns bool, priority hardcoded 0 | ✅ | — |
 | **H-12** | 🟡 Medium | Sync replay doesn't persist commit_qc | ✅ | — |
-| P0-1 | 🟢 P0 | Standard HTTP/WS RPC + event subscription system | ⚠️ | `get_tx`, `get_block_results`, `subscribe` filtering, additional event types |
+| P0-1 | 🟢 P0 | Standard HTTP/WS RPC + event subscription system | ✅ | — |
 | P1-1 | 🟢 P1 | Snapshot State Sync | ✅ | — |
 | P1-2 | 🟢 P1 | Weighted proposer selection | ✅ | — |
-| P2-1 | 🟢 P2 | Light client verification protocol | ⚠️ | Merkle proof output, RPC-exposed verification interface |
-| P2-2 | 🟢 P2 | ABCI++ Vote Extensions | ✅ | DC extension aggregation, next-round payload read (can be tracked by application layer) |
-| R-1 | 🟢 Low | RwLock fair lock RPC congestion | 📋 | Lock-free read-only snapshot / watch channel / parking_lot migration |
+| P2-1 | 🟢 P2 | Light client verification protocol | ⚠️ | Merkle proof output (requires vsdb MPT integration) |
+| P2-2 | 🟢 P2 | ABCI++ Vote Extensions | ✅ | — |
+| R-1 | 🟢 Low | RwLock fair lock RPC congestion | ✅ | Migrated to parking_lot::RwLock |
 
 ---
 
