@@ -133,6 +133,14 @@ impl From<&OwnedBlockContext> for pb::BlockContext {
             epoch: c.epoch.0,
             epoch_start_view: c.epoch_start_view.0,
             validator_set: Some(pb::ValidatorSet::from(&c.validator_set)),
+            vote_extensions: c
+                .vote_extensions
+                .iter()
+                .map(|(id, data)| pb::VoteExtension {
+                    validator_id: id.0,
+                    data: data.clone(),
+                })
+                .collect(),
         }
     }
 }
@@ -155,7 +163,11 @@ impl From<pb::BlockContext> for OwnedBlockContext {
                 .validator_set
                 .map(ValidatorSet::from)
                 .unwrap_or_else(|| ValidatorSet::new(vec![])),
-            vote_extensions: vec![],
+            vote_extensions: c
+                .vote_extensions
+                .into_iter()
+                .map(|ve| (ValidatorId(ve.validator_id), ve.data))
+                .collect(),
         }
     }
 }

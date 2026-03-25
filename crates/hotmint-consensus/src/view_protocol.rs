@@ -289,7 +289,11 @@ pub fn on_proposal(
 
     // BFT Time: verify the block timestamp is monotonically non-decreasing
     // and within a reasonable drift window of the local clock.
-    if block.timestamp > 0 {
+    // Skip only for genesis (height <= 1); non-genesis blocks MUST have timestamp > 0.
+    if block.height.as_u64() > 1 {
+        if block.timestamp == 0 {
+            return Err(eg!("non-genesis block has timestamp 0"));
+        }
         // Check monotonicity against parent block (if available).
         if let Some(parent) = store.get_block(&block.parent_hash) {
             if block.timestamp < parent.timestamp {

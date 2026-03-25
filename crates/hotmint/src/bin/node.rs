@@ -441,6 +441,7 @@ async fn run_node(
         validator_set_rx: vs_rx,
         app: Some(app.clone()),
         tx_gossip: Some(tx_gossip_tx),
+        chain_id_hash: state.chain_id_hash,
     };
     // 12. Spawn network + RPC before sync (sync needs the network running).
     // Capture JoinHandles to detect unexpected exits and abort the process.

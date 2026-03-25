@@ -48,13 +48,13 @@ func (a *testApp) OnCommit(_ *pb.Block, _ *pb.BlockContext) error {
 	return nil
 }
 
-func (a *testApp) Query(path string, data []byte) ([]byte, error) {
+func (a *testApp) Query(path string, data []byte) (*hotmint.QueryResult, error) {
 	if path == "commits" {
 		var buf [8]byte
 		binary.LittleEndian.PutUint64(buf[:], a.commitCount.Load())
-		return buf[:], nil
+		return &hotmint.QueryResult{Data: buf[:]}, nil
 	}
-	return data, nil // echo
+	return &hotmint.QueryResult{Data: data}, nil // echo
 }
 
 func main() {

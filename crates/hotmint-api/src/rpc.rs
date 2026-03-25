@@ -76,6 +76,8 @@ pub struct RpcState {
     pub app: Option<Arc<dyn Application>>,
     /// Optional sender to gossip accepted transactions to peers.
     pub tx_gossip: Option<mpsc::Sender<Vec<u8>>>,
+    /// Chain ID hash for light client verification.
+    pub chain_id_hash: [u8; 32],
 }
 
 /// Simple JSON-RPC server over TCP (one JSON object per line)
@@ -187,6 +189,9 @@ impl TxRateLimiter {
 
 /// Per-IP rate limiter that tracks token buckets per source IP.
 ///
+/// Maximum number of tracked IPs in the per-IP rate limiter.
+const MAX_IP_LIMITER_ENTRIES: usize = 100_000;
+
 /// Prevents a single IP from monopolising `submit_tx` even when opening
 /// many TCP connections or HTTP requests.
 pub struct PerIpRateLimiter {
@@ -205,6 +210,10 @@ impl PerIpRateLimiter {
     /// Check whether `ip` is allowed to submit a transaction.
     pub fn allow(&mut self, ip: IpAddr) -> bool {
         self.maybe_prune();
+        // Cap the number of tracked IPs to prevent memory exhaustion.
+        if !self.buckets.contains_key(&ip) && self.buckets.len() >= MAX_IP_LIMITER_ENTRIES {
+            return false;
+        }
         let bucket = self
             .buckets
             .entry(ip)
@@ -631,11 +640,10 @@ pub(crate) async fn handle_request(
                 .collect();
             let vs = hotmint_types::ValidatorSet::new(validators);
             let status = *state.status_rx.borrow();
-            let chain_id_hash = [0u8; 32]; // Placeholder — light client doesn't use chain_id_hash for verify_header
             let lc = hotmint_light::LightClient::new(
                 vs.clone(),
                 hotmint_types::Height(status.last_committed_height),
-                chain_id_hash,
+                state.chain_id_hash,
             );
             let verifier = hotmint_crypto::Ed25519Verifier;
             match lc.verify_header(&header, &qc, &verifier) {

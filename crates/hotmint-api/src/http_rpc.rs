@@ -182,12 +182,16 @@ impl SubscribeFilter {
                 }
             }
         }
-        // Check tx hash filter.
+        // Check tx hash filter. When set, only TxCommitted events matching
+        // the hash pass through; all other event types are excluded.
         if let Some(ref filter_hash) = self.tx_hash {
-            if let ChainEvent::TxCommitted { tx_hash, .. } = event {
-                if tx_hash != filter_hash {
-                    return false;
+            match event {
+                ChainEvent::TxCommitted { tx_hash, .. } => {
+                    if tx_hash != filter_hash {
+                        return false;
+                    }
                 }
+                _ => return false,
             }
         }
         true

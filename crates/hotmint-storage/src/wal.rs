@@ -1,5 +1,5 @@
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use hotmint_types::Height;
@@ -113,19 +113,9 @@ impl ConsensusWal {
 
     /// Truncate the WAL file (called after successful commit).
     fn truncate(&mut self) -> io::Result<()> {
-        // Reopen in write mode to truncate
-        self.file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&self.path)?;
-        // Re-open in append mode for future writes
-        self.file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .read(true)
-            .open(&self.path)?;
-        Ok(())
+        self.file.set_len(0)?;
+        self.file.seek(io::SeekFrom::Start(0))?;
+        self.file.sync_all()
     }
 
     fn write_entry(&mut self, entry: &WalEntry) -> io::Result<()> {

@@ -206,6 +206,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
         validator_set_rx: vs_rx,
         app: None,
         tx_gossip: None,
+        chain_id_hash: state.chain_id_hash,
     };
     let rpc_server = hotmint::api::rpc::RpcServer::bind(&config.rpc.laddr, rpc_state)
         .await

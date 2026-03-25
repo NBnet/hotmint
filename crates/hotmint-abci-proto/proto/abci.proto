@@ -31,6 +31,11 @@ message ValidatorSet {
   uint64 total_power = 2;
 }
 
+message VoteExtension {
+  uint64 validator_id = 1;
+  bytes data = 2;
+}
+
 message BlockContext {
   uint64 height = 1;
   uint64 view = 2;
@@ -38,6 +43,7 @@ message BlockContext {
   uint64 epoch = 4;
   uint64 epoch_start_view = 5;
   ValidatorSet validator_set = 6;
+  repeated VoteExtension vote_extensions = 7;
 }
 
 message EquivocationProof {

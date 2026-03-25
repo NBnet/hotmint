@@ -97,9 +97,19 @@ impl Block {
         hasher.update(&self.proposer.0.to_le_bytes());
         hasher.update(&self.timestamp.to_le_bytes());
         hasher.update(&self.app_hash.0);
+        hasher.update(&(self.evidence.len() as u64).to_le_bytes());
         for ev in &self.evidence {
             hasher.update(&ev.validator.0.to_le_bytes());
             hasher.update(&ev.view.as_u64().to_le_bytes());
+            hasher.update(&[match ev.vote_type {
+                crate::vote::VoteType::Vote => 0u8,
+                crate::vote::VoteType::Vote2 => 1u8,
+            }]);
+            hasher.update(&ev.epoch.as_u64().to_le_bytes());
+            hasher.update(&ev.block_hash_a.0);
+            hasher.update(&ev.signature_a.0);
+            hasher.update(&ev.block_hash_b.0);
+            hasher.update(&ev.signature_b.0);
         }
         hasher.update(&self.payload);
         let hash = hasher.finalize();
