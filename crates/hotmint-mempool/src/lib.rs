@@ -165,11 +165,7 @@ impl Mempool {
     }
 
     /// Collect with both byte and gas limits.
-    pub async fn collect_payload_with_gas(
-        &self,
-        max_bytes: usize,
-        max_gas: u64,
-    ) -> Vec<u8> {
+    pub async fn collect_payload_with_gas(&self, max_bytes: usize, max_gas: u64) -> Vec<u8> {
         let mut entries = self.entries.lock().await;
         let mut seen = self.seen.lock().await;
         let mut payload = Vec::new();

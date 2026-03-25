@@ -586,8 +586,8 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 | ID | 严重度 | 描述 | 状态 | 缺失项 |
 |----|--------|------|:----:|--------|
 | C-1 | 🔴 高危 | Eclipse 攻击：验证者连接槽无保护 | ✅ | 独立保留槽计数、主动驱逐非验证者 |
-| C-2 | 🔴 高危 | FIFO Mempool DoS + 无 API 速率限制 | ⚠️ | `gas_wanted`、per-IP 来源限额、`max_gas_per_block` |
-| C-3 | 🔴 高危 | 证据广播缺失，双签者可逃脱惩罚 | ⚠️ | vsdb 持久化、证据打包上链、`mark_committed` |
+| C-2 | 🔴 高危 | FIFO Mempool DoS + 无 API 速率限制 | ⚠️ | per-IP 来源限额 |
+| C-3 | 🔴 高危 | 证据广播缺失，双签者可逃脱惩罚 | ⚠️ | vsdb 持久化、证据打包进区块 payload |
 | H-1 | 🟡 中危 | O(N) 签名验证 CPU DoS 风险 | ✅ | — |
 | H-2 | 🟡 中危 | `pending_epoch.unwrap()` Panic 向量 | ✅ | — |
 | H-3 | 🟡 中危 | zstd 压缩端 `unwrap()` Panic 向量 | ✅ | — |
