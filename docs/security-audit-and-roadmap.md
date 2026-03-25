@@ -264,6 +264,60 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 > **实现状态：⚠️ 部分完成。** 已完成：`ConsensusMessage::Evidence` 消息类型、`broadcast_evidence()` 通过现有 notification 协议广播（非独立协议）、`EvidenceStore` trait（put/get_pending/mark_committed/all）、`MemoryEvidenceStore` 内存实现、引擎检测到双签后立即广播+存储、收到 gossip 证据后存储并通知应用层。尚未实现：vsdb 持久化存储（当前仅内存，重启丢失）、Leader 打包证据进 Block（代码注释 "full block inclusion is a later step"）、`mark_committed` 从未被调用。
 
+#### [ ] C-4. Proposal ancestor constraint missing `[Safety Violation]`
+
+**Location:** `crates/hotmint-consensus/src/view_protocol.rs` (`on_proposal`, ~line 200)
+
+**Problem:** `on_proposal` never verifies that `block.parent_hash == justify.block_hash`, nor that the parent block exists in the store. A Byzantine leader can propose a block forking from an arbitrary point in the chain — honest nodes will accept and store it, potentially voting for a block that does not extend the certified chain.
+
+**Fix:**
+- Before accepting a proposal, verify `block.parent_hash == justify.block_hash`
+- Verify parent block exists in store (or is genesis) before voting
+
+**Severity:** 🔴 Critical — violates chain extension safety property
+
+---
+
+#### [ ] C-5. Vote2Msg path missing vote_type check — phase confusion `[Safety Violation]`
+
+**Location:** `crates/hotmint-consensus/src/engine.rs` (~line 975, `ConsensusMessage::Vote2Msg`)
+
+**Problem:** The `Vote2Msg` handler does not verify `vote.vote_type == VoteType::Vote2`. The `VoteMsg` handler correctly checks `vote.vote_type == VoteType::Vote` and rejects mismatches, but `Vote2Msg` accepts any vote_type. A malicious peer can send a `Vote2Msg` containing a Vote1-phase vote, bypassing Vote1 path constraints and potentially forming a DoubleCert from votes in the wrong phase.
+
+**Fix:** Add `if vote.vote_type != VoteType::Vote2 { return Ok(()); }` at the top of the Vote2Msg handler, mirroring the VoteMsg guard.
+
+**Severity:** 🔴 Critical — phase confusion can produce invalid DoubleCert
+
+---
+
+#### [ ] C-6. Evidence gossip accepted without cryptographic verification `[Safety Violation]`
+
+**Location:** `crates/hotmint-consensus/src/engine.rs` (~line 1098, `ConsensusMessage::Evidence`)
+
+**Problem:** When the engine receives an `Evidence(proof)` message via gossip, it calls `app.on_evidence()` and stores the proof without verifying the two conflicting signatures. A malicious peer can forge an `EquivocationProof` with arbitrary signatures, triggering application-layer slashing logic against an innocent validator.
+
+**Fix:**
+- Before accepting evidence, verify both `signature_a` and `signature_b` using the alleged validator's public key and the corresponding signing_bytes
+- Reject and drop the proof if either signature is invalid
+
+**Severity:** 🔴 Critical — forged evidence can slash innocent validators
+
+---
+
+#### [ ] C-7. `apply_commit` + `persist_state` not atomic — crash recovery gap `[Engineering Defect]`
+
+**Location:** `crates/hotmint-consensus/src/engine.rs` (`apply_commit` ~line 1296, `persist_state` ~line 1475)
+
+**Problem:** `apply_commit` executes blocks (mutating application state) and flushes to the block store, but consensus state (`last_committed_height`, `current_view`, `locked_qc`) is only persisted later in `persist_state()` during `advance_view_to`. If the node crashes between `apply_commit` completing and `persist_state` being called:
+- Application state reflects committed blocks
+- Block store reflects committed blocks
+- But on-disk consensus state still shows the previous height/view
+- On restart the node may re-execute already-committed blocks, causing state divergence
+
+**Fix:** Call `persist_state()` at the end of `apply_commit` (after `s.flush()`), or adopt a write-ahead log (WAL) that records the commit intent before executing.
+
+**Severity:** 🔴 Critical — crash window causes irrecoverable state divergence
+
 ---
 
 ### 🟡 High — 工程安全（生产部署前应修复）
@@ -349,6 +403,88 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 **关键文件：** `crates/hotmint-types/src/vote.rs`
 
 **风险等级：** 🟡 低-中危 — 当前模式下无法触发，但影响未来扩展的安全性
+
+#### [ ] H-6. P2P handshake empty — no chain/genesis/version isolation `[Engineering Defect]`
+
+**Location:** `crates/hotmint-network/src/service.rs` (~line 205, 410)
+
+**Problem:** The litep2p notification protocol is initialized with `.with_handshake(vec![])` (empty) and `.with_auto_accept_inbound(true)`. Inbound substreams are unconditionally accepted via `ValidationResult::Accept`. Any peer can connect and inject consensus messages regardless of chain_id, genesis hash, or protocol version. This allows cross-chain message injection in multi-chain deployments.
+
+**Fix:** Include `chain_id_hash + protocol_version` in the handshake bytes; in `ValidateSubstream`, verify the handshake matches before accepting.
+
+**Severity:** 🟡 High — cross-chain message injection in multi-network environments
+
+---
+
+#### [ ] H-7. Sync replay epoch transition applies immediately, runtime delays to start_view `[Engineering Defect]`
+
+**Location:** `crates/hotmint-consensus/src/sync.rs` (~line 413) vs `crates/hotmint-consensus/src/engine.rs` (~line 1431)
+
+**Problem:** During `replay_blocks`, epoch transitions take effect immediately (`*state.current_epoch = Epoch::new(...)`) after the committing block. During normal consensus, the engine stores a `pending_epoch` and only applies it when `new_view >= e.start_view`. This creates a semantic mismatch: sync-replaying nodes use the new validator set immediately, while live consensus nodes use it only after `start_view`. Blocks in the gap window may be verified against different validator sets.
+
+**Fix:** `replay_blocks` should defer the epoch transition to `start_view`, or replay blocks in the gap window using the old validator set and switch at the correct view.
+
+**Severity:** 🟡 High — validator set mismatch during/after sync can cause verification failures
+
+---
+
+#### [ ] H-8. `SharedStoreAdapter` panics on lock contention (`try_read/try_write`) `[Engineering Defect]`
+
+**Location:** `crates/hotmint-consensus/src/store.rs` (lines 48–97)
+
+**Problem:** Every `BlockStore` method in `SharedStoreAdapter` uses `self.0.try_read().expect("store read lock contended")` or `try_write().expect(...)`. If the `tokio::sync::RwLock` is held by another task at the time of the call, `try_*` returns `Err` and `.expect()` panics, crashing the node. This is used by the sync responder path which runs concurrently with the consensus engine.
+
+**Fix:** Replace `try_read().expect()` with `.read().await` (or `blocking_read()` in sync contexts), or accept `Result` and propagate errors gracefully.
+
+**Severity:** 🟡 High — concurrent access causes node crash
+
+---
+
+#### [ ] H-9. Node binary defaults `evidence_store: None` — evidence system inert `[Engineering Defect]`
+
+**Location:** `crates/hotmint/src/bin/node.rs` (~line 724)
+
+**Problem:** The production node binary constructs `EngineConfig` with `evidence_store: None`. Despite all the evidence infrastructure (EvidenceStore trait, MemoryEvidenceStore, broadcast_evidence, gossip handling), the store is never wired in. `handle_equivocation` silently skips storage; gossip evidence silently skips storage.
+
+**Fix:** Initialize `evidence_store: Some(Box::new(MemoryEvidenceStore::new()))` in the node binary. For persistence, implement a vsdb-backed store.
+
+**Severity:** 🟡 High — evidence system is dead code in production
+
+---
+
+#### [ ] H-10. HTTP RPC rate limiter created per-request — effectively disabled `[Engineering Defect]`
+
+**Location:** `crates/hotmint-api/src/http_rpc.rs` (~line 95)
+
+**Problem:** `json_rpc_handler` creates a fresh `TxRateLimiter::new(TX_RATE_LIMIT_PER_SEC)` on every HTTP request. Each request gets a full token allowance, making the rate limit meaningless. An attacker can submit unlimited `submit_tx` calls by sending unlimited HTTP requests.
+
+**Fix:** Store a shared `TxRateLimiter` (or per-IP map) in `HttpRpcState` and pass it to each request handler. The TCP RPC server correctly creates one limiter per connection.
+
+**Severity:** 🟡 High — mempool spam via HTTP endpoint
+
+---
+
+#### [ ] H-11. ABCI IPC `ValidateTx` returns only `bool`, client hardcodes `priority: 0` `[Engineering Defect]`
+
+**Location:** `crates/hotmint-abci-proto/proto/abci.proto` (ValidateTxResponse), `crates/hotmint-abci/src/client.rs` (~line 172)
+
+**Problem:** The IPC wire protocol (`ValidateTxResponse { bool ok }`) does not carry a `priority` field. The Rust ABCI client maps `ok=true` to `TxValidationResult { valid: true, priority: 0 }`. This means out-of-process applications (Go, etc.) cannot signal transaction priority, rendering the priority mempool queue, eviction, and RBF features inoperative for ABCI apps.
+
+**Fix:** Extend `ValidateTxResponse` with `uint64 priority` (and optionally `uint64 gas_wanted`). Update client to read and forward to `TxValidationResult`.
+
+**Severity:** 🟡 Medium — priority mempool disabled for all ABCI applications
+
+---
+
+#### [ ] H-12. Sync replay does not persist `commit_qc` `[Engineering Defect]`
+
+**Location:** `crates/hotmint-consensus/src/sync.rs` (`replay_blocks`, ~line 375)
+
+**Problem:** `replay_blocks` stores blocks via `state.store.put_block()` but never calls `put_commit_qc()` for synced blocks, despite the QC being available in the input tuple `(Block, Option<QuorumCertificate>)`. After sync, the node cannot serve commit QCs to other syncing peers or to the light client RPC (`get_commit_qc`), creating a "sync hole" that degrades network resilience.
+
+**Fix:** After `put_block`, call `state.store.put_commit_qc(block.height, qc.clone())` when `qc.is_some()`.
+
+**Severity:** 🟡 Medium — synced nodes cannot serve commit proofs to peers or light clients
 
 ---
 
@@ -457,6 +593,17 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 | H-3 | 🟡 中危 | zstd 压缩端 `unwrap()` Panic 向量 | ✅ | — |
 | H-4 | 🟡 中危 | ABCI IPC 无读写超时，可致永久挂起 | ✅ | — |
 | H-5 | 🟡 低-中 | 签名缺 `epoch_number`，跨 Epoch 重放风险 | ✅ | — |
+| **C-4** | 🔴 Critical | Proposal missing parent_hash == justify.block_hash check | 📋 | — |
+| **C-5** | 🔴 Critical | Vote2Msg no vote_type == Vote2 guard — phase confusion | 📋 | — |
+| **C-6** | 🔴 Critical | Evidence gossip accepted without signature verification | 📋 | — |
+| **C-7** | 🔴 Critical | apply_commit + persist_state not atomic — crash gap | 📋 | — |
+| **H-6** | 🟡 High | Empty P2P handshake — no chain/version isolation | 📋 | — |
+| **H-7** | 🟡 High | Sync epoch transition immediate vs runtime delayed | 📋 | — |
+| **H-8** | 🟡 High | SharedStoreAdapter try_read/try_write panics on contention | 📋 | — |
+| **H-9** | 🟡 High | Node binary defaults evidence_store: None | 📋 | — |
+| **H-10** | 🟡 High | HTTP rate limiter per-request — effectively disabled | 📋 | — |
+| **H-11** | 🟡 Medium | ABCI IPC ValidateTx returns bool, priority hardcoded 0 | 📋 | — |
+| **H-12** | 🟡 Medium | Sync replay doesn't persist commit_qc | 📋 | — |
 | P0-1 | 🟢 P0 | 标准 HTTP/WS RPC + 事件订阅系统 | ⚠️ | `get_tx`、`get_block_results`、`subscribe` 过滤、更多事件类型 |
 | P1-1 | 🟢 P1 | 快照状态同步（State Sync） | ✅ | — |
 | P1-2 | 🟢 P1 | 加权提议者选举 | ✅ | — |
