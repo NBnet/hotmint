@@ -20,6 +20,9 @@ pub struct ConsensusEngine {
     current_view_qc: Option<QuorumCertificate>,
     pending_epoch: Option<Epoch>,
     persistence: Option<Box<dyn StatePersistence>>,
+    evidence_store: Option<Box<dyn EvidenceStore>>,
+    liveness_tracker: LivenessTracker,
+    wal: Option<Box<dyn Wal>>,
 }
 ```
 
@@ -233,11 +236,16 @@ When a double certificate is formed:
 
 1. Identify the committed block from the double certificate
 2. Walk the chain from the committed block backward to `last_committed_height + 1`
-3. For each block in ascending height order:
+3. **WAL: log commit intent** (if WAL is configured)
+4. For each block in ascending height order:
    - Decode payload into transactions
-   - `app.execute_block(txs, ctx)` (where `txs` is `&[&[u8]]` and `ctx` is a `BlockContext` with height, view, proposer, epoch, validator_set; returns `EndBlockResponse` which may contain validator updates and events)
+   - `app.execute_block(txs, ctx)` (where `txs` is `&[&[u8]]` and `ctx` is a `BlockContext` with height, view, proposer, epoch, epoch_start_view, validator_set, vote_extensions; returns `EndBlockResponse` which may contain validator updates, events, and app_hash)
    - `app.on_commit(block, ctx)`
-4. Update `last_committed_height`
+   - Store commit QC, tx index, and block results in the block store
+   - Record QC signers in the `LivenessTracker` for offline detection
+5. Update `last_committed_height` and persist consensus state
+6. **WAL: log commit done** (triggers WAL truncation)
+7. At epoch boundaries: query `LivenessTracker::offline_validators()` and call `app.on_offline_validators()`
 
 ## Pacemaker Integration
 

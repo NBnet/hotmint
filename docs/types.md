@@ -49,6 +49,9 @@ pub struct Block {
     pub payload: Vec<u8>,
     /// Application state root after executing the parent block.
     pub app_hash: BlockHash,
+    /// Unix timestamp in milliseconds, set by the proposer.
+    /// Validators verify monotonicity and future drift.
+    pub timestamp: u64,
 }
 ```
 
@@ -111,6 +114,8 @@ pub struct Vote {
     pub validator: ValidatorId,
     pub signature: Signature,
     pub vote_type: VoteType,
+    /// ABCI++ vote extension (attached to Vote2 messages).
+    pub extension: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

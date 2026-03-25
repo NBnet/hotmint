@@ -11,11 +11,13 @@ hotmint/
 │   ├── hotmint-types/             # core data types (minimal dependencies)
 │   ├── hotmint-crypto/            # cryptography implementations
 │   ├── hotmint-consensus/         # consensus state machine
-│   ├── hotmint-storage/           # persistent storage (vsdb)
+│   ├── hotmint-storage/           # persistent storage, WAL, evidence store (vsdb)
 │   ├── hotmint-network/           # P2P networking (litep2p)
-│   ├── hotmint-mempool/           # transaction mempool
+│   ├── hotmint-mempool/           # priority mempool with RBF and gas accounting
 │   ├── hotmint-abci/              # IPC proxy for out-of-process apps
-│   ├── hotmint-api/               # JSON-RPC API
+│   ├── hotmint-api/               # HTTP/WebSocket/TCP JSON-RPC API
+│   ├── hotmint-staking/           # staking: validator registration, delegation, slashing, rewards
+│   ├── hotmint-light/             # light client: header verification, validator set tracking
 │   └── hotmint/                   # top-level library facade
 └── docs/
 ```
@@ -29,7 +31,9 @@ hotmint (library facade — re-exports everything)
   ├── hotmint-storage   ──> hotmint-consensus, vsdb
   ├── hotmint-network   ──> hotmint-consensus, litep2p
   ├── hotmint-abci      ──> hotmint-consensus, hotmint-types
-  ├── hotmint-mempool   (standalone)
+  ├── hotmint-staking   ──> hotmint-types
+  ├── hotmint-light     ──> hotmint-types
+  ├── hotmint-mempool   (standalone, no consensus/network/storage deps)
   └── hotmint-api       ──> hotmint-mempool
 ```
 
@@ -112,18 +116,41 @@ Uses four sub-protocols:
 
 ### hotmint-mempool
 
-Transaction pool with FIFO ordering:
+Priority-based transaction pool:
 
+- Priority ordering (highest first) with Replace-by-Fee (RBF) support
+- Gas-aware payload collection (`collect_payload_with_gas`)
+- Post-commit re-validation (`recheck()`) to evict stale transactions
 - Deduplication via Blake3 transaction hashing
 - Configurable size limits (transaction count and byte size)
 - Length-prefixed payload encoding for block inclusion
 
 ### hotmint-api
 
-JSON-RPC server for external interaction:
+HTTP/WebSocket/TCP JSON-RPC server:
 
+- `HttpRpcServer` — axum-based HTTP `POST /` + WebSocket `GET /ws`
 - `RpcServer` — TCP-based JSON-RPC server (newline-delimited)
-- Methods: `status` (node info), `submit_tx` (transaction submission)
+- Event subscription via WebSocket with `SubscribeFilter` (event types, height range, tx hash)
+- Methods: `status`, `submit_tx`, `get_block`, `get_block_by_hash`, `get_header`, `get_commit_qc`, `get_tx`, `get_block_results`, `get_validators`, `get_epoch`, `get_peers`, `query`, `verify_header`
+- Per-IP rate limiting on `submit_tx`
+
+### hotmint-staking
+
+Staking toolkit for DPoS economic models:
+
+- Validator registration with minimum self-stake, delegation, undelegation with time-locked unbonding
+- Slashing for double-signing (`SlashReason::DoubleSign`) and downtime (`SlashReason::Downtime`)
+- Automatic jailing with configurable duration, unjailing after jail period
+- Reputation scoring, block rewards, validator set computation (`compute_validator_updates`)
+- Pluggable `StakingStore` trait for any backend
+
+### hotmint-light
+
+Light client verification:
+
+- `LightClient` struct with `verify_header` (QC signature verification) and `update_validator_set`
+- MPT state proof verification via vsdb `MptProof`
 
 ## Core Trait Abstractions
 
@@ -142,6 +169,15 @@ trait BlockStore: Send + Sync {
     fn put_block(&mut self, block: Block);
     fn get_block(&self, hash: &BlockHash) -> Option<Block>;
     fn get_block_by_height(&self, h: Height) -> Option<Block>;
+    fn put_commit_qc(&mut self, height: Height, qc: QuorumCertificate);
+    fn get_commit_qc(&self, height: Height) -> Option<QuorumCertificate>;
+    fn put_tx_index(&mut self, tx_hash: [u8; 32], height: Height, index: u32);
+    fn get_tx_location(&self, tx_hash: &[u8; 32]) -> Option<(Height, u32)>;
+    fn put_block_results(&mut self, height: Height, results: EndBlockResponse);
+    fn get_block_results(&self, height: Height) -> Option<EndBlockResponse>;
+    fn get_blocks_in_range(&self, from: Height, to: Height) -> Vec<Block>;
+    fn tip_height(&self) -> Height;
+    fn flush(&self);
 }
 
 // Network transport — channels for testing, litep2p for production
@@ -153,13 +189,29 @@ trait NetworkSink: Send + Sync {
 // Application lifecycle — your business logic
 // All methods have default no-op implementations.
 trait Application: Send + Sync {
+    // Startup & genesis
+    fn info(&self) -> AppInfo;                              // last_block_height + last_block_app_hash
+    fn init_chain(&self, app_state: &[u8]) -> Result<BlockHash>;
+    // Block lifecycle
     fn create_payload(&self, ctx: &BlockContext) -> Vec<u8>;
     fn validate_block(&self, block: &Block, ctx: &BlockContext) -> bool;
-    fn validate_tx(&self, tx: &[u8], ctx: Option<&TxContext>) -> bool;
+    fn validate_tx(&self, tx: &[u8], ctx: Option<&TxContext>) -> TxValidationResult;
     fn execute_block(&self, txs: &[&[u8]], ctx: &BlockContext) -> Result<EndBlockResponse>;
     fn on_commit(&self, block: &Block, ctx: &BlockContext) -> Result<()>;
+    // Evidence & liveness
     fn on_evidence(&self, proof: &EquivocationProof) -> Result<()>;
-    fn query(&self, path: &str, data: &[u8]) -> Result<Vec<u8>>;
+    fn on_offline_validators(&self, offline: &[OfflineEvidence]) -> Result<()>;
+    // Vote extensions (ABCI++)
+    fn extend_vote(&self, block: &Block, ctx: &BlockContext) -> Option<Vec<u8>>;
+    fn verify_vote_extension(&self, ext: &[u8], block_hash: &BlockHash, validator: ValidatorId) -> bool;
+    // State sync snapshots
+    fn list_snapshots(&self) -> Vec<SnapshotInfo>;
+    fn load_snapshot_chunk(&self, height: Height, chunk_index: u32) -> Vec<u8>;
+    fn offer_snapshot(&self, snapshot: &SnapshotInfo) -> SnapshotOfferResult;
+    fn apply_snapshot_chunk(&self, chunk: Vec<u8>, chunk_index: u32) -> ChunkApplyResult;
+    // Queries & config
+    fn query(&self, path: &str, data: &[u8]) -> Result<QueryResponse>;
+    fn tracks_app_hash(&self) -> bool;
 }
 ```
 

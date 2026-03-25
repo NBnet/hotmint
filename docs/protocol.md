@@ -24,7 +24,7 @@ Each view v follows a 5-step protocol (corresponding to Figure 1 of the HotStuff
 
 ### Step 1: Enter View
 
-All validators enter the view. The **leader** for this view (determined by round-robin: `v mod n`) either:
+All validators enter the view. The **leader** for this view (determined by weighted round-robin based on voting power) either:
 - Waits to collect status messages from replicas, or
 - Proposes directly if it already holds the highest QC.
 
@@ -157,4 +157,4 @@ Given n total validators with equal voting power:
 | Quorum threshold | ⌈2n/3⌉ | 3 |
 | Safety guarantee | Any two quorums overlap in ≥1 honest validator | — |
 
-Leader election is round-robin: `leader(v) = validators[v % n]`.
+Leader election is weighted round-robin: `leader(v)` selects the validator whose cumulative voting power range contains `v % total_power`.

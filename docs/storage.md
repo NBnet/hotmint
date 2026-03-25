@@ -7,6 +7,8 @@ Hotmint provides two `BlockStore` implementations and a `PersistentConsensusStat
 | `MemoryBlockStore` | Development / testing | HashMap + BTreeMap |
 | `VsdbBlockStore` | Production | vsdb MapxOrd |
 | `PersistentConsensusState` | Consensus state crash recovery | vsdb MapxOrd |
+| `ConsensusWal` | Write-ahead log for commit crash recovery | File I/O |
+| `PersistentEvidenceStore` | Equivocation proof persistence | vsdb MapxOrd |
 
 ## vsdb Overview
 
@@ -14,7 +16,7 @@ Hotmint provides two `BlockStore` implementations and a `PersistentConsensusStat
 
 ### Core Types
 
-Core vsdb v10.x types used by Hotmint:
+Core vsdb v12.x types used by Hotmint:
 
 | Type | Description | Rust Equivalent |
 |:-----|:------------|:----------------|
@@ -77,11 +79,26 @@ pub trait BlockStore: Send + Sync {
     fn get_block(&self, hash: &BlockHash) -> Option<Block>;
     fn get_block_by_height(&self, h: Height) -> Option<Block>;
 
+    // Commit QC storage (for light client queries)
+    fn put_commit_qc(&mut self, _height: Height, _qc: QuorumCertificate) {}
+    fn get_commit_qc(&self, _height: Height) -> Option<QuorumCertificate> { None }
+
+    // Transaction indexing (tx_hash → (height, index_in_block))
+    fn put_tx_index(&mut self, _tx_hash: [u8; 32], _height: Height, _index: u32) {}
+    fn get_tx_location(&self, _tx_hash: &[u8; 32]) -> Option<(Height, u32)> { None }
+
+    // Block execution results (events, app_hash)
+    fn put_block_results(&mut self, _height: Height, _results: EndBlockResponse) {}
+    fn get_block_results(&self, _height: Height) -> Option<EndBlockResponse> { None }
+
     /// Get blocks in [from, to] inclusive. Default iterates one-by-one.
     fn get_blocks_in_range(&self, from: Height, to: Height) -> Vec<Block> { /* default */ }
 
     /// Return the highest stored block height. Default returns genesis.
     fn tip_height(&self) -> Height { Height::GENESIS }
+
+    /// Flush pending writes to durable storage.
+    fn flush(&self) {}
 }
 ```
 
@@ -132,12 +149,15 @@ store.flush();
 
 ```rust
 pub struct VsdbBlockStore {
-    by_hash: MapxOrd<[u8; 32], Block>,     // BlockHash → Block
-    by_height: MapxOrd<u64, [u8; 32]>,     // Height → BlockHash
+    by_hash: MapxOrd<[u8; 32], Block>,              // BlockHash → Block
+    by_height: MapxOrd<u64, [u8; 32]>,              // Height → BlockHash
+    commit_qcs: MapxOrd<u64, QuorumCertificate>,    // Height → commit QC
+    tx_index: MapxOrd<[u8; 32], (u64, u32)>,        // tx_hash → (height, index_in_block)
+    block_results: MapxOrd<u64, EndBlockResponse>,   // Height → execution results
 }
 ```
 
-The two indexes work together:
+The store auto-migrates from v1 (3 collections) to v2 (5 collections) on first open. The five indexes work together:
 - `put_block()` writes to both maps
 - `get_block()` looks up directly in `by_hash`
 - `get_block_by_height()` resolves the hash via `by_height`, then fetches the block from `by_hash`
@@ -183,6 +203,7 @@ enum StateValue {
     Height(Height),
     Qc(QuorumCertificate),
     Epoch(Epoch),
+    AppHash(BlockHash),
 }
 
 // Fixed key constants
@@ -191,6 +212,7 @@ const KEY_LOCKED_QC: u64 = 2;
 const KEY_HIGHEST_QC: u64 = 3;
 const KEY_LAST_COMMITTED_HEIGHT: u64 = 4;
 const KEY_CURRENT_EPOCH: u64 = 5;
+const KEY_LAST_APP_HASH: u64 = 6;
 ```
 
 ### API
@@ -206,6 +228,7 @@ pstate.save_locked_qc(&qc);
 pstate.save_highest_qc(&highest_qc);
 pstate.save_last_committed_height(Height(10));
 pstate.save_current_epoch(&epoch);
+pstate.save_last_app_hash(app_hash);
 pstate.flush();
 
 // Load state (at startup / crash recovery)
@@ -214,6 +237,7 @@ let locked = pstate.load_locked_qc();            // Option<QuorumCertificate>
 let highest = pstate.load_highest_qc();          // Option<QuorumCertificate>
 let committed = pstate.load_last_committed_height(); // Option<Height>
 let epoch = pstate.load_current_epoch();         // Option<Epoch>
+let app_hash = pstate.load_last_app_hash();      // Option<BlockHash>
 ```
 
 ### Crash Recovery Example
@@ -249,6 +273,60 @@ fn recover_or_init(vid: ValidatorId, vs: ValidatorSet) -> (ConsensusState, VsdbB
     (state, store)
 }
 ```
+
+## ConsensusWal (Write-Ahead Log)
+
+The `ConsensusWal` provides crash recovery for the commit process. It uses a two-phase protocol:
+
+1. **`log_commit_intent(target_height)`** — logged BEFORE starting block execution
+2. **`log_commit_done(target_height)`** — logged AFTER persisting state; triggers WAL truncation
+
+On startup, `check_recovery()` detects if a `CommitIntent` exists without a matching `CommitDone`, enabling the consensus engine to replay the interrupted commit.
+
+```rust
+use hotmint::storage::wal::{ConsensusWal, WalRecovery};
+
+// Open or create WAL in data directory
+let wal = ConsensusWal::open(&data_dir)?;
+
+// Check for crash recovery at startup
+match ConsensusWal::check_recovery(&data_dir)? {
+    WalRecovery::Clean => { /* normal startup */ }
+    WalRecovery::ReplayFrom(height) => { /* re-execute from height */ }
+}
+
+// Two-phase commit
+wal.log_commit_intent(Height(42))?;
+// ... execute block, persist state ...
+wal.log_commit_done(Height(42))?;
+```
+
+A `NoopWal` implementation is provided for testing.
+
+## PersistentEvidenceStore
+
+The `PersistentEvidenceStore` persists equivocation proofs to vsdb, surviving node restarts:
+
+```rust
+use hotmint::storage::evidence_store::PersistentEvidenceStore;
+
+let mut store = PersistentEvidenceStore::open(&data_dir)?;
+
+// Store detected equivocation
+store.put_evidence(proof);
+
+// Get proofs not yet included in a block
+let pending: Vec<EquivocationProof> = store.get_pending();
+
+// Mark proofs as committed after block inclusion
+store.mark_committed(view, validator_id);
+```
+
+Uses two vsdb collections internally:
+- `proofs: MapxOrd<u64, EquivocationProof>` — keyed by auto-increment ID
+- `committed: MapxOrd<u64, u8>` — committed-set keyed by `Blake3(view || validator)`
+
+A `MemoryEvidenceStore` implementation is provided for testing.
 
 ## Data Directory Configuration
 
