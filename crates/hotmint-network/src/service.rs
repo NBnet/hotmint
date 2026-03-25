@@ -800,6 +800,15 @@ impl NetworkService {
         }
     }
 
+    /// C-1: Pick a non-validator connected peer to evict, giving validators
+    /// priority access to connection slots.
+    fn pick_non_validator_to_evict(&self) -> Option<PeerId> {
+        self.connected_peers
+            .iter()
+            .find(|p| !self.peer_map.peer_to_validator.contains_key(p))
+            .copied()
+    }
+
     async fn handle_litep2p_event(&mut self, event: Litep2pEvent) {
         match event {
             Litep2pEvent::ConnectionEstablished { peer, endpoint } => {
@@ -815,6 +824,22 @@ impl NetworkService {
                         "connection limit reached, ignoring non-validator peer"
                     );
                     return;
+                }
+
+                // C-1: Proactive eviction — if a validator needs a slot and we're at
+                // the limit, evict the oldest non-validator connection to make room.
+                if is_validator && self.connected_peers.len() >= self.pex_config.max_peers {
+                    if let Some(evict_peer) = self.pick_non_validator_to_evict() {
+                        warn!(
+                            evict = %evict_peer,
+                            new_validator = %peer,
+                            "evicting non-validator peer to make room for validator"
+                        );
+                        self.connected_peers.remove(&evict_peer);
+                        self.notif_connected_peers.remove(&evict_peer);
+                        // litep2p doesn't expose disconnect — closing the notification
+                        // substream will cause the peer to be cleaned up eventually.
+                    }
                 }
 
                 info!(peer = %peer, endpoint = ?endpoint, "connection established");
