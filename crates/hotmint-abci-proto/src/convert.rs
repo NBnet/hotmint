@@ -23,6 +23,7 @@ impl From<&Block> for pb::Block {
             payload: b.payload.clone(),
             hash: b.hash.0.to_vec(),
             app_hash: b.app_hash.0.to_vec(),
+            evidence: b.evidence.iter().map(|e| e.into()).collect(),
         }
     }
 }
@@ -38,6 +39,7 @@ impl From<Block> for pb::Block {
             payload: b.payload,
             hash: b.hash.0.to_vec(),
             app_hash: b.app_hash.0.to_vec(),
+            evidence: b.evidence.into_iter().map(|e| e.into()).collect(),
         }
     }
 }
@@ -52,7 +54,7 @@ impl From<pb::Block> for Block {
             timestamp: b.timestamp,
             payload: b.payload,
             app_hash: bytes_to_hash(&b.app_hash),
-            evidence: Vec::new(), // IPC blocks carry no evidence
+            evidence: b.evidence.into_iter().map(|e| e.into()).collect(),
             hash: bytes_to_hash(&b.hash),
         }
     }
@@ -314,6 +316,15 @@ impl From<pb::EndBlockResponse> for EndBlockResponse {
 // ---- Helpers ----
 
 fn bytes_to_hash(bytes: &[u8]) -> BlockHash {
+    if bytes.is_empty() {
+        return BlockHash::GENESIS;
+    }
+    if bytes.len() != 32 {
+        eprintln!(
+            "bytes_to_hash: expected 32 bytes, got {}; padding/truncating",
+            bytes.len()
+        );
+    }
     let mut hash = [0u8; 32];
     let len = bytes.len().min(32);
     hash[..len].copy_from_slice(&bytes[..len]);

@@ -402,6 +402,21 @@ pub fn replay_blocks(
             continue;
         }
 
+        // Defense-in-depth: verify the proposer is the correct leader for this view.
+        // The QC already proves 2f+1 honest validators accepted this block (and they
+        // checked the proposer), but we re-check here to catch corrupted sync data.
+        if let Some(expected_leader) = state.current_epoch.validator_set.leader_for_view(block.view) {
+            if block.proposer != expected_leader.id {
+                return Err(eg!(
+                    "sync block at height {} has wrong proposer: expected {} for view {}, got {}",
+                    block.height.as_u64(),
+                    expected_leader.id,
+                    block.view,
+                    block.proposer
+                ));
+            }
+        }
+
         // Verify block hash integrity (includes app_hash in computation)
         let expected_hash = hotmint_crypto::compute_block_hash(block);
         if block.hash != expected_hash {

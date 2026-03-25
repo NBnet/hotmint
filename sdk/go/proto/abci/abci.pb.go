@@ -31,6 +31,7 @@ type Block struct {
 	Payload       []byte                 `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
 	Hash          []byte                 `protobuf:"bytes,6,opt,name=hash,proto3" json:"hash,omitempty"`                      // 32 bytes
 	AppHash       []byte                 `protobuf:"bytes,7,opt,name=app_hash,json=appHash,proto3" json:"app_hash,omitempty"` // 32 bytes, state root after executing parent block
+	Evidence      []*EquivocationProof   `protobuf:"bytes,9,rep,name=evidence,proto3" json:"evidence,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -117,6 +118,13 @@ func (x *Block) GetHash() []byte {
 func (x *Block) GetAppHash() []byte {
 	if x != nil {
 		return x.AppHash
+	}
+	return nil
+}
+
+func (x *Block) GetEvidence() []*EquivocationProof {
+	if x != nil {
+		return x.Evidence
 	}
 	return nil
 }
@@ -1697,7 +1705,7 @@ var File_proto_abci_proto protoreflect.FileDescriptor
 
 const file_proto_abci_proto_rawDesc = "" +
 	"\n" +
-	"\x10proto/abci.proto\x12\fhotmint.abci\"\xd7\x01\n" +
+	"\x10proto/abci.proto\x12\fhotmint.abci\"\x94\x02\n" +
 	"\x05Block\x12\x16\n" +
 	"\x06height\x18\x01 \x01(\x04R\x06height\x12\x1f\n" +
 	"\vparent_hash\x18\x02 \x01(\fR\n" +
@@ -1707,7 +1715,8 @@ const file_proto_abci_proto_rawDesc = "" +
 	"\ttimestamp\x18\b \x01(\x04R\ttimestamp\x12\x18\n" +
 	"\apayload\x18\x05 \x01(\fR\apayload\x12\x12\n" +
 	"\x04hash\x18\x06 \x01(\fR\x04hash\x12\x19\n" +
-	"\bapp_hash\x18\a \x01(\fR\aappHash\"9\n" +
+	"\bapp_hash\x18\a \x01(\fR\aappHash\x12;\n" +
+	"\bevidence\x18\t \x03(\v2\x1f.hotmint.abci.EquivocationProofR\bevidence\"9\n" +
 	"\tTxContext\x12\x16\n" +
 	"\x06height\x18\x01 \x01(\x04R\x06height\x12\x14\n" +
 	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\"T\n" +
@@ -1864,38 +1873,39 @@ var file_proto_abci_proto_goTypes = []any{
 	(*QueryResponse)(nil),         // 24: hotmint.abci.QueryResponse
 }
 var file_proto_abci_proto_depIdxs = []int32{
-	2,  // 0: hotmint.abci.ValidatorSet.validators:type_name -> hotmint.abci.ValidatorInfo
-	3,  // 1: hotmint.abci.BlockContext.validator_set:type_name -> hotmint.abci.ValidatorSet
-	4,  // 2: hotmint.abci.BlockContext.vote_extensions:type_name -> hotmint.abci.VoteExtension
-	8,  // 3: hotmint.abci.Event.attributes:type_name -> hotmint.abci.EventAttribute
-	7,  // 4: hotmint.abci.EndBlockResponse.validator_updates:type_name -> hotmint.abci.ValidatorUpdate
-	9,  // 5: hotmint.abci.EndBlockResponse.events:type_name -> hotmint.abci.Event
-	5,  // 6: hotmint.abci.Request.create_payload:type_name -> hotmint.abci.BlockContext
-	12, // 7: hotmint.abci.Request.validate_block:type_name -> hotmint.abci.ValidateBlockRequest
-	13, // 8: hotmint.abci.Request.validate_tx:type_name -> hotmint.abci.ValidateTxRequest
-	14, // 9: hotmint.abci.Request.execute_block:type_name -> hotmint.abci.ExecuteBlockRequest
-	15, // 10: hotmint.abci.Request.on_commit:type_name -> hotmint.abci.OnCommitRequest
-	6,  // 11: hotmint.abci.Request.on_evidence:type_name -> hotmint.abci.EquivocationProof
-	16, // 12: hotmint.abci.Request.query:type_name -> hotmint.abci.QueryRequest
-	0,  // 13: hotmint.abci.ValidateBlockRequest.block:type_name -> hotmint.abci.Block
-	5,  // 14: hotmint.abci.ValidateBlockRequest.ctx:type_name -> hotmint.abci.BlockContext
-	1,  // 15: hotmint.abci.ValidateTxRequest.ctx:type_name -> hotmint.abci.TxContext
-	5,  // 16: hotmint.abci.ExecuteBlockRequest.ctx:type_name -> hotmint.abci.BlockContext
-	0,  // 17: hotmint.abci.OnCommitRequest.block:type_name -> hotmint.abci.Block
-	5,  // 18: hotmint.abci.OnCommitRequest.ctx:type_name -> hotmint.abci.BlockContext
-	18, // 19: hotmint.abci.Response.create_payload:type_name -> hotmint.abci.CreatePayloadResponse
-	19, // 20: hotmint.abci.Response.validate_block:type_name -> hotmint.abci.ValidateBlockResponse
-	20, // 21: hotmint.abci.Response.validate_tx:type_name -> hotmint.abci.ValidateTxResponse
-	21, // 22: hotmint.abci.Response.execute_block:type_name -> hotmint.abci.ExecuteBlockResponse
-	22, // 23: hotmint.abci.Response.on_commit:type_name -> hotmint.abci.OnCommitResponse
-	23, // 24: hotmint.abci.Response.on_evidence:type_name -> hotmint.abci.OnEvidenceResponse
-	24, // 25: hotmint.abci.Response.query:type_name -> hotmint.abci.QueryResponse
-	10, // 26: hotmint.abci.ExecuteBlockResponse.result:type_name -> hotmint.abci.EndBlockResponse
-	27, // [27:27] is the sub-list for method output_type
-	27, // [27:27] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	6,  // 0: hotmint.abci.Block.evidence:type_name -> hotmint.abci.EquivocationProof
+	2,  // 1: hotmint.abci.ValidatorSet.validators:type_name -> hotmint.abci.ValidatorInfo
+	3,  // 2: hotmint.abci.BlockContext.validator_set:type_name -> hotmint.abci.ValidatorSet
+	4,  // 3: hotmint.abci.BlockContext.vote_extensions:type_name -> hotmint.abci.VoteExtension
+	8,  // 4: hotmint.abci.Event.attributes:type_name -> hotmint.abci.EventAttribute
+	7,  // 5: hotmint.abci.EndBlockResponse.validator_updates:type_name -> hotmint.abci.ValidatorUpdate
+	9,  // 6: hotmint.abci.EndBlockResponse.events:type_name -> hotmint.abci.Event
+	5,  // 7: hotmint.abci.Request.create_payload:type_name -> hotmint.abci.BlockContext
+	12, // 8: hotmint.abci.Request.validate_block:type_name -> hotmint.abci.ValidateBlockRequest
+	13, // 9: hotmint.abci.Request.validate_tx:type_name -> hotmint.abci.ValidateTxRequest
+	14, // 10: hotmint.abci.Request.execute_block:type_name -> hotmint.abci.ExecuteBlockRequest
+	15, // 11: hotmint.abci.Request.on_commit:type_name -> hotmint.abci.OnCommitRequest
+	6,  // 12: hotmint.abci.Request.on_evidence:type_name -> hotmint.abci.EquivocationProof
+	16, // 13: hotmint.abci.Request.query:type_name -> hotmint.abci.QueryRequest
+	0,  // 14: hotmint.abci.ValidateBlockRequest.block:type_name -> hotmint.abci.Block
+	5,  // 15: hotmint.abci.ValidateBlockRequest.ctx:type_name -> hotmint.abci.BlockContext
+	1,  // 16: hotmint.abci.ValidateTxRequest.ctx:type_name -> hotmint.abci.TxContext
+	5,  // 17: hotmint.abci.ExecuteBlockRequest.ctx:type_name -> hotmint.abci.BlockContext
+	0,  // 18: hotmint.abci.OnCommitRequest.block:type_name -> hotmint.abci.Block
+	5,  // 19: hotmint.abci.OnCommitRequest.ctx:type_name -> hotmint.abci.BlockContext
+	18, // 20: hotmint.abci.Response.create_payload:type_name -> hotmint.abci.CreatePayloadResponse
+	19, // 21: hotmint.abci.Response.validate_block:type_name -> hotmint.abci.ValidateBlockResponse
+	20, // 22: hotmint.abci.Response.validate_tx:type_name -> hotmint.abci.ValidateTxResponse
+	21, // 23: hotmint.abci.Response.execute_block:type_name -> hotmint.abci.ExecuteBlockResponse
+	22, // 24: hotmint.abci.Response.on_commit:type_name -> hotmint.abci.OnCommitResponse
+	23, // 25: hotmint.abci.Response.on_evidence:type_name -> hotmint.abci.OnEvidenceResponse
+	24, // 26: hotmint.abci.Response.query:type_name -> hotmint.abci.QueryResponse
+	10, // 27: hotmint.abci.ExecuteBlockResponse.result:type_name -> hotmint.abci.EndBlockResponse
+	28, // [28:28] is the sub-list for method output_type
+	28, // [28:28] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_proto_abci_proto_init() }

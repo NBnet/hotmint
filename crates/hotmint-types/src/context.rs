@@ -16,7 +16,6 @@ pub struct BlockContext<'a> {
     /// Aggregated vote extensions from the previous round's Vote2 messages.
     /// Only populated for `create_payload` when the previous round committed
     /// via a DoubleCertificate whose Vote2 round carried extensions.
-    #[allow(dead_code)]
     pub vote_extensions: Vec<(ValidatorId, Vec<u8>)>,
 }
 

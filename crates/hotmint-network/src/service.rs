@@ -181,8 +181,9 @@ pub struct NetworkService {
     pex_rate_limit: HashMap<PeerId, Instant>,
     /// Sender for transactions received via mempool gossip.
     mempool_tx_tx: mpsc::Sender<Vec<u8>>,
-    /// Dedup set for mempool gossip (blake3 hash of tx bytes).
-    mempool_seen: HashSet<[u8; 32]>,
+    /// Dedup sets for mempool gossip (two-set rotation like relay dedup).
+    mempool_seen_active: HashSet<[u8; 32]>,
+    mempool_seen_backup: HashSet<[u8; 32]>,
 }
 
 /// Configuration for creating a [`NetworkService`].
@@ -354,7 +355,8 @@ impl NetworkService {
                 epoch_rx,
                 pex_rate_limit: HashMap::new(),
                 mempool_tx_tx,
-                mempool_seen: HashSet::new(),
+                mempool_seen_active: HashSet::new(),
+                mempool_seen_backup: HashSet::new(),
             },
             sink,
             msg_rx,
@@ -812,6 +814,10 @@ impl NetworkService {
         if let Err(e) = self.peer_book.read().await.save() {
             warn!(%e, "failed to save peer book");
         }
+
+        // 4. Prune stale PEX rate-limit entries (disconnected peers older than 60s).
+        let pex_cutoff = Instant::now() - std::time::Duration::from_secs(60);
+        self.pex_rate_limit.retain(|_, last| *last > pex_cutoff);
     }
 
     /// Send a PEX GetPeers request to a random connected peer.
@@ -996,13 +1002,20 @@ impl NetworkService {
             } => {
                 let hash = blake3::hash(&notification);
                 let hash_bytes: [u8; 32] = *hash.as_bytes();
-                if self.mempool_seen.contains(&hash_bytes) {
+                if self.mempool_seen_active.contains(&hash_bytes)
+                    || self.mempool_seen_backup.contains(&hash_bytes)
+                {
                     return;
                 }
-                self.mempool_seen.insert(hash_bytes);
-                // Cap the seen set to prevent unbounded growth.
-                if self.mempool_seen.len() > 100_000 {
-                    self.mempool_seen.clear();
+                self.mempool_seen_active.insert(hash_bytes);
+                // Two-set rotation: swap active→backup when full, preserving
+                // recent history (same approach as relay dedup).
+                if self.mempool_seen_active.len() > 100_000 {
+                    std::mem::swap(
+                        &mut self.mempool_seen_active,
+                        &mut self.mempool_seen_backup,
+                    );
+                    self.mempool_seen_active.clear();
                 }
                 let _ = self.mempool_tx_tx.try_send(notification.freeze().to_vec());
             }

@@ -963,6 +963,17 @@ impl ConsensusEngine {
                     store.put_commit_qc(justified_block.height, justify.clone());
                 }
 
+                // WAL: log commit intent before fast-forward commit in on_proposal.
+                if let Some(ref dc) = double_cert {
+                    if let Some(ref mut wal) = self.wal {
+                        if let Some(target_block) = store.get_block(&dc.inner_qc.block_hash) {
+                            if let Err(e) = wal.log_commit_intent(target_block.height) {
+                                warn!(error = %e, "WAL: failed to log commit intent for fast-forward");
+                            }
+                        }
+                    }
+                }
+
                 let proposal_result = view_protocol::on_proposal(
                     &mut self.state,
                     view_protocol::ProposalData {

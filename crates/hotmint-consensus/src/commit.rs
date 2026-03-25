@@ -30,6 +30,12 @@ pub fn decode_payload(payload: &[u8]) -> Vec<&[u8]> {
         let len = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
         if offset + len > payload.len() {
+            tracing::warn!(
+                offset,
+                claimed_len = len,
+                payload_len = payload.len(),
+                "decode_payload: length prefix exceeds remaining bytes, truncating"
+            );
             break;
         }
         txs.push(&payload[offset..offset + len]);
@@ -104,7 +110,7 @@ pub fn try_commit(
     // Commit from lowest height to highest
     to_commit.reverse();
 
-    let mut pending_epoch = None;
+    let mut pending_epoch: Option<Epoch> = None;
     let mut last_app_hash = BlockHash::GENESIS;
     let mut block_responses = Vec::with_capacity(to_commit.len());
 
@@ -164,11 +170,22 @@ pub fn try_commit(
         };
 
         if !response.validator_updates.is_empty() {
-            let new_vs = current_epoch
-                .validator_set
-                .apply_updates(&response.validator_updates);
+            // Chain epoch transitions: if a prior block in this batch already
+            // produced a pending epoch, apply the new updates on top of that
+            // intermediate validator set rather than the original epoch's set.
+            let base_vs = if let Some(ref ep) = pending_epoch {
+                &ep.validator_set
+            } else {
+                &current_epoch.validator_set
+            };
+            let base_num = if let Some(ref ep) = pending_epoch {
+                ep.number
+            } else {
+                current_epoch.number
+            };
+            let new_vs = base_vs.apply_updates(&response.validator_updates);
             let epoch_start = ViewNumber(block.view.as_u64() + 2);
-            pending_epoch = Some(Epoch::new(current_epoch.number.next(), epoch_start, new_vs));
+            pending_epoch = Some(Epoch::new(base_num.next(), epoch_start, new_vs));
         }
 
         block_responses.push(response);
