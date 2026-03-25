@@ -1,268 +1,268 @@
-# Hotmint 完整审查报告：安全漏洞、工程缺陷与演进路线图
+# Hotmint Security Audit & Evolution Roadmap
 
-> **报告版本：** 基于 Hotmint v0.7 / CometBFT v0.38
-> **生成日期：** 2026-03-24 | **最后审计：** 2026-03-25
-> **来源：** CometBFT 特性差异分析 + 两轮代码安全审计
-> **用途：** 作为长期演进路线图的参考基准，每次迭代后可对照更新完成状态（将 `[ ]` 改为 `[x]`，部分完成标记 `[~]`）。
-
----
-
-## 1. 执行摘要
-
-| 维度 | CometBFT v0.38 | Hotmint v0.7 |
-|------|---------------|-------------|
-| 语言 | Go | Rust |
-| 共识算法 | Tendermint（三阶段 BFT） | HotStuff-2（双链提交 BFT） |
-| 成熟度 | 生产级，Cosmos 生态主力引擎 | 工程原型，架构完整但生产配套不完善 |
-| 核心优势 | 生态完备、工具链丰富、协议成熟 | 延迟更低、架构更模块化、内存安全 |
-| 主要短板 | 三阶段投票延迟高、Go GC 长尾抖动 | 安全防护薄弱、状态同步/轻客户端/事件订阅缺失 |
-
-Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法和架构现代化上具备超越 CometBFT 的潜力。当前差距主要集中在两个层面：
-- **安全防护层：** 存在若干可被主动利用的漏洞（Eclipse 攻击、Spam DoS、Panic 向量）
-- **工程完备性层：** 对标 CometBFT 缺少状态同步、轻客户端、事件订阅等生产级基础设施
+> **Report Version:** Based on Hotmint v0.7 / CometBFT v0.38
+> **Generated:** 2026-03-24 | **Last Audit:** 2026-03-25
+> **Sources:** CometBFT feature gap analysis + two rounds of code security audit
+> **Purpose:** Serves as a reference baseline for the long-term evolution roadmap. Update completion status after each iteration (change `[ ]` to `[x]`, partially complete marked `[~]`).
 
 ---
 
-## 2. 共识协议核心对比
+## 1. Executive Summary
 
-### 2.1 算法层
+| Dimension | CometBFT v0.38 | Hotmint v0.7 |
+|-----------|---------------|-------------|
+| Language | Go | Rust |
+| Consensus Algorithm | Tendermint (three-phase BFT) | HotStuff-2 (two-chain commit BFT) |
+| Maturity | Production-grade, primary engine of Cosmos ecosystem | Engineering prototype, architecturally complete but lacking production support |
+| Core Strengths | Complete ecosystem, rich toolchain, mature protocol | Lower latency, more modular architecture, memory safety |
+| Main Weaknesses | Three-phase voting latency, Go GC tail-latency jitter | Weak security defenses, missing state sync/light client/event subscription |
 
-| 对比项 | CometBFT v0.38 | Hotmint v0.7 |
-|--------|---------------|-------------|
-| 协议族 | Tendermint BFT | HotStuff-2（arXiv:2301.03253） |
-| 投票阶段 | 三阶段：Propose → Pre-vote → Pre-commit | 两链：Propose → Vote → QC → Vote2 → DC |
-| 提交规则 | Pre-commit 超 2/3 后单块提交 | Double Certificate（两轮 2f+1）后双链提交 |
-| 视图切换（ViewChange） | 复杂：需收集 prevotes，存在 Nil 投票路径 | 线性：Wish 消息聚合为 TimeoutCert，无额外开销 |
-| 提议者选举 | 加权轮询（weighted round-robin） | 加权轮询（`view % total_power` 累计权重）✅ |
-| 网络复杂度 | O(n²) 广播 | O(n²)（同阶，但阶段更少） |
-| 理论延迟 | ~2 个网络往返（三阶段） | ~2 个网络往返（两阶段，各含 QC 聚合） |
-| BFT 容错边界 | f < n/3 | f < n/3 |
-| 时间戳来源 | BFT Time（验证者投票时间中位数） | 由提议者指定（无 BFT Time 共识）⚠️ |
-
-### 2.2 安全机制
-
-| 对比项 | CometBFT v0.38 | Hotmint v0.7 |
-|--------|---------------|-------------|
-| 重放攻击保护 | Chain ID 编码在签名域 | Blake3(chain_id) 注入所有签名 ✅ |
-| 状态分叉检测 | App hash 链 + ABCI 校验 | App hash 链（每块头携带上一块执行结果）✅ |
-| 双签检测 | 完整证据收集 + 网络广播 | 检测 + P2P 广播 + 内存存储 + 签名验证 ✅（vsdb 持久化待完成）|
-| WAL 崩溃恢复 | 有 Write-Ahead Log，精确重放 | 无 WAL，依赖 vsdb `PersistentConsensusState` ⚠️ |
-| 锁定机制 | polkaValue / 轮次锁 | `locked_qc`（安全性等价）✅ |
-| 跨 Epoch 投票重放防护 | epoch 编码在签名或状态机切换保护中 | `signing_bytes` 含 `chain_id_hash + epoch + view + block_hash`（HOTMINT_VOTE_V2）✅ |
+Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential to surpass CometBFT in core consensus algorithm and architectural modernization. The current gaps are concentrated in two layers:
+- **Security Defense Layer:** Several actively exploitable vulnerabilities exist (Eclipse attack, Spam DoS, Panic vectors)
+- **Engineering Completeness Layer:** Missing production-grade infrastructure compared to CometBFT — state sync, light client, event subscription, etc.
 
 ---
 
-## 3. 应用接口（ABCI 层）对比
+## 2. Core Consensus Protocol Comparison
 
-### 3.1 接口方法全量对比
+### 2.1 Algorithm Layer
 
-| 方法/回调 | CometBFT ABCI++ v0.38 | Hotmint `Application` Trait | 状态 |
-|-----------|----------------------|----------------------------|------|
-| 区块提议构造 | `PrepareProposal` | `create_payload` | ✅ 语义等价 |
-| 区块提议验证 | `ProcessProposal` | `validate_block` | ✅ 语义等价 |
-| 交易执行 | `FinalizeBlock` | `execute_block` | ✅ 语义等价 |
-| 交易预校验 | `CheckTx` | `validate_tx` | ✅ 语义等价 |
-| 块提交回调 | `Commit`（含 app_hash） | `on_commit` | ✅ |
-| 证据惩罚 | `FinalizeBlock.misbehavior[]` | `on_evidence(EquivocationProof)` | ✅ |
-| 状态查询 | `Query` | `query(path, data)` | ✅ |
-| **投票扩展附加** | **`ExtendVote`** | `extend_vote` | ✅ |
-| **投票扩展验证** | **`VerifyVoteExtension`** | `verify_vote_extension` | ✅ |
-| 快照创建 | `ListSnapshots` / `LoadSnapshotChunk` | `list_snapshots` / `load_snapshot_chunk` | ✅ |
-| 快照接收 | `OfferSnapshot` / `ApplySnapshotChunk` | `offer_snapshot` / `apply_snapshot_chunk` | ✅ |
-| 应用信息 | `Info`（含 last_block_height） | `tracks_app_hash` 间接实现 | ⚠️ |
-| 初始化创世 | `InitChain` | 无显式接口（应用构造时处理） | ⚠️ |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+|-----------------|---------------|-------------|
+| Protocol Family | Tendermint BFT | HotStuff-2 (arXiv:2301.03253) |
+| Voting Phases | Three-phase: Propose → Pre-vote → Pre-commit | Two-chain: Propose → Vote → QC → Vote2 → DC |
+| Commit Rule | Single-block commit after Pre-commit exceeds 2/3 | Double Certificate (two rounds of 2f+1) two-chain commit |
+| View Change | Complex: requires collecting prevotes, has Nil vote path | Linear: Wish messages aggregate into TimeoutCert, no extra overhead |
+| Proposer Election | Weighted round-robin | Weighted round-robin (`view % total_power` cumulative weight) ✅ |
+| Network Complexity | O(n²) broadcast | O(n²) (same order, but fewer phases) |
+| Theoretical Latency | ~2 network round-trips (three phases) | ~2 network round-trips (two phases, each with QC aggregation) |
+| BFT Fault Tolerance | f < n/3 | f < n/3 |
+| Timestamp Source | BFT Time (median of validator vote timestamps) | Specified by proposer (no BFT Time consensus) ⚠️ |
 
-### 3.2 跨进程通信
+### 2.2 Security Mechanisms
 
-| 对比项 | CometBFT v0.38 | Hotmint v0.7 |
-|--------|---------------|-------------|
-| 同进程接口 | Go interface | Rust trait ✅ |
-| 跨语言/跨进程 | gRPC（`.proto` 多语言 SDK） | Unix domain socket + protobuf（`hotmint-abci`）+ Go SDK |
-| IPC 超时保护 | gRPC 内置超时 | 5s 读写超时（`set_read_timeout` / `set_write_timeout`）✅ |
-
----
-
-## 4. P2P 网络层对比
-
-| 对比项 | CometBFT v0.38 | Hotmint v0.7 |
-|--------|---------------|-------------|
-| 底层框架 | 自研 MConnTransport（多路复用 TCP） | litep2p（Rust，衍生自 Polkadot 生态）✅ |
-| 消息路由 | Reactor 模型 | Notification + Request-Response 协议分离 ✅ |
-| 点对点加密 | SecretConnection（Noise） | litep2p 内置 Noise/TLS ✅ |
-| Peer 发现 | PEX Reactor + 种子节点 | PEX 协议（`/hotmint/pex/1`）✅ |
-| 验证者连接保护 | Persistent Peers 优先保留槽位 | 验证者穿透 max_peers 限制 ✅（独立保留槽待完善）|
-| 连接管理 | 持久/非持久对等体 + 拨号调度 | 维护循环（10s）+ 退避 + chain_id 握手隔离 ✅ |
-| 消息压缩 | 内部协议处理 | zstd 压缩，压缩端 Result 传播 ✅ |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+|-----------------|---------------|-------------|
+| Replay Attack Protection | Chain ID encoded in signature domain | Blake3(chain_id) injected into all signatures ✅ |
+| State Fork Detection | App hash chain + ABCI verification | App hash chain (each block header carries previous block's execution result) ✅ |
+| Double-Signing Detection | Complete evidence collection + network broadcast | Detection + P2P broadcast + in-memory storage + signature verification ✅ (vsdb persistence pending) |
+| WAL Crash Recovery | Has Write-Ahead Log, precise replay | No WAL, relies on vsdb `PersistentConsensusState` ⚠️ |
+| Locking Mechanism | polkaValue / round lock | `locked_qc` (safety equivalent) ✅ |
+| Cross-Epoch Vote Replay Protection | Epoch encoded in signature or state machine transition protection | `signing_bytes` contains `chain_id_hash + epoch + view + block_hash` (HOTMINT_VOTE_V2) ✅ |
 
 ---
 
-## 5. 内存池（Mempool）对比
+## 3. Application Interface (ABCI Layer) Comparison
 
-| 对比项 | CometBFT v0.38 | Hotmint v0.7 |
-|--------|---------------|-------------|
-| 数据结构 | 并发链表 + LRU 去重缓存 | `BTreeSet<TxEntry>` + `HashMap<TxHash, u64>` ✅ |
-| 排序策略 | **优先级队列**（应用返回 priority 字段） | 优先级队列（priority ASC + hash tiebreak）+ RBF ✅ |
-| 容量控制 | `max_txs`（数量）+ `max_txs_bytes`（总字节） | `max_size`（数量）+ `max_tx_bytes`（单笔）|
-| 溢出驱逐 | 低优先级交易被驱逐 | 低优先级驱逐 ✅ |
-| 重验证 | 出块后对悬挂交易重跑 `CheckTx` | 无重验证 ❌ |
-| Gas 感知 | 应用返回 `gas_wanted`，Mempool 据此驱逐 | `gas_wanted` 字段 + `max_gas_per_block` 截断 ✅ |
-| API 速率限制 | 支持限速配置 | 令牌桶限速（TCP per-conn + HTTP 全局）✅ |
-| P2P 广播 | Flood Mempool，对等体 Gossip | 仅 RPC 接受，无 P2P gossip ❌ |
+### 3.1 Full Interface Method Comparison
 
----
+| Method/Callback | CometBFT ABCI++ v0.38 | Hotmint `Application` Trait | Status |
+|-----------------|----------------------|----------------------------|--------|
+| Block Proposal Construction | `PrepareProposal` | `create_payload` | ✅ Semantically equivalent |
+| Block Proposal Validation | `ProcessProposal` | `validate_block` | ✅ Semantically equivalent |
+| Transaction Execution | `FinalizeBlock` | `execute_block` | ✅ Semantically equivalent |
+| Transaction Pre-validation | `CheckTx` | `validate_tx` | ✅ Semantically equivalent |
+| Block Commit Callback | `Commit` (includes app_hash) | `on_commit` | ✅ |
+| Evidence Punishment | `FinalizeBlock.misbehavior[]` | `on_evidence(EquivocationProof)` | ✅ |
+| State Query | `Query` | `query(path, data)` | ✅ |
+| **Vote Extension Attachment** | **`ExtendVote`** | `extend_vote` | ✅ |
+| **Vote Extension Verification** | **`VerifyVoteExtension`** | `verify_vote_extension` | ✅ |
+| Snapshot Creation | `ListSnapshots` / `LoadSnapshotChunk` | `list_snapshots` / `load_snapshot_chunk` | ✅ |
+| Snapshot Reception | `OfferSnapshot` / `ApplySnapshotChunk` | `offer_snapshot` / `apply_snapshot_chunk` | ✅ |
+| Application Info | `Info` (includes last_block_height) | `tracks_app_hash` indirect implementation | ⚠️ |
+| Genesis Initialization | `InitChain` | No explicit interface (handled at application construction) | ⚠️ |
 
-## 6. 区块同步（Block Sync）对比
+### 3.2 Cross-Process Communication
 
-| 对比项 | CometBFT v0.38 | Hotmint v0.7 |
-|--------|---------------|-------------|
-| 实现方式 | Block Sync Reactor，多节点并发下载 | 单节点串行批次拉取（max 100 blocks/batch）⚠️ |
-| 验证强度 | 每块验证 commit 签名（2/3 以上） | 依赖 `app_hash` 对比（可选）+ QC 验证 |
-| 追赶后切换 | 自动切换为共识 reactor | `sync_to_tip` 完成后启动共识引擎 ✅ |
-
----
-
-## 7. 状态同步（State Sync）对比
-
-| 对比项 | CometBFT v0.38 | Hotmint v0.7 |
-|--------|---------------|-------------|
-| 能力 | **完整支持**：快照列举、分块下载、校验、应用 | 完整支持（`sync_via_snapshot` + 分块下载）✅ |
-| 应用侧接口 | `ListSnapshots`、`LoadSnapshotChunk`、`OfferSnapshot`、`ApplySnapshotChunk` | 4 个方法全部实现 ✅ |
-| 典型加入时间 | 分钟级（下载快照） | 分钟级（快照）或与链龄相关（全量重放）|
+| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+|-----------------|---------------|-------------|
+| In-Process Interface | Go interface | Rust trait ✅ |
+| Cross-Language/Cross-Process | gRPC (`.proto` multi-language SDK) | Unix domain socket + protobuf (`hotmint-abci`) + Go SDK |
+| IPC Timeout Protection | gRPC built-in timeout | 5s read/write timeout (`set_read_timeout` / `set_write_timeout`) ✅ |
 
 ---
 
-## 8. 轻客户端（Light Client）对比
+## 4. P2P Network Layer Comparison
 
-| 对比项 | CometBFT v0.38 | Hotmint v0.7 |
-|--------|---------------|-------------|
-| 实现 | 完整：二分搜索验证、不信任区段跳跃 | `hotmint-light` crate：`verify_header` + `update_validator_set` ✅ |
-| Merkle 证明输出 | `Query` 返回 Merkle proof | RPC `get_header` / `get_commit_qc` ✅（Merkle proof 待完善）|
-| 跨链基础 | IBC 协议依赖轻客户端 | 基础设施就绪，Merkle proof 待集成 |
-
----
-
-## 9. RPC / API 层对比
-
-| 对比项 | CometBFT v0.38 | Hotmint v0.7 |
-|--------|---------------|-------------|
-| 传输协议 | HTTP + WebSocket（标准） | TCP JSON + axum HTTP/WS（`POST /` + `GET /ws`）✅ |
-| 事件订阅 | WebSocket `subscribe`（丰富过滤语法） | WS 推送 `NewBlock` 事件 ✅（过滤待完善）|
-| 方法数量 | 20+ 方法 | 10+ 方法（status, block, epoch, peers, submit_tx, header, commit_qc 等）|
-| 交易查询 | 按 hash 查询、事件索引 | 不支持（`get_tx` 待实现）|
+| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+|-----------------|---------------|-------------|
+| Underlying Framework | Custom MConnTransport (multiplexed TCP) | litep2p (Rust, derived from Polkadot ecosystem) ✅ |
+| Message Routing | Reactor model | Notification + Request-Response protocol separation ✅ |
+| Peer-to-Peer Encryption | SecretConnection (Noise) | litep2p built-in Noise/TLS ✅ |
+| Peer Discovery | PEX Reactor + seed nodes | PEX protocol (`/hotmint/pex/1`) ✅ |
+| Validator Connection Protection | Persistent Peers with priority reserved slots | Validators bypass max_peers limit ✅ (dedicated reserved slots pending) |
+| Connection Management | Persistent/non-persistent peers + dial scheduling | Maintenance loop (10s) + backoff + chain_id handshake isolation ✅ |
+| Message Compression | Internal protocol handling | zstd compression, compression-side Result propagation ✅ |
 
 ---
 
-## 10. 观测性与运维对比
+## 5. Mempool Comparison
 
-| 对比项 | CometBFT v0.38 | Hotmint v0.7 |
-|--------|---------------|-------------|
-| Prometheus Metrics | 丰富（共识轮次、P2P 流量、Mempool 深度等）| 基础（view、height、blocks、votes、timeouts）✅ |
-| 结构化日志 | slog/zap | `tracing` crate ✅ |
-| WAL 崩溃恢复 | 有 WAL，精确恢复到崩溃前投票状态 | 无 WAL ⚠️ |
-
----
-
-## 11. 惩罚与证据机制对比
-
-| 对比项 | CometBFT v0.38 | Hotmint v0.7 |
-|--------|---------------|-------------|
-| 双签证据 | `DuplicateVoteEvidence`（持久化 + gossip）| `EquivocationProof`（检测 + 签名验证 + 广播 + 内存存储）✅ |
-| 证据广播 | P2P 层 gossip，全网可见 | `ConsensusMessage::Evidence` P2P 广播 ✅ |
-| 证据持久化 | 证据池持久化，重启不丢 | 内存存储 + `mark_committed` ✅（vsdb 持久化待完善）|
-| 离线惩罚 | 支持（`downtime` 逻辑）| 无 ❌ |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+|-----------------|---------------|-------------|
+| Data Structure | Concurrent linked list + LRU dedup cache | `BTreeSet<TxEntry>` + `HashMap<TxHash, u64>` ✅ |
+| Ordering Strategy | **Priority queue** (application returns priority field) | Priority queue (priority ASC + hash tiebreak) + RBF ✅ |
+| Capacity Control | `max_txs` (count) + `max_txs_bytes` (total bytes) | `max_size` (count) + `max_tx_bytes` (per-tx) |
+| Overflow Eviction | Low-priority transactions evicted | Low-priority eviction ✅ |
+| Re-validation | Re-runs `CheckTx` on pending txs after block production | No re-validation ❌ |
+| Gas Awareness | Application returns `gas_wanted`, Mempool evicts accordingly | `gas_wanted` field + `max_gas_per_block` truncation ✅ |
+| API Rate Limiting | Supports rate limiting configuration | Token bucket rate limiting (TCP per-conn + HTTP global) ✅ |
+| P2P Broadcast | Flood Mempool, peer Gossip | RPC-only acceptance, no P2P gossip ❌ |
 
 ---
 
-## 12. 特性全景汇总
+## 6. Block Sync Comparison
 
-| 特性 | CometBFT v0.38 | Hotmint v0.7 | 差距等级 |
-|------|:--------------:|:------------:|:--------:|
-| BFT 共识核心 | ✅ | ✅ | 无 |
-| 加权提议者选举 | ✅ | ✅ | 无 |
-| BFT Time | ✅ | ❌ | 低 |
-| ABCI 准入接口（Prepare/Process）| ✅ | ✅ | 无 |
-| **Vote Extensions** | ✅ | ✅ | 无 |
-| **快照状态同步** | ✅ | ✅ | 无 |
-| **轻客户端验证** | ✅ | ✅ | Merkle proof 待完善 |
-| **Merkle 证明输出** | ✅ | ❌ | **高** |
-| **WebSocket 事件订阅** | ✅ | ✅ | 过滤待完善 |
-| **优先级内存池** | ✅ | ✅ | 无 |
-| Mempool P2P Gossip | ✅ | ❌ | 中 |
-| Mempool 重验证 | ✅ | ❌ | 中 |
-| Block Sync（多节点并发）| ✅ | ⚠️ 单节点 | 中 |
-| WAL 崩溃恢复 | ✅ | ⚠️ 部分 | 中 |
-| 证据持久化与广播 | ✅ | ✅ | vsdb 持久化待完善 |
-| 标准 HTTP JSON-RPC | ✅ | ✅ | 无 |
-| 交易/区块历史查询 | ✅ | ❌ | 中 |
-| IBC 跨链能力 | ✅（需轻客户端）| ❌ | **高** |
-| 完整运维 CLI | ✅ | ⚠️ 基础 | 低 |
+| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+|-----------------|---------------|-------------|
+| Implementation | Block Sync Reactor, concurrent multi-node download | Single-node serial batch pull (max 100 blocks/batch) ⚠️ |
+| Verification Strength | Per-block commit signature verification (2/3+) | Relies on `app_hash` comparison (optional) + QC verification |
+| Post-Catchup Switch | Automatic switch to consensus reactor | Starts consensus engine after `sync_to_tip` completes ✅ |
 
 ---
 
-## 13. 完整待修复事项清单
+## 7. State Sync Comparison
 
-以下条目按**真实风险优先级**排列，融合了 CometBFT 功能差距分析与代码安全审计两个来源的发现。每条附有类型标签：`[安全漏洞]` / `[工程缺陷]` / `[功能缺失]`。
-
----
-
-### 🔴 Critical — 安全漏洞（阻塞正式上线）
-
-#### [x] C-1. Eclipse 攻击：P2P 验证者连接槽缺乏保护 `[安全漏洞]`
-
-**位置：** `crates/hotmint-network/src/service.rs`
-
-**问题：** 网络层按 `max_peers` 限制总连接数。当连接数达到上限后，新入站连接一律被拒绝。攻击者可用大量女巫节点（Sybil Nodes）占满连接槽，导致合法验证者之间无法建立 P2P 链路，共识网络失去活性。
-
-**修复方案：**
-- 在入站握手阶段检查对方是否在当前 `ValidatorSet` 中
-- 若是验证者节点，即使达到 `max_peers` 上限，也强制挤掉一个低信誉的非验证者连接为其腾槽
-- 为验证者节点维护独立的「保留槽（Reserved Slots）」，数量不低于 `validator_count`
-
-**风险等级：** 🔴 高危 — 可导致网络级活性失败（Liveness Failure）
-
-> **实现状态：✅ 基本完成。** 已在入站握手阶段检查 `peer_to_validator`，验证者即使超 `max_peers` 也不被拒。尚未实现：独立保留槽计数器、主动驱逐非验证者连接为验证者腾位。
+| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+|-----------------|---------------|-------------|
+| Capability | **Full support:** snapshot listing, chunked download, verification, application | Full support (`sync_via_snapshot` + chunked download) ✅ |
+| Application-Side Interface | `ListSnapshots`, `LoadSnapshotChunk`, `OfferSnapshot`, `ApplySnapshotChunk` | All 4 methods implemented ✅ |
+| Typical Join Time | Minutes (snapshot download) | Minutes (snapshot) or proportional to chain age (full replay) |
 
 ---
 
-#### [~] C-2. FIFO Mempool DoS：垃圾交易阻断合法交易 `[安全漏洞 × 功能缺失]`
+## 8. Light Client Comparison
 
-**位置：** `crates/hotmint-mempool/src/lib.rs`、`crates/hotmint-api/src/rpc.rs`
-
-**问题 A（Spam DoS）：** Mempool 是无优先级的 FIFO 队列（默认上限 10,000 条），API 层无任何速率限制。攻击者可在瞬间向 RPC 接口提交 10,000 笔体积微小但满足 `validate_tx` 的无用交易，把队列塞满。后续合法交易全部被拒绝，实质上实现了针对链交易通道 DoS 攻击。
-
-**问题 B（DeFi 不可用）：** 无 Gas/Priority 排序意味着无法支持手续费竞价机制，DeFi 应用无法正常运行。
-
-**修复方案：**
-- **Mempool 重构：** 将 `VecDeque` 替换为 `BinaryHeap`（按 `priority` 排序），在 `validate_tx` 返回值中增加 `priority: u64` 和 `gas_wanted: u64`；池满时驱逐优先级最低的交易
-- **来源限额：** 限制单一 IP/PeerId 的同时占用比例（如最多占总容量 10%）
-- **API 限速：** 在 `hotmint-api` 的 RPC 层对 `submit_tx` 增加每 IP 速率限制（如令牌桶算法）
-- **`collect_payload` 扩展：** 增加 `max_gas_per_block` 按 gas 累计截断
-
-**关键文件：** `crates/hotmint-mempool/src/lib.rs`、`crates/hotmint-consensus/src/application.rs`
-
-**风险等级：** 🔴 高危 — 可实现链上交易通道 DoS
-
-> **实现状态：⚠️ 部分完成。** 已完成：BTreeSet 优先级队列 + RBF、`TxValidationResult { valid, priority }` 返回值、池满驱逐最低优先级、令牌桶限速（100 tx/sec per connection）。尚未实现：`gas_wanted` 字段、per-IP/PeerId 来源限额（当前限速仅 per-connection，攻击者可多连接绕过）、`collect_payload` 的 `max_gas_per_block` 截断。
+| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+|-----------------|---------------|-------------|
+| Implementation | Complete: bisection verification, untrusted range skipping | `hotmint-light` crate: `verify_header` + `update_validator_set` ✅ |
+| Merkle Proof Output | `Query` returns Merkle proof | RPC `get_header` / `get_commit_qc` ✅ (Merkle proof pending) |
+| Cross-Chain Foundation | IBC protocol depends on light client | Infrastructure ready, Merkle proof integration pending |
 
 ---
 
-#### [~] C-3. 证据广播缺失：双签者可免于惩罚 `[安全漏洞 × 功能缺失]`
+## 9. RPC / API Layer Comparison
 
-**位置：** `crates/hotmint-consensus/src/vote_collector.rs`、`crates/hotmint-consensus/src/engine.rs`（约第 991 行）
+| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+|-----------------|---------------|-------------|
+| Transport Protocol | HTTP + WebSocket (standard) | TCP JSON + axum HTTP/WS (`POST /` + `GET /ws`) ✅ |
+| Event Subscription | WebSocket `subscribe` (rich filter syntax) | WS push `NewBlock` events ✅ (filtering pending) |
+| Method Count | 20+ methods | 10+ methods (status, block, epoch, peers, submit_tx, header, commit_qc, etc.) |
+| Transaction Query | Query by hash, event indexing | Not supported (`get_tx` pending) |
 
-**问题：** `vote_collector.rs` 能正确检测双签并生成 `EquivocationProof`，引擎随后调用 `app.on_evidence(proof)` 传给应用层。但 Hotmint 没有将证据广播至全网的机制——如果检测到作恶的节点不是当前 Leader，该证据仅停留在本地应用进程中。作恶者针对部分非出块节点进行双签欺骗，这些证据无法上链，可完全躲避 Slashing 惩罚。此外证据不持久化，节点重启后证据丢失。
+---
 
-**修复方案：**
-- 在 `hotmint-network` 增加 `/hotmint/evidence/1` P2P 广播协议
-- 引擎检测到 `EquivocationProof` 后，**立即**通过 P2P 广播给全网
-- Leader 打包下一个 Block 时，**强制**将收集到的未上链 Evidence 嵌入 Block Header 或 Payload
-- 在 `hotmint-storage` 增加 `EvidenceStore`（vsdb 持久化），重启后不丢失
+## 10. Observability & Operations Comparison
 
-**关键文件：** `crates/hotmint-consensus/src/engine.rs`、`crates/hotmint-storage/`、`crates/hotmint-network/src/service.rs`
+| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+|-----------------|---------------|-------------|
+| Prometheus Metrics | Rich (consensus round, P2P traffic, Mempool depth, etc.) | Basic (view, height, blocks, votes, timeouts) ✅ |
+| Structured Logging | slog/zap | `tracing` crate ✅ |
+| WAL Crash Recovery | Has WAL, precise recovery to pre-crash vote state | No WAL ⚠️ |
 
-**风险等级：** 🔴 高危 — 惩罚机制形同虚设，恶意验证者可无成本双签
+---
 
-> **实现状态：⚠️ 部分完成。** 已完成：`ConsensusMessage::Evidence` 消息类型、`broadcast_evidence()` 通过现有 notification 协议广播（非独立协议）、`EvidenceStore` trait（put/get_pending/mark_committed/all）、`MemoryEvidenceStore` 内存实现、引擎检测到双签后立即广播+存储、收到 gossip 证据后存储并通知应用层。尚未实现：vsdb 持久化存储（当前仅内存，重启丢失）、Leader 打包证据进 Block（代码注释 "full block inclusion is a later step"）、`mark_committed` 从未被调用。
+## 11. Slashing & Evidence Mechanism Comparison
+
+| Comparison Item | CometBFT v0.38 | Hotmint v0.7 |
+|-----------------|---------------|-------------|
+| Double-Signing Evidence | `DuplicateVoteEvidence` (persistent + gossip) | `EquivocationProof` (detection + signature verification + broadcast + in-memory storage) ✅ |
+| Evidence Broadcast | P2P layer gossip, network-wide visibility | `ConsensusMessage::Evidence` P2P broadcast ✅ |
+| Evidence Persistence | Evidence pool persisted, survives restarts | In-memory storage + `mark_committed` ✅ (vsdb persistence pending) |
+| Offline Slashing | Supported (`downtime` logic) | None ❌ |
+
+---
+
+## 12. Feature Overview Summary
+
+| Feature | CometBFT v0.38 | Hotmint v0.7 | Gap Level |
+|---------|:--------------:|:------------:|:---------:|
+| BFT Consensus Core | ✅ | ✅ | None |
+| Weighted Proposer Election | ✅ | ✅ | None |
+| BFT Time | ✅ | ❌ | Low |
+| ABCI Gating Interface (Prepare/Process) | ✅ | ✅ | None |
+| **Vote Extensions** | ✅ | ✅ | None |
+| **Snapshot State Sync** | ✅ | ✅ | None |
+| **Light Client Verification** | ✅ | ✅ | Merkle proof pending |
+| **Merkle Proof Output** | ✅ | ❌ | **High** |
+| **WebSocket Event Subscription** | ✅ | ✅ | Filtering pending |
+| **Priority Mempool** | ✅ | ✅ | None |
+| Mempool P2P Gossip | ✅ | ❌ | Medium |
+| Mempool Re-validation | ✅ | ❌ | Medium |
+| Block Sync (multi-node concurrent) | ✅ | ⚠️ Single-node | Medium |
+| WAL Crash Recovery | ✅ | ⚠️ Partial | Medium |
+| Evidence Persistence & Broadcast | ✅ | ✅ | vsdb persistence pending |
+| Standard HTTP JSON-RPC | ✅ | ✅ | None |
+| Transaction/Block History Query | ✅ | ❌ | Medium |
+| IBC Cross-Chain Capability | ✅ (requires light client) | ❌ | **High** |
+| Complete Operations CLI | ✅ | ⚠️ Basic | Low |
+
+---
+
+## 13. Complete Fix List
+
+The following items are ordered by **real risk priority**, combining findings from the CometBFT feature gap analysis and the code security audit. Each item is tagged: `[Security Vulnerability]` / `[Engineering Defect]` / `[Missing Feature]`.
+
+---
+
+### 🔴 Critical — Security Vulnerabilities (Blocking Production Launch)
+
+#### [x] C-1. Eclipse Attack: P2P Validator Connection Slots Lack Protection `[Security Vulnerability]`
+
+**Location:** `crates/hotmint-network/src/service.rs`
+
+**Problem:** The network layer limits total connections by `max_peers`. Once the limit is reached, all new inbound connections are rejected. An attacker can use a large number of Sybil Nodes to fill all connection slots, preventing legitimate validators from establishing P2P links and causing the consensus network to lose liveness.
+
+**Fix:**
+- During the inbound handshake phase, check whether the peer is in the current `ValidatorSet`
+- If the peer is a validator node, forcibly evict a low-reputation non-validator connection to make room, even if `max_peers` has been reached
+- Maintain dedicated "Reserved Slots" for validator nodes, with a count no less than `validator_count`
+
+**Severity:** 🔴 High — can cause network-level Liveness Failure
+
+> **Implementation Status: ✅ Largely complete.** Inbound handshake now checks `peer_to_validator`; validators are not rejected even when exceeding `max_peers`. Not yet implemented: dedicated reserved slot counter, proactive eviction of non-validator connections to make room for validators.
+
+---
+
+#### [~] C-2. FIFO Mempool DoS: Spam Transactions Block Legitimate Transactions `[Security Vulnerability × Missing Feature]`
+
+**Location:** `crates/hotmint-mempool/src/lib.rs`, `crates/hotmint-api/src/rpc.rs`
+
+**Problem A (Spam DoS):** The Mempool is a priority-less FIFO queue (default limit 10,000 entries) with no rate limiting on the API layer. An attacker can instantly submit 10,000 tiny but `validate_tx`-passing junk transactions to the RPC endpoint, filling the queue. All subsequent legitimate transactions are rejected, effectively achieving a DoS attack on the chain's transaction channel.
+
+**Problem B (DeFi Unusable):** Without Gas/Priority ordering, fee-bidding mechanisms cannot work, making DeFi applications non-functional.
+
+**Fix:**
+- **Mempool Refactor:** Replace `VecDeque` with `BinaryHeap` (sorted by `priority`); add `priority: u64` and `gas_wanted: u64` to the `validate_tx` return value; evict lowest-priority transactions when the pool is full
+- **Source Quotas:** Limit the concurrent occupancy ratio per IP/PeerId (e.g., max 10% of total capacity)
+- **API Rate Limiting:** Add per-IP rate limiting to `submit_tx` in the `hotmint-api` RPC layer (e.g., token bucket algorithm)
+- **`collect_payload` Extension:** Add `max_gas_per_block` with gas-cumulative truncation
+
+**Key Files:** `crates/hotmint-mempool/src/lib.rs`, `crates/hotmint-consensus/src/application.rs`
+
+**Severity:** 🔴 High — can achieve on-chain transaction channel DoS
+
+> **Implementation Status: ⚠️ Partially complete.** Completed: BTreeSet priority queue + RBF, `TxValidationResult { valid, priority }` return value, full-pool eviction of lowest priority, token bucket rate limiting (100 tx/sec per connection). Not yet implemented: `gas_wanted` field, per-IP/PeerId source quotas (current rate limiting is per-connection only — attacker can bypass with multiple connections), `collect_payload`'s `max_gas_per_block` truncation.
+
+---
+
+#### [~] C-3. Missing Evidence Broadcast: Double-Signers Can Escape Punishment `[Security Vulnerability × Missing Feature]`
+
+**Location:** `crates/hotmint-consensus/src/vote_collector.rs`, `crates/hotmint-consensus/src/engine.rs` (~line 991)
+
+**Problem:** `vote_collector.rs` correctly detects double-signing and generates `EquivocationProof`, and the engine subsequently calls `app.on_evidence(proof)` to pass it to the application layer. However, Hotmint has no mechanism to broadcast evidence to the entire network — if the node that detects the misbehavior is not the current Leader, the evidence remains only in the local application process. A malicious actor can double-sign against a subset of non-proposing nodes, and these proofs can never make it on-chain, completely evading slashing penalties. Additionally, evidence is not persisted — it is lost on node restart.
+
+**Fix:**
+- Add a `/hotmint/evidence/1` P2P broadcast protocol in `hotmint-network`
+- When the engine detects an `EquivocationProof`, **immediately** broadcast it to the entire network via P2P
+- When the Leader constructs the next Block, **mandatorily** embed collected uncommitted Evidence in the Block Header or Payload
+- Add an `EvidenceStore` (vsdb persistence) in `hotmint-storage` so evidence survives restarts
+
+**Key Files:** `crates/hotmint-consensus/src/engine.rs`, `crates/hotmint-storage/`, `crates/hotmint-network/src/service.rs`
+
+**Severity:** 🔴 High — slashing mechanism is effectively inoperative; malicious validators can double-sign at no cost
+
+> **Implementation Status: ⚠️ Partially complete.** Completed: `ConsensusMessage::Evidence` message type, `broadcast_evidence()` via existing notification protocol (not a dedicated protocol), `EvidenceStore` trait (put/get_pending/mark_committed/all), `MemoryEvidenceStore` in-memory implementation, engine immediately broadcasts + stores on detecting double-signing, gossip evidence stored and application layer notified upon receipt. Not yet implemented: vsdb persistent storage (currently in-memory only — lost on restart), Leader packing evidence into Block (code comment: "full block inclusion is a later step"), `mark_committed` is never called.
 
 #### [x] C-4. Proposal ancestor constraint missing `[Safety Violation]` ✅
 
@@ -320,89 +320,89 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-### 🟡 High — 工程安全（生产部署前应修复）
+### 🟡 High — Engineering Safety (Should Fix Before Production Deployment)
 
-#### [x] H-1. O(N) 签名验证 CPU DoS 风险 `[安全漏洞]` ✅
+#### [x] H-1. O(N) Signature Verification CPU DoS Risk `[Security Vulnerability]` ✅
 
-**位置：** `crates/hotmint-crypto/src/aggregate.rs`
+**Location:** `crates/hotmint-crypto/src/aggregate.rs`
 
-**问题：** 当前「聚合签名」实质上是把 N 个 Ed25519 签名拼接（Concatenation）后循环调用 `ed25519_dalek::Verifier::verify`，时间复杂度 O(N)。每次收到 QC、DC 及区块同步时都需要全量遍历验证。攻击者可频繁发送带有随机数据的看似合法 QC，迫使节点消耗巨量 CPU，导致视图切换超时（Liveness 失败）。
+**Problem:** The current "aggregate signature" is actually N Ed25519 signatures concatenated, then verified by iterating `ed25519_dalek::Verifier::verify` with O(N) time complexity. Full traversal verification is required every time a QC, DC, or block sync is received. An attacker can frequently send seemingly valid QCs with random data, forcing the node to consume massive CPU, causing view-change timeouts (Liveness failure).
 
-**修复方案（二选一）：**
-1. **方案 A（长期）：** 引入真正的聚合签名机制（如 BLS12-381），将 N 个签名验证压缩为一次 pairing 操作，验证成本 O(1)
-2. **方案 B（短期）：** 将 `verify_aggregate` 移交至 `tokio::task::spawn_blocking` 专用 CPU 线程池，避免阻塞共识引擎主事件循环；同时对未知来源的 QC/DC 消息增加来源鉴权（只接受来自已知验证者 PeerId 的消息）
+**Fix (choose one):**
+1. **Option A (long-term):** Introduce true aggregate signatures (e.g., BLS12-381), compressing N signature verifications into a single pairing operation with O(1) verification cost
+2. **Option B (short-term):** Move `verify_aggregate` to a dedicated CPU thread pool via `tokio::task::spawn_blocking` to avoid blocking the consensus engine's main event loop; also add source authentication for QC/DC messages from unknown sources (only accept messages from known validator PeerIds)
 
-**关键文件：** `crates/hotmint-crypto/src/aggregate.rs`
+**Key Files:** `crates/hotmint-crypto/src/aggregate.rs`
 
-**风险等级：** 🟡 中危 — 在大型验证者集合（100+ 节点）下可触发 Liveness 失败
+**Severity:** 🟡 Medium — can trigger Liveness failure in large validator sets (100+ nodes)
 
-> **实现状态：✅ 100% 完成。** 方案 B 全部落地：`verify_aggregate` 改用 `ed25519_dalek::verify_batch`（Bos-Coster 批验证）；`verify_message` / `validate_double_cert` / Wish QC 验证均包裹在 `tokio::task::block_in_place` 中；签名域绑定 epoch 防重放。
-
----
-
-#### [x] H-2. `pending_epoch` 强制解包 Panic 向量 `[工程缺陷]` ✅
-
-**位置：** `crates/hotmint-consensus/src/engine.rs`（Epoch 切换逻辑）
-
-**问题：** Epoch 切换代码中存在 `self.pending_epoch.take().unwrap()` 强制解包。如果共识状态在崩溃恢复或异常边缘情况后未能正确注入 `pending_epoch`（例如：应用层返回了 ValidatorUpdates 但进程随之崩溃重启），此处 `unwrap()` 将在共识引擎触及特定视图高度时引发不可恢复的 Panic，导致该节点在该高度永久宕机。
-
-**修复方案：**
-- 将 `unwrap()` 替换为 `ok_or`/`expect` 配合 `Result` 传播
-- 若 `pending_epoch` 缺失，fallback 到安全状态（保持当前 Epoch 继续运行）或向应用层重新请求状态同步
-- 增加针对此路径的单元测试（模拟崩溃重启后的 Epoch 切换）
-
-**关键文件：** `crates/hotmint-consensus/src/engine.rs`
-
-**风险等级：** 🟡 中危 — 特定崩溃恢复路径下可引发不可恢复的节点宕机
+> **Implementation Status: ✅ 100% complete.** Option B fully implemented: `verify_aggregate` now uses `ed25519_dalek::verify_batch` (Bos-Coster batch verification); `verify_message` / `validate_double_cert` / Wish QC verification all wrapped in `tokio::task::block_in_place`; signature domain binds epoch to prevent replay.
 
 ---
 
-#### [x] H-3. zstd 压缩端 `unwrap()` Panic 向量 `[工程缺陷]` ✅
+#### [x] H-2. `pending_epoch` Force-Unwrap Panic Vector `[Engineering Defect]` ✅
 
-**位置：** `crates/hotmint-network/src/codec.rs`
+**Location:** `crates/hotmint-consensus/src/engine.rs` (Epoch transition logic)
 
-**问题：** 代码对解压（Decompress）端正确设置了 `MAX_DECOMPRESSED_SIZE` 限制，但压缩（Compress）端使用 `zstd::encode_all(..., ZSTD_LEVEL).unwrap()`。当操作系统内存耗尽或某些极端超大载荷触发 zstd 内部错误时，这个 `unwrap()` 将直接令底层网络服务崩溃，导致节点下线。
+**Problem:** The epoch transition code contains `self.pending_epoch.take().unwrap()` as a force unwrap. If consensus state fails to correctly inject `pending_epoch` after a crash recovery or abnormal edge case (e.g., the application layer returned ValidatorUpdates but the process crashed and restarted immediately), this `unwrap()` will trigger an unrecoverable Panic when the consensus engine reaches a specific view height, causing the node to permanently crash at that height.
 
-**修复方案：**
-- 将 `zstd::encode_all` 返回的 `Result` 向上传播
-- 压缩失败时，丢弃该消息或断开对应客户端连接，**禁止** Panic 传播至主进程
+**Fix:**
+- Replace `unwrap()` with `ok_or`/`expect` combined with `Result` propagation
+- If `pending_epoch` is missing, fall back to a safe state (continue running with the current Epoch) or re-request state sync from the application layer
+- Add unit tests for this path (simulating epoch transition after crash recovery)
 
-**关键文件：** `crates/hotmint-network/src/codec.rs`
+**Key Files:** `crates/hotmint-consensus/src/engine.rs`
 
-**风险等级：** 🟡 中危 — 特殊网络负载下可触发节点下线
-
----
-
-#### [x] H-4. ABCI IPC 通信无超时保护 `[工程缺陷]` ✅
-
-**位置：** `crates/hotmint-abci/src/client.rs`
-
-**问题：** 同步帧读写中，若应用端进程（Go/其他语言实现）僵死但 Unix socket 未断开，目前没有显式的 `ReadTimeout` / `WriteTimeout` 设置。这会导致 Rust 共识引擎在 `tokio::task::spawn_blocking` 中永久挂起，阻塞整个共识进程出块，实质上使链停止。
-
-**修复方案：**
-- 为底层 `UnixStream` 设置严格的读写超时（建议与 `base_timeout_ms` 挂钩，或设置固定的 5s 超时）
-- 超时后将 IPC 失败作为致命错误上报，触发应用层重连或节点重启流程
-
-**关键文件：** `crates/hotmint-abci/src/client.rs`
-
-**风险等级：** 🟡 中危 — 应用端进程异常时可使共识引擎永久停机
+**Severity:** 🟡 Medium — can trigger unrecoverable node crash on specific crash recovery paths
 
 ---
 
-#### [x] H-5. 投票签名缺少 `epoch_number`，存在跨 Epoch 重放风险 `[安全隐患]` ✅
+#### [x] H-3. zstd Compression-Side `unwrap()` Panic Vector `[Engineering Defect]` ✅
 
-**位置：** `crates/hotmint-types/src/vote.rs`（`signing_bytes` 方法）
+**Location:** `crates/hotmint-network/src/codec.rs`
 
-**问题：** 当前 `signing_bytes` 包含 `chain_id_hash + view + block_hash`。`view` 是全局单调递增的，短期内是安全的。但若未来实现跨 Epoch 的状态重置、验证者集合大幅变动或链分叉修复，旧 Epoch 中合法生成的签名可能被用于构造新 Epoch 下的虚假投票（跨 Epoch 重放攻击）。
+**Problem:** The decompression side correctly sets a `MAX_DECOMPRESSED_SIZE` limit, but the compression side uses `zstd::encode_all(..., ZSTD_LEVEL).unwrap()`. When the OS runs out of memory or certain extremely large payloads trigger an internal zstd error, this `unwrap()` will crash the underlying network service, taking the node offline.
 
-**修复方案：**
-- 在 `signing_bytes` 中显式加入 `epoch_number` 字段
-- 验证投票时同步校验 `epoch_number` 与当前 Epoch 一致
-- 此变更涉及线上数据格式，需版本化迁移
+**Fix:**
+- Propagate the `Result` returned by `zstd::encode_all` upward
+- On compression failure, drop the message or disconnect the corresponding client connection — **never** let a Panic propagate to the main process
 
-**关键文件：** `crates/hotmint-types/src/vote.rs`
+**Key Files:** `crates/hotmint-network/src/codec.rs`
 
-**风险等级：** 🟡 低-中危 — 当前模式下无法触发，但影响未来扩展的安全性
+**Severity:** 🟡 Medium — can trigger node shutdown under unusual network loads
+
+---
+
+#### [x] H-4. ABCI IPC Communication Lacks Timeout Protection `[Engineering Defect]` ✅
+
+**Location:** `crates/hotmint-abci/src/client.rs`
+
+**Problem:** During synchronous frame read/write, if the application process (Go/other language implementation) hangs but the Unix socket remains open, there are currently no explicit `ReadTimeout` / `WriteTimeout` settings. This causes the Rust consensus engine to hang indefinitely in `tokio::task::spawn_blocking`, blocking the entire consensus process from producing blocks and effectively halting the chain.
+
+**Fix:**
+- Set strict read/write timeouts on the underlying `UnixStream` (recommended to align with `base_timeout_ms`, or use a fixed 5s timeout)
+- After timeout, report the IPC failure as a fatal error, triggering application-layer reconnection or node restart flow
+
+**Key Files:** `crates/hotmint-abci/src/client.rs`
+
+**Severity:** 🟡 Medium — can cause the consensus engine to hang permanently when the application process malfunctions
+
+---
+
+#### [x] H-5. Vote Signatures Missing `epoch_number`, Cross-Epoch Replay Risk `[Security Concern]` ✅
+
+**Location:** `crates/hotmint-types/src/vote.rs` (`signing_bytes` method)
+
+**Problem:** The current `signing_bytes` contains `chain_id_hash + view + block_hash`. `view` is globally monotonically increasing, which is safe in the short term. However, if cross-epoch state resets, major validator set changes, or chain fork repairs are implemented in the future, signatures legitimately generated in an old Epoch could be used to construct forged votes in a new Epoch (cross-epoch replay attack).
+
+**Fix:**
+- Explicitly add an `epoch_number` field to `signing_bytes`
+- When verifying votes, also verify that `epoch_number` matches the current Epoch
+- This change affects on-wire data format and requires versioned migration
+
+**Key Files:** `crates/hotmint-types/src/vote.rs`
+
+**Severity:** 🟡 Low-Medium — cannot be triggered under the current model, but affects security of future extensions
 
 #### [x] H-6. P2P handshake empty — no chain/genesis/version isolation `[Engineering Defect]` ✅
 
@@ -488,111 +488,111 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-### 🟢 P0 — 功能演进：生产链必需
+### 🟢 P0 — Feature Evolution: Production Chain Essentials
 
-#### [~] P0-1. 标准 HTTP/WebSocket RPC + 事件订阅 `[功能缺失]`
+#### [~] P0-1. Standard HTTP/WebSocket RPC + Event Subscription `[Missing Feature]`
 
-**当前差距：** 原始 TCP 换行 JSON 协议对前端 dApp 不友好；无 WebSocket 事件订阅使 DApp 无法实时监听链上状态。
+**Current Gap:** The raw TCP newline-delimited JSON protocol is not dApp-frontend-friendly; the lack of WebSocket event subscription prevents dApps from monitoring on-chain state in real time.
 
-**建议实现：**
-- 将 `hotmint-api` 底层替换为 `axum` 或 `jsonrpsee`，提供标准 HTTP + WebSocket
-- 引入事件总线（`tokio::sync::broadcast`），在 `on_commit` 时发布 `BlockEvent` / `TxEvent`
-- 实现 `subscribe` RPC，支持按 `tx.hash`、`block.height`、自定义 tag 过滤
-- 增加 `get_tx`（按 hash 查状态）、`get_block_results` 等常用方法
+**Recommended Implementation:**
+- Replace the `hotmint-api` transport with `axum` or `jsonrpsee`, providing standard HTTP + WebSocket
+- Introduce an event bus (`tokio::sync::broadcast`), publishing `BlockEvent` / `TxEvent` on `on_commit`
+- Implement a `subscribe` RPC supporting filtering by `tx.hash`, `block.height`, custom tags
+- Add commonly used methods: `get_tx` (query status by hash), `get_block_results`, etc.
 
-**关键文件：** `crates/hotmint-api/src/rpc.rs`、`crates/hotmint-api/src/types.rs`
+**Key Files:** `crates/hotmint-api/src/rpc.rs`, `crates/hotmint-api/src/types.rs`
 
-> **实现状态：⚠️ 部分完成。** 已完成：axum HTTP `POST /` + WS `GET /ws`、`broadcast::Sender<ChainEvent>` 事件总线、`NewBlock` 事件实时推送、`get_header` / `get_commit_qc` RPC。尚未实现：`get_tx`（按 hash 查交易）、`get_block_results`、`subscribe` RPC（当前仅 WS 推所有事件，无过滤）、`TxCommitted` / `EpochChange` 事件类型。
+> **Implementation Status: ⚠️ Partially complete.** Completed: axum HTTP `POST /` + WS `GET /ws`, `broadcast::Sender<ChainEvent>` event bus, `NewBlock` event real-time push, `get_header` / `get_commit_qc` RPC. Not yet implemented: `get_tx` (query transaction by hash), `get_block_results`, `subscribe` RPC (currently WS pushes all events with no filtering), `TxCommitted` / `EpochChange` event types.
 
 ---
 
-### 🟢 P1 — 功能演进：网络健壮性
+### 🟢 P1 — Feature Evolution: Network Robustness
 
-#### [x] P1-1. 快照状态同步（State Sync via Snapshots） `[功能缺失]` ✅
+#### [x] P1-1. Snapshot State Sync (State Sync via Snapshots) `[Missing Feature]` ✅
 
-**当前差距：** 新节点必须从高度 0 全量重放，链运行数月后入网时间不可接受，是招募新验证者的障碍。
+**Current Gap:** New nodes must replay from height 0, making join times unacceptable after months of chain operation and creating a barrier to recruiting new validators.
 
-**建议实现：**
+**Recommended Implementation:**
 ```rust
-// Application trait 新增
+// New additions to Application trait
 fn list_snapshots(&self) -> Vec<Snapshot>;
 fn load_snapshot_chunk(&self, height: u64, chunk_index: u32) -> Vec<u8>;
 fn offer_snapshot(&self, snapshot: &Snapshot, app_hash: &[u8]) -> OfferSnapshotResult;
 fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 ```
-- 利用 `vsdb` 内置 MPT 根哈希作为快照可信锚点
-- P2P 同步协议增加 `GetSnapshotMeta` / `GetSnapshotChunk` 消息类型
-- 节点启动配置 `state_sync = true` 时优先走快照通道
+- Use `vsdb`'s built-in MPT root hash as the snapshot trust anchor
+- Add `GetSnapshotMeta` / `GetSnapshotChunk` message types to the P2P sync protocol
+- When a node starts with `state_sync = true`, prioritize the snapshot channel
 
-**关键文件：** `crates/hotmint-consensus/src/application.rs`、`crates/hotmint-consensus/src/sync.rs`
+**Key Files:** `crates/hotmint-consensus/src/application.rs`, `crates/hotmint-consensus/src/sync.rs`
 
-> **实现状态：✅ 100% 完成。** Application trait 4 个快照方法全部就位；P2P 消息 `SyncRequest::GetSnapshots` / `GetSnapshotChunk` 及对应 Response 已定义；`sync_via_snapshot()` 完整实现（请求快照列表→选最新→offer→逐块下载→apply→更新高度）。`state_sync` 配置标志可由应用层控制。
-
----
-
-#### [x] P1-2. 加权提议者选举（Weighted Proposer Selection） `[功能缺失]` ✅
-
-**当前差距：** `view % validator_count` 不考虑质押权重，对不均匀质押分布不公平。
-
-**建议实现：**
-- 在 `ValidatorSet` 中启用 `voting_power` 字段
-- 实现类 CometBFT 的加权轮询算法（按 `voting_power` 比例递增每个验证者的优先级分，取最高分者为 proposer）
-- 向后兼容现有 Epoch 结构
-
-**关键文件：** `crates/hotmint-consensus/src/leader.rs`、`crates/hotmint-types/src/validator.rs`
+> **Implementation Status: ✅ 100% complete.** All 4 snapshot methods in the Application trait are in place; P2P messages `SyncRequest::GetSnapshots` / `GetSnapshotChunk` and corresponding Responses are defined; `sync_via_snapshot()` is fully implemented (request snapshot list → select newest → offer → download chunks → apply → update height). The `state_sync` configuration flag can be controlled by the application layer.
 
 ---
 
-### 🟢 P2 — 功能演进：生态扩展
+#### [x] P1-2. Weighted Proposer Selection `[Missing Feature]` ✅
 
-#### [~] P2-1. 轻客户端验证协议（Light Client Protocol） `[功能缺失]`
+**Current Gap:** `view % validator_count` does not consider staking weight, making it unfair for non-uniform stake distributions.
 
-**当前差距：** 无法支持 IBC 跨链通讯，无法支持移动端钱包无信任验证。
+**Recommended Implementation:**
+- Enable the `voting_power` field in `ValidatorSet`
+- Implement a CometBFT-style weighted round-robin algorithm (increment each validator's priority score proportionally to `voting_power`, select the highest scorer as proposer)
+- Maintain backward compatibility with the existing Epoch structure
 
-**建议实现：**
-- 基于现有 `QuorumCertificate`（已含 2f+1 聚合签名）设计轻客户端验证路径
-- `get_block` RPC 可选返回 `commit_qc` + Merkle proof
-- 增加 `verify_header` RPC（仅验证 QC 签名和验证者集合变更）
-- 提供独立 `hotmint-light` crate 供第三方集成
-
-**关键文件：** `crates/hotmint-api/`、`crates/hotmint-types/src/certificate.rs`
-
-> **实现状态：⚠️ 部分完成。** 已完成：`hotmint-light` crate（`LightClient` + `verify_header` + `update_validator_set`，含 4 项单元测试）、RPC `get_header` / `get_commit_qc` 方法。尚未实现：Merkle proof 输出（`query` 返回值无 proof 字段）、轻客户端验证未通过 RPC 直接暴露。
+**Key Files:** `crates/hotmint-consensus/src/leader.rs`, `crates/hotmint-types/src/validator.rs`
 
 ---
 
-#### [x] P2-2. ABCI++ Vote Extensions（投票扩展） `[功能缺失]`
+### 🟢 P2 — Feature Evolution: Ecosystem Expansion
 
-**当前差距：** 无法实现内置预言机、阈值签名聚合、抗 MEV 机制。
+#### [~] P2-1. Light Client Verification Protocol `[Missing Feature]`
 
-**建议实现：**
-- 在 `Vote` 结构增加 `extension: Option<Vec<u8>>`
-- 在 `Vote2` 阶段前新增两个应用回调：
+**Current Gap:** Cannot support IBC cross-chain communication or trustless verification on mobile wallets.
+
+**Recommended Implementation:**
+- Design a light client verification path based on existing `QuorumCertificate` (already contains 2f+1 aggregate signatures)
+- `get_block` RPC optionally returns `commit_qc` + Merkle proof
+- Add a `verify_header` RPC (verifies only QC signatures and validator set changes)
+- Provide a standalone `hotmint-light` crate for third-party integration
+
+**Key Files:** `crates/hotmint-api/`, `crates/hotmint-types/src/certificate.rs`
+
+> **Implementation Status: ⚠️ Partially complete.** Completed: `hotmint-light` crate (`LightClient` + `verify_header` + `update_validator_set`, with 4 unit tests), RPC `get_header` / `get_commit_qc` methods. Not yet implemented: Merkle proof output (`query` return value has no proof field), light client verification not directly exposed via RPC.
+
+---
+
+#### [x] P2-2. ABCI++ Vote Extensions `[Missing Feature]`
+
+**Current Gap:** Cannot implement built-in oracles, threshold signature aggregation, or anti-MEV mechanisms.
+
+**Recommended Implementation:**
+- Add `extension: Option<Vec<u8>>` to the `Vote` struct
+- Add two application callbacks before the `Vote2` phase:
   ```rust
   fn extend_vote(&self, block: &Block, ctx: &BlockContext) -> Option<Vec<u8>>;
   fn verify_vote_extension(&self, ext: &[u8], validator: ValidatorId) -> bool;
   ```
-- 在 `Double Certificate` 中聚合所有验证者的 extension
-- 下一轮 `create_payload` 可读取上一轮的 extension 集合
+- Aggregate all validators' extensions in the `Double Certificate`
+- The next round's `create_payload` can read the previous round's extension set
 
-**关键文件：** `crates/hotmint-types/src/message.rs`、`crates/hotmint-consensus/src/view_protocol.rs`
+**Key Files:** `crates/hotmint-types/src/message.rs`, `crates/hotmint-consensus/src/view_protocol.rs`
 
-> **实现状态：✅ 基本完成。** 已完成：`Vote.extension: Option<Vec<u8>>` 字段、`extend_vote()` / `verify_vote_extension()` 应用回调（含默认 no-op）、引擎在 Vote2 创建前调用 `extend_vote`、收到 Vote2 时调用 `verify_vote_extension` 验证。尚未实现：DoubleCert 中显式聚合所有 extension、下一轮 `create_payload` 直接读取上轮 extension 集合（需应用层自行追踪）。
+> **Implementation Status: ✅ Largely complete.** Completed: `Vote.extension: Option<Vec<u8>>` field, `extend_vote()` / `verify_vote_extension()` application callbacks (with default no-op), engine calls `extend_vote` before Vote2 creation, `verify_vote_extension` called on received Vote2. Not yet implemented: explicit aggregation of all extensions in DoubleCert, next-round `create_payload` directly reading previous round's extension set (application layer must track this itself).
 
 ---
 
-## 14. 全量优先级汇总表
+## 14. Full Priority Summary Table
 
-| ID | 严重度 | 描述 | 状态 | 缺失项 |
-|----|--------|------|:----:|--------|
-| C-1 | 🔴 高危 | Eclipse 攻击：验证者连接槽无保护 | ✅ | 独立保留槽计数、主动驱逐非验证者 |
-| C-2 | 🔴 高危 | FIFO Mempool DoS + 无 API 速率限制 | ⚠️ | per-IP 来源限额 |
-| C-3 | 🔴 高危 | 证据广播缺失，双签者可逃脱惩罚 | ⚠️ | vsdb 持久化、证据打包进区块 payload |
-| H-1 | 🟡 中危 | O(N) 签名验证 CPU DoS 风险 | ✅ | — |
-| H-2 | 🟡 中危 | `pending_epoch.unwrap()` Panic 向量 | ✅ | — |
-| H-3 | 🟡 中危 | zstd 压缩端 `unwrap()` Panic 向量 | ✅ | — |
-| H-4 | 🟡 中危 | ABCI IPC 无读写超时，可致永久挂起 | ✅ | — |
-| H-5 | 🟡 低-中 | 签名缺 `epoch_number`，跨 Epoch 重放风险 | ✅ | — |
+| ID | Severity | Description | Status | Missing Items |
+|----|----------|-------------|:------:|---------------|
+| C-1 | 🔴 High | Eclipse attack: validator connection slots unprotected | ✅ | Dedicated reserved slot counter, proactive non-validator eviction |
+| C-2 | 🔴 High | FIFO Mempool DoS + no API rate limiting | ⚠️ | per-IP source quotas |
+| C-3 | 🔴 High | Missing evidence broadcast, double-signers escape punishment | ⚠️ | vsdb persistence, evidence inclusion in block payload |
+| H-1 | 🟡 Medium | O(N) signature verification CPU DoS risk | ✅ | — |
+| H-2 | 🟡 Medium | `pending_epoch.unwrap()` panic vector | ✅ | — |
+| H-3 | 🟡 Medium | zstd compression-side `unwrap()` panic vector | ✅ | — |
+| H-4 | 🟡 Medium | ABCI IPC no read/write timeout, can hang permanently | ✅ | — |
+| H-5 | 🟡 Low-Med | Signature missing `epoch_number`, cross-epoch replay risk | ✅ | — |
 | **C-4** | 🔴 Critical | Proposal missing parent_hash == justify.block_hash check | ✅ | — |
 | **C-5** | 🔴 Critical | Vote2Msg no vote_type == Vote2 guard — phase confusion | ✅ | — |
 | **C-6** | 🔴 Critical | Evidence gossip accepted without signature verification | ✅ | — |
@@ -604,12 +604,12 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 | **H-10** | 🟡 High | HTTP rate limiter per-request — effectively disabled | ✅ | — |
 | **H-11** | 🟡 Medium | ABCI IPC ValidateTx returns bool, priority hardcoded 0 | ✅ | — |
 | **H-12** | 🟡 Medium | Sync replay doesn't persist commit_qc | ✅ | — |
-| P0-1 | 🟢 P0 | 标准 HTTP/WS RPC + 事件订阅系统 | ⚠️ | `get_tx`、`get_block_results`、`subscribe` 过滤、更多事件类型 |
-| P1-1 | 🟢 P1 | 快照状态同步（State Sync） | ✅ | — |
-| P1-2 | 🟢 P1 | 加权提议者选举 | ✅ | — |
-| P2-1 | 🟢 P2 | 轻客户端验证协议 | ⚠️ | Merkle proof 输出、RPC 暴露验证接口 |
-| P2-2 | 🟢 P2 | ABCI++ Vote Extensions | ✅ | DC 聚合 extension、next-round payload 读取（可由应用层自行追踪） |
-| R-1 | 🟢 低危 | RwLock 公平锁 RPC 拥塞 | 📋 | 无锁只读快照 / watch channel / parking_lot 迁移 |
+| P0-1 | 🟢 P0 | Standard HTTP/WS RPC + event subscription system | ⚠️ | `get_tx`, `get_block_results`, `subscribe` filtering, additional event types |
+| P1-1 | 🟢 P1 | Snapshot State Sync | ✅ | — |
+| P1-2 | 🟢 P1 | Weighted proposer selection | ✅ | — |
+| P2-1 | 🟢 P2 | Light client verification protocol | ⚠️ | Merkle proof output, RPC-exposed verification interface |
+| P2-2 | 🟢 P2 | ABCI++ Vote Extensions | ✅ | DC extension aggregation, next-round payload read (can be tracked by application layer) |
+| R-1 | 🟢 Low | RwLock fair lock RPC congestion | 📋 | Lock-free read-only snapshot / watch channel / parking_lot migration |
 
 ---
 
@@ -690,13 +690,13 @@ Parity's (Polkadot) **Substrate FRAME Pallets** represent the industry's most co
 
 | Component | Source | Core Capabilities | Integration Point |
 |-----------|--------|-------------------|-------------------|
-| `revm` | Reth 生态 | 世界最快 EVM 执行引擎 | 为 vsdb 实现 `revm::Database` trait，嵌入 `execute_block` |
-| `alloy-rlp` / `alloy-primitives` | Reth 生态 | 以太坊交易 RLP 解码、签名恢复 | `validate_tx` 层交易解析 |
-| Custom Precompiles | 自研桥接 | 打通 EVM ↔ 原生经济层 | 质押/治理等原生函数暴露给 Solidity 合约 |
+| `revm` | Reth ecosystem | Industry-leading EVM execution engine | Implement `revm::Database` trait for vsdb, embed in `execute_block` |
+| `alloy-rlp` / `alloy-primitives` | Reth ecosystem | Ethereum transaction RLP decoding, signature recovery | Transaction parsing in `validate_tx` layer |
+| Custom Precompiles | Custom bridge | Bridge EVM to native economic layer | Expose native functions (staking/governance) to Solidity contracts |
 
 **Prerequisites:** Phase 1 account/balance system as native token backend for EVM; existing `examples/evm-chain` (using `revm`) serves as reference implementation.
 
-> **详细实施方案见 §16.5（Hotmint-EVM 混合架构路线图）。**
+> **Detailed implementation plan in Section 16.5 (Hotmint-EVM Hybrid Architecture Roadmap).**
 
 ### 16.4 Implementation Standards
 
@@ -709,73 +709,73 @@ Parity's (Polkadot) **Substrate FRAME Pallets** represent the industry's most co
 
 ### 16.5 Concrete Target: Production-Grade EVM-Compatible Chain (Hotmint-EVM)
 
-> **切入口：** 以"在 Hotmint 之上，构建一条功能完备、可供生产使用的 EVM 兼容链"为具体目标，驱动 Substrate 组件移植与 Reth 生态集成的实践验证。
+> **Entry Point:** The specific goal is to "build a fully-featured, production-ready EVM-compatible chain on top of Hotmint," driving practical validation of Substrate component porting and Reth ecosystem integration.
 
-#### 16.5.1 技术栈评估：Substrate (Frontier/SputnikVM) vs Reth (revm/alloy)
+#### 16.5.1 Technology Stack Evaluation: Substrate (Frontier/SputnikVM) vs Reth (revm/alloy)
 
-| 评估维度 | Substrate 生态 (Frontier/SputnikVM) | Reth 生态 (revm/alloy) | 结论 |
-|----------|-------------------------------------|----------------------|------|
-| 设计时代 | 2019–2020，绑定 `no_std` + Wasm 约束 | 2022–至今，原生 `std` 环境，API 现代化 | 🏆 Reth |
-| 执行性能 | 中等（内存分配瓶颈） | 业界天花板（Paradigm/OP Stack/Arbitrum 均已迁移 revm） | 🏆 Reth |
-| 底层类型 | `sp-core` / `primitive-types` + SCALE 编码 | `alloy-primitives`（极速 U256/Address）+ `alloy-rlp` | 🏆 Reth |
-| Substrate 组件契合度 | 极高（Precompile 与 pallet-balances 等原生互通） | 低（需自行桥接） | 🏆 Substrate |
-| AI 移植难度 | 高（需剥离 `#[pallet]` 宏 + Wasm 边界） | 极低（纯 Rust 库，实现 `Database` trait 约 4 个方法即可接入 vsdb） | 🏆 Reth |
+| Evaluation Dimension | Substrate Ecosystem (Frontier/SputnikVM) | Reth Ecosystem (revm/alloy) | Conclusion |
+|----------------------|-------------------------------------|----------------------|------|
+| Design Era | 2019–2020, bound to `no_std` + Wasm constraints | 2022–present, native `std` environment, modern API | 🏆 Reth |
+| Execution Performance | Moderate (memory allocation bottleneck) | Industry benchmark (Paradigm/OP Stack/Arbitrum have all migrated to revm) | 🏆 Reth |
+| Underlying Types | `sp-core` / `primitive-types` + SCALE encoding | `alloy-primitives` (high-performance U256/Address) + `alloy-rlp` | 🏆 Reth |
+| Substrate Component Compatibility | Very high (Precompile natively interoperates with pallet-balances, etc.) | Low (requires custom bridging) | 🏆 Substrate |
+| AI Porting Difficulty | High (must strip `#[pallet]` macros + Wasm boundary) | Very low (pure Rust library, implement `Database` trait with ~4 methods to integrate with vsdb) | 🏆 Reth |
 
-**结论：混合架构（Hybrid Approach）为最优解** — EVM 执行层拥抱 Reth 生态（revm + alloy），原生经济系统与治理模型保留 AI 移植 Substrate Pallets。两者通过预编译合约（Custom Precompiles）打通。
+**Conclusion: Hybrid Approach is optimal** — EVM execution layer embraces the Reth ecosystem (revm + alloy), while the native economic system and governance model retain AI-ported Substrate Pallets. The two are bridged through Custom Precompiles.
 
-#### 16.5.2 架构组件映射
+#### 16.5.2 Architecture Component Mapping
 
-| Substrate / Frontier 组件 | Hotmint-EVM 目标架构 | 核心职责 |
+| Substrate / Frontier Component | Hotmint-EVM Target Architecture | Core Responsibility |
 |:---|:---|:---|
-| `pallet-timestamp` | `hotmint_evm::Timestamp` | 为 EVM `block.timestamp` 操作码提供当前区块时间 |
-| `pallet-balances` | `hotmint_evm::Balances` | 管理原生 Token，处理 Gas 扣除与原生转账（AI 移植 Substrate） |
-| `pallet-evm` (SputnikVM) | ~~不使用~~ → `revm` crate | 直接集成 revm，为 vsdb 实现 `revm::Database` trait |
-| `pallet-ethereum` | `alloy-rlp` + `alloy-primitives` | 以太坊 RLP 交易解码（EIP-1559/EIP-2930）、`ecrecover` 签名恢复 |
-| `fc-rpc` (Frontier RPC) | `hotmint_api::Web3Rpc` (`jsonrpsee`) | 标准 `eth_*` JSON-RPC 接口，兼容 MetaMask |
-| Substrate Storage Trie | `vsdb::MapxOrd` & `Mapx` | 账户 Nonce/Balance、EVM Code（合约字节码）、EVM Storage（合约状态） |
-| `pallet-staking` | `hotmint_evm::Staking`（AI 移植） | DPoS 质押/验证者选举/Slashing（原生层，通过 Precompile 暴露给 EVM） |
+| `pallet-timestamp` | `hotmint_evm::Timestamp` | Provides current block time for the EVM `block.timestamp` opcode |
+| `pallet-balances` | `hotmint_evm::Balances` | Manages native token, handles Gas deduction and native transfers (AI-ported from Substrate) |
+| `pallet-evm` (SputnikVM) | ~~Not used~~ → `revm` crate | Direct revm integration, implement `revm::Database` trait for vsdb |
+| `pallet-ethereum` | `alloy-rlp` + `alloy-primitives` | Ethereum RLP transaction decoding (EIP-1559/EIP-2930), `ecrecover` signature recovery |
+| `fc-rpc` (Frontier RPC) | `hotmint_api::Web3Rpc` (`jsonrpsee`) | Standard `eth_*` JSON-RPC interface, MetaMask-compatible |
+| Substrate Storage Trie | `vsdb::MapxOrd` & `Mapx` | Account Nonce/Balance, EVM Code (contract bytecode), EVM Storage (contract state) |
+| `pallet-staking` | `hotmint_evm::Staking` (AI-ported) | DPoS staking/validator election/slashing (native layer, exposed to EVM via Precompile) |
 
-#### 16.5.3 混合执行路线图（5 阶段）
+#### 16.5.3 Hybrid Execution Roadmap (5 Phases)
 
-**Phase 1: 底层原生经济系统 (AI 移植 Substrate)**
-- 利用 AI 移植 `pallet-balances` 到 vsdb：`transfer`、`withdraw`（Gas 扣除）、`deposit`（区块奖励）
-- 引入 `U256` 安全数学运算防溢出
-- 构建 EVM 世界状态结构：`AccountStore: MapxOrd<H160, AccountInfo>`、`CodeStore: Mapx<H256, Vec<u8>>`、`StorageStore: Mapx<(H160, H256), H256>`
-- 实现 `Timestamp` 与 `BlockContext`（注入高度、Gas Limit、Coinbase、时间戳）
+**Phase 1: Underlying Native Economic System (AI-Ported from Substrate)**
+- Use AI to port `pallet-balances` to vsdb: `transfer`, `withdraw` (Gas deduction), `deposit` (block rewards)
+- Introduce `U256` safe arithmetic to prevent overflow
+- Build EVM world state structure: `AccountStore: MapxOrd<H160, AccountInfo>`, `CodeStore: Mapx<H256, Vec<u8>>`, `StorageStore: Mapx<(H160, H256), H256>`
+- Implement `Timestamp` and `BlockContext` (inject height, Gas Limit, Coinbase, timestamp)
 
-**Phase 2: 引入 Reth 核心原语 (Alloy)**
-- 引入 `alloy-primitives`（替代 `sp-core`），`alloy-rlp` 处理以太坊交易解码
-- 在 `Application::validate_tx` 中：RLP 解码 → `ecrecover` 签名恢复 → ChainID 校验 → Nonce 递增检查 → Balance 充足性校验
-- 密码学：使用 `libsecp256k1` 或 `k256` crate
+**Phase 2: Introduce Reth Core Primitives (Alloy)**
+- Introduce `alloy-primitives` (replacing `sp-core`), `alloy-rlp` for Ethereum transaction decoding
+- In `Application::validate_tx`: RLP decode → `ecrecover` signature recovery → ChainID validation → Nonce increment check → Balance sufficiency check
+- Cryptography: use `libsecp256k1` or `k256` crate
 
-**Phase 3: 接入最强执行引擎 (Revm)**
-- 为 vsdb 实现 `revm::Database` trait（`basic`/`storage`/`code`/`block_hash` 约 4 个方法）
-- 在 `Application::execute_block` 中：实例化 `revm::Evm` → 交易按序执行 → 状态变更批量写入 vsdb
-- Gas 结算：执行前扣除最大 Gas 费，执行后退还剩余，消耗费用奖励给 Proposer
-- 事件与日志：将 EVM Logs 和 Receipt 持久化到 vsdb 交易回执存储
-- **app_hash 确定性：** 严格使用 `BTreeMap` / `vsdb::MapxOrd`（内部 B+ 树有序遍历）计算状态根，禁止 `HashMap` 参与哈希计算
+**Phase 3: Integrate the Leading Execution Engine (Revm)**
+- Implement `revm::Database` trait for vsdb (`basic`/`storage`/`code`/`block_hash`, ~4 methods)
+- In `Application::execute_block`: instantiate `revm::Evm` → execute transactions sequentially → batch-write state changes to vsdb
+- Gas settlement: deduct maximum Gas fee before execution, refund remainder after execution, reward consumed fees to Proposer
+- Events and logs: persist EVM Logs and Receipts to vsdb transaction receipt storage
+- **app_hash determinism:** Strictly use `BTreeMap` / `vsdb::MapxOrd` (internal B+ tree ordered traversal) for state root computation; prohibit `HashMap` from participating in hash calculation
 
-**Phase 4: 跨层桥接 (Precompiles 互通)**
-- 实现 `revm::Precompile` 接口，将底层原生函数暴露给 EVM 合约
-- 示例：地址 `0x0800` → 底层 `Staking` 模块（质押/委托/提取奖励）
-- 示例：地址 `0x0801` → 底层 `Balances` 模块（原生跨层转账）
-- AI 任务：编写桥接代码，将以太坊合约调用陷入（trap）到 Rust 原生层极速执行
+**Phase 4: Cross-Layer Bridging (Precompile Interoperability)**
+- Implement `revm::Precompile` interface, exposing underlying native functions to EVM contracts
+- Example: address `0x0800` → underlying `Staking` module (stake/delegate/withdraw rewards)
+- Example: address `0x0801` → underlying `Balances` module (native cross-layer transfer)
+- AI task: write bridging code that traps Ethereum contract calls into the Rust native layer for high-speed execution
 
-**Phase 5: 对外暴露 Web3 API (Alloy/Reth RPC)**
-- 使用 `jsonrpsee` 搭建 HTTP/WS 服务器
-- 实现标准以太坊 API：`eth_chainId`、`eth_blockNumber`、`eth_getBalance`、`eth_getTransactionCount`、`eth_call`（Dry-run）、`eth_estimateGas`、`eth_sendRawTransaction`（推入 Hotmint Mempool）、`eth_getLogs`（Bloom Filter / vsdb 回执查询）
-- 兼容 MetaMask、Hardhat、Foundry 等工具链
+**Phase 5: Expose Web3 API (Alloy/Reth RPC)**
+- Build HTTP/WS server using `jsonrpsee`
+- Implement standard Ethereum APIs: `eth_chainId`, `eth_blockNumber`, `eth_getBalance`, `eth_getTransactionCount`, `eth_call` (dry-run), `eth_estimateGas`, `eth_sendRawTransaction` (push into Hotmint Mempool), `eth_getLogs` (Bloom Filter / vsdb receipt query)
+- Compatible with MetaMask, Hardhat, Foundry, and other toolchains
 
-#### 16.5.4 关键风险与避坑
+#### 16.5.4 Key Risks and Pitfalls
 
-1. **状态回滚一致性 (State Reversion)：** EVM 交易 Revert / Out of Gas 时需回滚状态变更但保留 Gas 扣除。方案：每笔交易前利用 vsdb Write Batch 创建暂态快照，失败则丢弃，成功则 commit。
-2. **Mempool RBF 与以太坊 Nonce 冲突：** 以太坊 Nonce 严格递增，需在 `validate_tx` 中校验 `nonce >= account_nonce`，并在 Mempool 增加 `(sender, nonce)` 去重与 RBF 替换逻辑。
-3. **App Hash 确定性 (Determinism)：** `HashMap` 遍历无序会导致节点间 `app_hash` 不一致→链分叉停机。严格使用 `BTreeMap` / `vsdb::MapxOrd` 的有序遍历。
-4. **前置依赖：** Phase 1–4 的 infra（§13–15 全部 ⚠️ → ✅）必须稳定后方可启动 EVM 集成。
+1. **State Reversion Consistency:** When an EVM transaction reverts or runs out of Gas, state changes must be rolled back while preserving Gas deduction. Approach: create a transient snapshot via vsdb Write Batch before each transaction; discard on failure, commit on success.
+2. **Mempool RBF and Ethereum Nonce Conflicts:** Ethereum nonces are strictly incrementing; `validate_tx` must verify `nonce >= account_nonce`, and the Mempool needs `(sender, nonce)` deduplication and RBF replacement logic.
+3. **App Hash Determinism:** `HashMap` traversal is unordered, which causes `app_hash` inconsistency between nodes, leading to chain fork and halt. Strictly use `BTreeMap` / `vsdb::MapxOrd` with ordered traversal.
+4. **Prerequisites:** The infrastructure from Phases 1–4 (all ⚠️ items in Sections 13–15 resolved to ✅) must be stable before starting EVM integration.
 
-#### 16.5.5 验收里程碑
+#### 16.5.5 Acceptance Milestone
 
-MetaMask 成功连接 Hotmint-EVM 并完成一次转账或合约部署 → Phase 1–4 打通的最小验证。
+MetaMask successfully connects to Hotmint-EVM and completes a transfer or contract deployment — this serves as the minimum validation that Phases 1–4 are functional end-to-end.
 
 ---
 
@@ -787,8 +787,8 @@ Post-completion Hotmint ecosystem position:
 |-----------|----------------------|---------------|
 | Consensus | HotStuff-2: lower latency, no GC tail-latency jitter | — |
 | Business Logic | — | AI-ported Substrate Pallets: pure Rust, type-safe, no Keeper/Handler nesting |
-| Smart Contracts | — | Native EVM compatibility via revm (世界最快 EVM 引擎) + Substrate Pallets 原生经济模型 |
-| Positioning | High-performance AppChain consensus engine | Next-gen AppChain + Rollup Sequencer full-stack solution ("六边形战士") |
+| Smart Contracts | — | Native EVM compatibility via revm (industry-leading EVM engine) + Substrate Pallets native economic model |
+| Positioning | High-performance AppChain consensus engine | Next-gen AppChain + Rollup Sequencer full-stack solution (best-in-class versatility) |
 
 ---
 
