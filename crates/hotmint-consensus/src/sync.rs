@@ -371,8 +371,12 @@ pub fn replay_blocks(
             ));
         }
 
-        // Store the block
+        // Store the block and its commit QC (H-12: so the node can serve
+        // commit proofs to other syncing peers and light clients).
         state.store.put_block(block.clone());
+        if let Some(commit_qc) = qc {
+            state.store.put_commit_qc(block.height, commit_qc.clone());
+        }
 
         // Run application lifecycle
         let ctx = BlockContext {
