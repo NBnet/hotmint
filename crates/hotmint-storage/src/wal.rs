@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use hotmint_types::Height;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::warn;
 
 /// WAL (Write-Ahead Log) entry types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -32,7 +32,7 @@ const ENTRY_MAGIC: [u8; 4] = [0x57, 0x41, 0x4C, 0x31]; // "WAL1"
 /// without a matching `CommitDone` is found, the node knows a mid-commit
 /// crash occurred and can re-execute from the block store.
 pub struct ConsensusWal {
-    path: PathBuf,
+    _path: PathBuf,
     file: File,
 }
 
@@ -59,7 +59,7 @@ impl ConsensusWal {
         // Unlike `.append(true)`, this allows truncate+seek(0) to work
         // correctly — subsequent writes go to position 0, not the old EOF.
         file.seek(io::SeekFrom::End(0))?;
-        Ok(Self { path, file })
+        Ok(Self { _path: path, file })
     }
 
     /// Check the WAL for incomplete commits (called on startup).
