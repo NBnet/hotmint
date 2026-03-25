@@ -466,32 +466,115 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 
 ---
 
-## 15. 中长期改进建议（第二轮审计补充）
+## 15. Medium-term Improvements (Second Audit Round)
 
-以下条目来自第二轮代码深度复审，属于低危但影响长期吞吐量的架构改进方向。
+Items from the second code audit. Low severity but relevant to long-term throughput.
 
-#### [ ] R-1. `tokio::sync::RwLock` 公平锁导致 RPC 高并发下共识写入排队 `[性能隐患]`
+#### [ ] R-1. `tokio::sync::RwLock` Fair Lock Causes RPC Congestion Under High Concurrency `[Performance]`
 
-**位置：** `crates/hotmint-api/src/rpc.rs`、`crates/hotmint-consensus/src/engine.rs`
+**Location:** `crates/hotmint-api/src/rpc.rs`, `crates/hotmint-consensus/src/engine.rs`
 
-**问题：** 共识引擎和 RPC 层共享 `Arc<tokio::sync::RwLock<Box<dyn BlockStore>>>`。`tokio::sync::RwLock` 是公平锁——当写入者（共识引擎 `store.write().await`）排队时，新的读取者也会被阻塞。若 RPC 暴露给公网并遭遇突发高频 `get_block` / `get_commit_qc` 请求，大量并发读锁会使共识引擎的 `put_block` 写入被迫排队，轻微拖慢出块确认速度。
+**Problem:** The consensus engine and the RPC layer share `Arc<tokio::sync::RwLock<Box<dyn BlockStore>>>`. `tokio::sync::RwLock` is a fair lock — when a writer (`store.write().await`) is queued, new readers are also blocked. If the RPC endpoint is public-facing and hit by bursty `get_block` / `get_commit_qc` traffic, accumulated read locks can force the consensus engine's `put_block` writes to queue, slightly slowing block confirmation.
 
-**当前缓解：** 所有锁持有期间均无 `.await` 点（纯同步 HashMap 操作，微秒级），实际竞争概率极低。`try_propose` 中写锁已被限定在最小作用域内（block scope 内释放后才 `.await`）。
+**Current mitigation:** All lock holds are synchronous HashMap lookups with no `.await` points (microsecond-level). The `try_propose` write lock is already scoped to release before any `.await`. Actual contention probability is very low.
 
-**建议优化路径（中长期）：**
-- **方案 A：** 为 RPC 端提供基于 VSDB 底层特性的无锁只读快照句柄（Snapshot），使 RPC 查询彻底与共识写入解耦
-- **方案 B：** 将最新高度的块信息（Header、高度）放入 `Arc<tokio::sync::watch::Sender>` 中，基础状态 RPC 查询零锁竞争
-- **方案 C：** 迁移至 `parking_lot::RwLock`（guard 为 `Send`，支持跨 `.await`），或 `dashmap` 等无锁并发结构
+**Suggested optimization paths (medium-term):**
+- **Option A:** Provide RPC with a lock-free read-only snapshot handle (leveraging VSDB snapshot capabilities), fully decoupling RPC reads from consensus writes
+- **Option B:** Publish latest block header/height via `Arc<tokio::sync::watch::Sender>`, making basic status queries zero-contention
+- **Option C:** Migrate to `parking_lot::RwLock` (guards are `Send`, usable across `.await`), or `dashmap` / lock-free concurrent structures
 
-**风险等级：** 🟢 低危 — 仅在超大规模并发 RPC（数千 QPS）场景下影响 TPS
+**Severity:** Low — only impacts TPS under extreme RPC concurrency (thousands of QPS)
 
 ---
 
-## 附录：参考资料
+## 16. Long-term Vision: Substrate Pallets Dimensionality-Reduction Porting
 
-- [CometBFT v0.38 文档](https://docs.cometbft.com/v0.38/introduction/)
-- [CometBFT ABCI++ 规范](https://docs.cometbft.com/v0.38/spec/abci/)
-- [HotStuff-2 论文](https://arxiv.org/abs/2301.03253)
-- [Hotmint 架构文档](architecture.md)
-- [Hotmint Application Trait 指南](application.md)
-- [Hotmint Mempool & API 文档](mempool-api.md)
+> **Prerequisite:** All work in this section is blocked until the infrastructure in sections 13–15 is fully stable (all ⚠️ items resolved to ✅, R-1 addressed with at least one option). Current stage is planning only — no implementation until prerequisites are met.
+
+### 16.1 Strategic Rationale
+
+Hotmint has a modern consensus core (HotStuff-2), high-performance async runtime (Tokio), and a clean stateless `Application` trait. However, building application-layer logic (tokens, PoS, governance) from scratch carries enormous engineering cost and audit risk.
+
+Parity's (Polkadot) **Substrate FRAME Pallets** represent the industry's most complete and battle-tested pure-Rust blockchain business logic library, audited by top security firms over multiple years.
+
+**Core approach:** Use LLM semantic extraction and code rewriting to strip Substrate's most stable Pallets of their macro system (`#[pallet::*]`) and Wasm/`no_std` constraints, porting them into Hotmint's `std` + `vsdb` + `serde` environment. This delivers production-grade business modules at minimal engineering cost.
+
+### 16.2 Dimensionality-Reduction Mapping Rules
+
+| Substrate (FRAME) Primitive | Hotmint Target | Notes |
+|:---|:---|:---|
+| `#[pallet::storage] StorageMap<K, V>` | `vsdb::MapxOrd<K, V>` | Strip macros, use vsdb persistent key-value storage directly |
+| `DispatchError` / `#[pallet::error]` | `ruc::Result<()>` | Unified `ruc` chained error handling |
+| `#[pallet::event]` | `hotmint_types::ReceiptLog` | Events become block execution receipt logs |
+| `sp_runtime::traits::Currency` | Plain `std` Rust trait | Keep core abstractions, remove `no_std`/SCALE bindings |
+| SCALE Codec (`Encode`/`Decode`) | `serde` (CBOR/JSON) | Web-friendly standard serialization |
+| `no_std` environment | `std` environment | Hotmint runs natively as an OS process, no Wasm boundary |
+| `ensure_root` / `ensure_signed` | Transaction signer public key verification | Permission modifiers map to cryptographic identity checks |
+
+### 16.3 Three-Phase Porting Roadmap
+
+#### Phase 1: Foundation Economy
+
+**Goal:** A chain supporting account system, fungible token issuance, and transfers.
+
+| Component | Source | Core Capabilities | Integration Point |
+|-----------|--------|-------------------|-------------------|
+| `pallet-balances` | Substrate | Balance management, transfer, reserve, lock | Called within `execute_block`, state written to vsdb |
+| `pallet-assets` | Substrate | Multi-asset (ERC-20-like) mint, burn, freeze | Same as above |
+| `pallet-timestamp` | Substrate | Block timestamp consensus | Integrates with `BlockContext.view` / proposer time |
+
+**Prerequisites:** P0-1 (HTTP RPC) complete for dApp frontend interaction; C-2 (`gas_wanted`) complete for fee model support.
+
+#### Phase 2: Governance & Native PoS Integration
+
+**Goal:** Replace the current static `ValidatorSet` with a real DPoS/PoS economic model.
+
+| Component | Source | Core Capabilities | Integration Point |
+|-----------|--------|-------------------|-------------------|
+| `pallet-staking` | Substrate | Nomination, validator election (Phragmen), slashing calculation | Drives epoch transitions via `EndBlockResponse.validator_updates` |
+| `pallet-session` | Substrate | Key rotation and validator set updates at epoch boundaries | Integrates with `pending_epoch` mechanism |
+| `pallet-multisig` | Substrate | Multisig wallets, delayed execution | `validate_tx` + `execute_block` |
+
+**Prerequisites:** C-3 evidence on-chain complete (slashing requires on-chain verifiable equivocation proofs); `hotmint-staking` crate serves as porting base.
+
+#### Phase 3: Advanced Contract Platform
+
+**Goal:** Full-featured AppChain / Rollup Sequencer.
+
+| Component | Source | Core Capabilities | Integration Point |
+|-----------|--------|-------------------|-------------------|
+| `pallet-evm` (SputnikVM) | Substrate | 100% Ethereum smart contract compatibility | Strip Substrate shell, embed SputnikVM within `execute_block` |
+
+**Prerequisites:** Phase 1 account/balance system as native token backend for EVM; existing `examples/evm-chain` (using `revm`) serves as reference implementation.
+
+### 16.4 Implementation Standards
+
+1. **AI Prompt Template Library:** Develop standardized prompt templates — input: Substrate source code; output: Hotmint-conformant `vsdb` + `Application` trait code
+2. **State Root Integrity:** All state mutations must write through `vsdb` to ensure correct `app_hash` computation
+3. **Security Audit Transfer:** Although business logic originates from audited Substrate code, ported code requires secondary security review, focusing on:
+   - Integer overflow checks (`checked_add`/`checked_sub`) preserved completely
+   - Permission modifiers correctly mapped to transaction signer public key verification
+   - Storage key namespaces properly isolated (no cross-pallet state pollution)
+
+### 16.5 Competitive Positioning
+
+Post-completion Hotmint ecosystem position:
+
+| Dimension | vs CometBFT/Tendermint | vs Cosmos SDK |
+|-----------|----------------------|---------------|
+| Consensus | HotStuff-2: lower latency, no GC tail-latency jitter | — |
+| Business Logic | — | AI-ported Substrate Pallets: pure Rust, type-safe, no Keeper/Handler nesting |
+| Smart Contracts | — | Native EVM compatibility (revm/SputnikVM) |
+| Positioning | High-performance AppChain consensus engine | Next-gen AppChain + Rollup Sequencer full-stack solution |
+
+---
+
+## References
+
+- [CometBFT v0.38 Documentation](https://docs.cometbft.com/v0.38/introduction/)
+- [CometBFT ABCI++ Specification](https://docs.cometbft.com/v0.38/spec/abci/)
+- [HotStuff-2 Paper](https://arxiv.org/abs/2301.03253)
+- [Substrate FRAME Pallets Source](https://github.com/niccolocorsini/polkadot-sdk/tree/master/substrate/frame)
+- [Hotmint Architecture](architecture.md)
+- [Hotmint Application Trait Guide](application.md)
+- [Hotmint Mempool & API](mempool-api.md)
