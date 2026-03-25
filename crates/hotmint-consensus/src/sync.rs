@@ -276,10 +276,10 @@ pub fn replay_blocks(
     for (i, (block, qc)) in blocks.iter().enumerate() {
         // H-7: Apply pending epoch transition at exactly start_view, matching
         // the engine's advance_view_to behavior.
-        if let Some(ref ep) = pending_epoch {
-            if block.view >= ep.start_view {
-                *state.current_epoch = pending_epoch.take().unwrap();
-            }
+        if let Some(ref ep) = pending_epoch
+            && block.view >= ep.start_view
+        {
+            *state.current_epoch = pending_epoch.take().unwrap();
         }
         // Validate chain continuity
         if i > 0 && block.parent_hash != blocks[i - 1].0.hash {
@@ -433,8 +433,11 @@ pub fn replay_blocks(
                 .validator_set
                 .apply_updates(&response.validator_updates);
             let epoch_start = ViewNumber(block.view.as_u64() + 2);
-            pending_epoch =
-                Some(Epoch::new(state.current_epoch.number.next(), epoch_start, new_vs));
+            pending_epoch = Some(Epoch::new(
+                state.current_epoch.number.next(),
+                epoch_start,
+                new_vs,
+            ));
         }
 
         *state.last_committed_height = block.height;

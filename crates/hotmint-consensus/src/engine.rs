@@ -1128,8 +1128,12 @@ impl ConsensusEngine {
                     &proof.block_hash_b,
                     proof.vote_type,
                 );
-                if !self.verifier.verify(&vi.public_key, &bytes_a, &proof.signature_a)
-                    || !self.verifier.verify(&vi.public_key, &bytes_b, &proof.signature_b)
+                if !self
+                    .verifier
+                    .verify(&vi.public_key, &bytes_a, &proof.signature_a)
+                    || !self
+                        .verifier
+                        .verify(&vi.public_key, &bytes_b, &proof.signature_b)
                 {
                     warn!(validator = %proof.validator, "evidence has invalid signatures");
                     return Ok(());
