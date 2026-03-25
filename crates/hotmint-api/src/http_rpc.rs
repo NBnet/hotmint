@@ -11,6 +11,8 @@ use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
+use tokio::sync::Mutex;
+
 use crate::rpc::{RpcState, TX_RATE_LIMIT_PER_SEC, TxRateLimiter, handle_request};
 use crate::types::RpcResponse;
 
@@ -31,6 +33,8 @@ pub enum ChainEvent {
 pub struct HttpRpcState {
     pub rpc: Arc<RpcState>,
     pub event_tx: broadcast::Sender<ChainEvent>,
+    /// Global rate limiter for submit_tx across all HTTP requests (H-10).
+    pub tx_limiter: Mutex<TxRateLimiter>,
 }
 
 /// HTTP JSON-RPC server (runs alongside the existing TCP RPC server).
@@ -46,7 +50,11 @@ impl HttpRpcServer {
     pub fn new(addr: SocketAddr, rpc: Arc<RpcState>, event_capacity: usize) -> Self {
         let (event_tx, _) = broadcast::channel(event_capacity);
         Self {
-            state: Arc::new(HttpRpcState { rpc, event_tx }),
+            state: Arc::new(HttpRpcState {
+                rpc,
+                event_tx,
+                tx_limiter: Mutex::new(TxRateLimiter::new(TX_RATE_LIMIT_PER_SEC)),
+            }),
             addr,
         }
     }
@@ -91,8 +99,9 @@ async fn json_rpc_handler(
     State(state): State<Arc<HttpRpcState>>,
     body: String,
 ) -> impl IntoResponse {
-    // Create a per-request rate limiter (simple approach for HTTP).
-    let mut tx_limiter = TxRateLimiter::new(TX_RATE_LIMIT_PER_SEC);
+    // H-10: Use the shared rate limiter so submit_tx is globally rate-limited
+    // across all HTTP requests, not per-request (which would be useless).
+    let mut tx_limiter = state.tx_limiter.lock().await;
     let response: RpcResponse = handle_request(&state.rpc, &body, &mut tx_limiter).await;
 
     axum::Json(response)

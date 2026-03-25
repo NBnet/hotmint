@@ -143,8 +143,8 @@ impl RpcServer {
     }
 }
 
-/// Per-connection token-bucket rate limiter for submit_tx.
-pub(crate) struct TxRateLimiter {
+/// Token-bucket rate limiter for submit_tx.
+pub struct TxRateLimiter {
     tokens: u32,
     max_tokens: u32,
     last_refill: tokio::time::Instant,
