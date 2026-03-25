@@ -40,59 +40,36 @@ pub trait BlockStore: Send + Sync {
 }
 
 /// Adapter that implements `BlockStore` over a shared `Arc<RwLock<Box<dyn BlockStore>>>`,
-/// acquiring and releasing the lock for each individual operation. Use this when you
-/// need a `&mut dyn BlockStore` in an async context without holding the lock across
-/// await points.
+/// acquiring and releasing the lock for each individual operation.
+///
+/// Uses `blocking_read` / `blocking_write` (H-8) to wait for the lock instead of the
+/// previous `try_*().expect()` which panicked on contention.
 pub struct SharedStoreAdapter(pub Arc<RwLock<Box<dyn BlockStore>>>);
 
 impl BlockStore for SharedStoreAdapter {
     fn put_block(&mut self, block: Block) {
-        self.0
-            .try_write()
-            .expect("store write lock contended")
-            .put_block(block);
+        self.0.blocking_write().put_block(block);
     }
     fn get_block(&self, hash: &BlockHash) -> Option<Block> {
-        self.0
-            .try_read()
-            .expect("store read lock contended")
-            .get_block(hash)
+        self.0.blocking_read().get_block(hash)
     }
     fn get_block_by_height(&self, h: Height) -> Option<Block> {
-        self.0
-            .try_read()
-            .expect("store read lock contended")
-            .get_block_by_height(h)
+        self.0.blocking_read().get_block_by_height(h)
     }
     fn get_blocks_in_range(&self, from: Height, to: Height) -> Vec<Block> {
-        self.0
-            .try_read()
-            .expect("store read lock contended")
-            .get_blocks_in_range(from, to)
+        self.0.blocking_read().get_blocks_in_range(from, to)
     }
     fn tip_height(&self) -> Height {
-        self.0
-            .try_read()
-            .expect("store read lock contended")
-            .tip_height()
+        self.0.blocking_read().tip_height()
     }
     fn put_commit_qc(&mut self, height: Height, qc: QuorumCertificate) {
-        self.0
-            .try_write()
-            .expect("store write lock contended")
-            .put_commit_qc(height, qc);
+        self.0.blocking_write().put_commit_qc(height, qc);
     }
     fn get_commit_qc(&self, height: Height) -> Option<QuorumCertificate> {
-        self.0
-            .try_read()
-            .expect("store read lock contended")
-            .get_commit_qc(height)
+        self.0.blocking_read().get_commit_qc(height)
     }
     fn flush(&self) {
-        self.0
-            .try_read()
-            .expect("store read lock contended")
-            .flush();
+        self.0.blocking_read().flush();
     }
 }
 
