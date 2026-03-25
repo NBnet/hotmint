@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::connect_info::ConnectInfo;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
@@ -13,7 +14,7 @@ use tracing::{info, warn};
 
 use tokio::sync::Mutex;
 
-use crate::rpc::{RpcState, TX_RATE_LIMIT_PER_SEC, TxRateLimiter, handle_request};
+use crate::rpc::{PerIpRateLimiter, RpcState, handle_request};
 use crate::types::RpcResponse;
 
 /// Events broadcast to WebSocket subscribers.
@@ -33,8 +34,8 @@ pub enum ChainEvent {
 pub struct HttpRpcState {
     pub rpc: Arc<RpcState>,
     pub event_tx: broadcast::Sender<ChainEvent>,
-    /// Global rate limiter for submit_tx across all HTTP requests (H-10).
-    pub tx_limiter: Mutex<TxRateLimiter>,
+    /// Per-IP rate limiter for submit_tx (C-2: prevents bypass via multiple connections).
+    pub ip_limiter: Mutex<PerIpRateLimiter>,
 }
 
 /// HTTP JSON-RPC server (runs alongside the existing TCP RPC server).
@@ -53,7 +54,7 @@ impl HttpRpcServer {
             state: Arc::new(HttpRpcState {
                 rpc,
                 event_tx,
-                tx_limiter: Mutex::new(TxRateLimiter::new(TX_RATE_LIMIT_PER_SEC)),
+                ip_limiter: Mutex::new(PerIpRateLimiter::new()),
             }),
             addr,
         }
@@ -88,7 +89,9 @@ impl HttpRpcServer {
         let local_addr = listener.local_addr().expect("listener has local addr");
         info!(addr = %local_addr, "HTTP RPC server listening");
 
-        if let Err(e) = axum::serve(listener, app).await {
+        if let Err(e) =
+            axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await
+        {
             warn!(error = %e, "HTTP RPC server exited with error");
         }
     }
@@ -97,12 +100,12 @@ impl HttpRpcServer {
 /// POST / handler: parse JSON-RPC request body, dispatch, return JSON response.
 async fn json_rpc_handler(
     State(state): State<Arc<HttpRpcState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     body: String,
 ) -> impl IntoResponse {
-    // H-10: Use the shared rate limiter so submit_tx is globally rate-limited
-    // across all HTTP requests, not per-request (which would be useless).
-    let mut tx_limiter = state.tx_limiter.lock().await;
-    let response: RpcResponse = handle_request(&state.rpc, &body, &mut tx_limiter).await;
+    // C-2: Per-IP rate limiting for submit_tx.
+    let response: RpcResponse =
+        handle_request(&state.rpc, &body, &state.ip_limiter, addr.ip()).await;
 
     axum::Json(response)
 }

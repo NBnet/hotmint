@@ -1,10 +1,11 @@
 use ruc::*;
 
+use std::collections::HashMap;
 use std::io;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::types::{
     BlockInfo, CommitQcInfo, EpochInfo, HeaderInfo, RpcRequest, RpcResponse, StatusInfo, TxResult,
@@ -18,15 +19,17 @@ use hotmint_types::{BlockHash, Height};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, watch};
-use tokio::time::{Duration, timeout};
+use tokio::time::{Duration, Instant, timeout};
 use tracing::{info, warn};
 
 const MAX_RPC_CONNECTIONS: usize = 256;
 const RPC_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum bytes per RPC line. Prevents OOM from clients sending huge data without newlines.
 const MAX_LINE_BYTES: usize = 1_048_576;
-/// Maximum submit_tx calls per second per connection (token bucket).
+/// Maximum submit_tx calls per second per IP address.
 pub(crate) const TX_RATE_LIMIT_PER_SEC: u32 = 100;
+/// How often to prune stale per-IP rate limiter entries.
+const IP_LIMITER_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Named consensus status shared via watch channel.
 #[derive(Debug, Clone, Copy)]
@@ -95,9 +98,10 @@ impl RpcServer {
 
     pub async fn run(self) {
         let semaphore = Arc::new(Semaphore::new(MAX_RPC_CONNECTIONS));
+        let ip_limiter = Arc::new(Mutex::new(PerIpRateLimiter::new()));
         loop {
             match self.listener.accept().await {
-                Ok((stream, _addr)) => {
+                Ok((stream, addr)) => {
                     let permit = match semaphore.clone().try_acquire_owned() {
                         Ok(p) => p,
                         Err(_) => {
@@ -107,11 +111,12 @@ impl RpcServer {
                         }
                     };
                     let state = self.state.clone();
+                    let ip_limiter = ip_limiter.clone();
+                    let peer_ip = addr.ip();
                     tokio::spawn(async move {
                         let _permit = permit;
                         let (reader, mut writer) = stream.into_split();
                         let mut reader = BufReader::with_capacity(65_536, reader);
-                        let mut tx_limiter = TxRateLimiter::new(TX_RATE_LIMIT_PER_SEC);
                         loop {
                             let line = match timeout(
                                 RPC_READ_TIMEOUT,
@@ -126,7 +131,8 @@ impl RpcServer {
                                 }
                                 _ => break, // EOF or timeout
                             };
-                            let response = handle_request(&state, &line, &mut tx_limiter).await;
+                            let response =
+                                handle_request(&state, &line, &ip_limiter, peer_ip).await;
                             let mut json = serde_json::to_string(&response).unwrap_or_default();
                             json.push('\n');
                             if writer.write_all(json.as_bytes()).await.is_err() {
@@ -147,7 +153,7 @@ impl RpcServer {
 pub struct TxRateLimiter {
     tokens: u32,
     max_tokens: u32,
-    last_refill: tokio::time::Instant,
+    last_refill: Instant,
 }
 
 impl TxRateLimiter {
@@ -155,12 +161,12 @@ impl TxRateLimiter {
         Self {
             tokens: rate_per_sec,
             max_tokens: rate_per_sec,
-            last_refill: tokio::time::Instant::now(),
+            last_refill: Instant::now(),
         }
     }
 
     pub(crate) fn allow(&mut self) -> bool {
-        let now = tokio::time::Instant::now();
+        let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill);
         if elapsed >= Duration::from_secs(1) {
             self.tokens = self.max_tokens;
@@ -175,10 +181,51 @@ impl TxRateLimiter {
     }
 }
 
+/// Per-IP rate limiter that tracks token buckets per source IP.
+///
+/// Prevents a single IP from monopolising `submit_tx` even when opening
+/// many TCP connections or HTTP requests.
+pub struct PerIpRateLimiter {
+    buckets: HashMap<IpAddr, TxRateLimiter>,
+    last_prune: Instant,
+}
+
+impl PerIpRateLimiter {
+    pub fn new() -> Self {
+        Self {
+            buckets: HashMap::new(),
+            last_prune: Instant::now(),
+        }
+    }
+
+    /// Check whether `ip` is allowed to submit a transaction.
+    pub fn allow(&mut self, ip: IpAddr) -> bool {
+        self.maybe_prune();
+        let bucket = self
+            .buckets
+            .entry(ip)
+            .or_insert_with(|| TxRateLimiter::new(TX_RATE_LIMIT_PER_SEC));
+        bucket.allow()
+    }
+
+    /// Remove entries that have not been touched for a while to avoid unbounded growth.
+    fn maybe_prune(&mut self) {
+        let now = Instant::now();
+        if now.duration_since(self.last_prune) < IP_LIMITER_PRUNE_INTERVAL {
+            return;
+        }
+        self.last_prune = now;
+        // Remove buckets that are fully refilled (idle for ≥1 s)
+        self.buckets
+            .retain(|_, v| now.duration_since(v.last_refill) < Duration::from_secs(30));
+    }
+}
+
 pub(crate) async fn handle_request(
     state: &RpcState,
     line: &str,
-    tx_limiter: &mut TxRateLimiter,
+    ip_limiter: &Mutex<PerIpRateLimiter>,
+    peer_ip: IpAddr,
 ) -> RpcResponse {
     let req: RpcRequest = match serde_json::from_str(line) {
         Ok(r) => r,
@@ -202,13 +249,16 @@ pub(crate) async fn handle_request(
         }
 
         "submit_tx" => {
-            // Per-connection rate limiting
-            if !tx_limiter.allow() {
-                return RpcResponse::err(
-                    req.id,
-                    -32000,
-                    "rate limit exceeded for submit_tx".to_string(),
-                );
+            // Per-IP rate limiting (C-2: prevents bypass via multiple connections)
+            {
+                let mut limiter = ip_limiter.lock().await;
+                if !limiter.allow(peer_ip) {
+                    return RpcResponse::err(
+                        req.id,
+                        -32000,
+                        "rate limit exceeded for submit_tx".to_string(),
+                    );
+                }
             }
             let Some(tx_hex) = req.params.as_str() else {
                 return RpcResponse::err(req.id, -32602, "params must be a hex string".to_string());
