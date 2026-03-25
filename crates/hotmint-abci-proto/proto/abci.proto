@@ -47,6 +47,7 @@ message EquivocationProof {
   bytes signature_a = 5;
   bytes block_hash_b = 6;
   bytes signature_b = 7;
+  uint64 epoch = 8;
 }
 
 message ValidatorUpdate {

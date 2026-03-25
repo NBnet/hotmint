@@ -67,6 +67,7 @@ mod tests {
             validator: ValidatorId(validator),
             view: ViewNumber(view),
             vote_type: VoteType::Vote,
+            epoch: Default::default(),
             block_hash_a: BlockHash::GENESIS,
             signature_a: Signature(vec![1]),
             block_hash_b: BlockHash::GENESIS,

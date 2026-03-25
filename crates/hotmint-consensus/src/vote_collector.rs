@@ -57,6 +57,7 @@ impl VoteCollector {
                     validator: vote.validator,
                     view: vote.view,
                     vote_type: vote.vote_type,
+                    epoch,
                     block_hash_a: existing.block_hash,
                     signature_a: existing.signature.clone(),
                     block_hash_b: vote.block_hash,

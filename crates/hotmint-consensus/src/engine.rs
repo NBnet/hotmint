@@ -1114,16 +1114,18 @@ impl ConsensusEngine {
                     warn!(validator = %proof.validator, "evidence has identical block hashes");
                     return Ok(());
                 }
+                // Use the epoch from the proof itself (not local epoch) so
+                // cross-epoch evidence can be verified correctly.
                 let bytes_a = Vote::signing_bytes(
                     &self.state.chain_id_hash,
-                    self.state.current_epoch.number,
+                    proof.epoch,
                     proof.view,
                     &proof.block_hash_a,
                     proof.vote_type,
                 );
                 let bytes_b = Vote::signing_bytes(
                     &self.state.chain_id_hash,
-                    self.state.current_epoch.number,
+                    proof.epoch,
                     proof.view,
                     &proof.block_hash_b,
                     proof.vote_type,

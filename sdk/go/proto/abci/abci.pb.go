@@ -370,6 +370,7 @@ type EquivocationProof struct {
 	SignatureA    []byte                 `protobuf:"bytes,5,opt,name=signature_a,json=signatureA,proto3" json:"signature_a,omitempty"`
 	BlockHashB    []byte                 `protobuf:"bytes,6,opt,name=block_hash_b,json=blockHashB,proto3" json:"block_hash_b,omitempty"`
 	SignatureB    []byte                 `protobuf:"bytes,7,opt,name=signature_b,json=signatureB,proto3" json:"signature_b,omitempty"`
+	Epoch         uint64                 `protobuf:"varint,8,opt,name=epoch,proto3" json:"epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -451,6 +452,13 @@ func (x *EquivocationProof) GetSignatureB() []byte {
 		return x.SignatureB
 	}
 	return nil
+}
+
+func (x *EquivocationProof) GetEpoch() uint64 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
 }
 
 type ValidatorUpdate struct {
@@ -1628,7 +1636,7 @@ const file_abci_proto_rawDesc = "" +
 	"\bproposer\x18\x03 \x01(\x04R\bproposer\x12\x14\n" +
 	"\x05epoch\x18\x04 \x01(\x04R\x05epoch\x12(\n" +
 	"\x10epoch_start_view\x18\x05 \x01(\x04R\x0eepochStartView\x12?\n" +
-	"\rvalidator_set\x18\x06 \x01(\v2\x1a.hotmint.abci.ValidatorSetR\fvalidatorSet\"\xe8\x01\n" +
+	"\rvalidator_set\x18\x06 \x01(\v2\x1a.hotmint.abci.ValidatorSetR\fvalidatorSet\"\xfe\x01\n" +
 	"\x11EquivocationProof\x12\x1c\n" +
 	"\tvalidator\x18\x01 \x01(\x04R\tvalidator\x12\x12\n" +
 	"\x04view\x18\x02 \x01(\x04R\x04view\x12\x1b\n" +
@@ -1640,7 +1648,8 @@ const file_abci_proto_rawDesc = "" +
 	"\fblock_hash_b\x18\x06 \x01(\fR\n" +
 	"blockHashB\x12\x1f\n" +
 	"\vsignature_b\x18\a \x01(\fR\n" +
-	"signatureB\"V\n" +
+	"signatureB\x12\x14\n" +
+	"\x05epoch\x18\b \x01(\x04R\x05epoch\"V\n" +
 	"\x0fValidatorUpdate\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x1d\n" +
 	"\n" +

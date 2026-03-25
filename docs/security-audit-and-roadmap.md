@@ -684,15 +684,19 @@ Parity's (Polkadot) **Substrate FRAME Pallets** represent the industry's most co
 
 **Prerequisites:** C-3 evidence on-chain complete (slashing requires on-chain verifiable equivocation proofs); `hotmint-staking` crate serves as porting base.
 
-#### Phase 3: Advanced Contract Platform
+#### Phase 3: Advanced Contract Platform (Hotmint-EVM)
 
-**Goal:** Full-featured AppChain / Rollup Sequencer.
+**Goal:** Full-featured AppChain / Rollup Sequencer with production-grade EVM compatibility.
 
 | Component | Source | Core Capabilities | Integration Point |
 |-----------|--------|-------------------|-------------------|
-| `pallet-evm` (SputnikVM) | Substrate | 100% Ethereum smart contract compatibility | Strip Substrate shell, embed SputnikVM within `execute_block` |
+| `revm` | Reth 生态 | 世界最快 EVM 执行引擎 | 为 vsdb 实现 `revm::Database` trait，嵌入 `execute_block` |
+| `alloy-rlp` / `alloy-primitives` | Reth 生态 | 以太坊交易 RLP 解码、签名恢复 | `validate_tx` 层交易解析 |
+| Custom Precompiles | 自研桥接 | 打通 EVM ↔ 原生经济层 | 质押/治理等原生函数暴露给 Solidity 合约 |
 
 **Prerequisites:** Phase 1 account/balance system as native token backend for EVM; existing `examples/evm-chain` (using `revm`) serves as reference implementation.
+
+> **详细实施方案见 §16.5（Hotmint-EVM 混合架构路线图）。**
 
 ### 16.4 Implementation Standards
 
@@ -703,7 +707,79 @@ Parity's (Polkadot) **Substrate FRAME Pallets** represent the industry's most co
    - Permission modifiers correctly mapped to transaction signer public key verification
    - Storage key namespaces properly isolated (no cross-pallet state pollution)
 
-### 16.5 Competitive Positioning
+### 16.5 Concrete Target: Production-Grade EVM-Compatible Chain (Hotmint-EVM)
+
+> **切入口：** 以"在 Hotmint 之上，构建一条功能完备、可供生产使用的 EVM 兼容链"为具体目标，驱动 Substrate 组件移植与 Reth 生态集成的实践验证。
+
+#### 16.5.1 技术栈评估：Substrate (Frontier/SputnikVM) vs Reth (revm/alloy)
+
+| 评估维度 | Substrate 生态 (Frontier/SputnikVM) | Reth 生态 (revm/alloy) | 结论 |
+|----------|-------------------------------------|----------------------|------|
+| 设计时代 | 2019–2020，绑定 `no_std` + Wasm 约束 | 2022–至今，原生 `std` 环境，API 现代化 | 🏆 Reth |
+| 执行性能 | 中等（内存分配瓶颈） | 业界天花板（Paradigm/OP Stack/Arbitrum 均已迁移 revm） | 🏆 Reth |
+| 底层类型 | `sp-core` / `primitive-types` + SCALE 编码 | `alloy-primitives`（极速 U256/Address）+ `alloy-rlp` | 🏆 Reth |
+| Substrate 组件契合度 | 极高（Precompile 与 pallet-balances 等原生互通） | 低（需自行桥接） | 🏆 Substrate |
+| AI 移植难度 | 高（需剥离 `#[pallet]` 宏 + Wasm 边界） | 极低（纯 Rust 库，实现 `Database` trait 约 4 个方法即可接入 vsdb） | 🏆 Reth |
+
+**结论：混合架构（Hybrid Approach）为最优解** — EVM 执行层拥抱 Reth 生态（revm + alloy），原生经济系统与治理模型保留 AI 移植 Substrate Pallets。两者通过预编译合约（Custom Precompiles）打通。
+
+#### 16.5.2 架构组件映射
+
+| Substrate / Frontier 组件 | Hotmint-EVM 目标架构 | 核心职责 |
+|:---|:---|:---|
+| `pallet-timestamp` | `hotmint_evm::Timestamp` | 为 EVM `block.timestamp` 操作码提供当前区块时间 |
+| `pallet-balances` | `hotmint_evm::Balances` | 管理原生 Token，处理 Gas 扣除与原生转账（AI 移植 Substrate） |
+| `pallet-evm` (SputnikVM) | ~~不使用~~ → `revm` crate | 直接集成 revm，为 vsdb 实现 `revm::Database` trait |
+| `pallet-ethereum` | `alloy-rlp` + `alloy-primitives` | 以太坊 RLP 交易解码（EIP-1559/EIP-2930）、`ecrecover` 签名恢复 |
+| `fc-rpc` (Frontier RPC) | `hotmint_api::Web3Rpc` (`jsonrpsee`) | 标准 `eth_*` JSON-RPC 接口，兼容 MetaMask |
+| Substrate Storage Trie | `vsdb::MapxOrd` & `Mapx` | 账户 Nonce/Balance、EVM Code（合约字节码）、EVM Storage（合约状态） |
+| `pallet-staking` | `hotmint_evm::Staking`（AI 移植） | DPoS 质押/验证者选举/Slashing（原生层，通过 Precompile 暴露给 EVM） |
+
+#### 16.5.3 混合执行路线图（5 阶段）
+
+**Phase 1: 底层原生经济系统 (AI 移植 Substrate)**
+- 利用 AI 移植 `pallet-balances` 到 vsdb：`transfer`、`withdraw`（Gas 扣除）、`deposit`（区块奖励）
+- 引入 `U256` 安全数学运算防溢出
+- 构建 EVM 世界状态结构：`AccountStore: MapxOrd<H160, AccountInfo>`、`CodeStore: Mapx<H256, Vec<u8>>`、`StorageStore: Mapx<(H160, H256), H256>`
+- 实现 `Timestamp` 与 `BlockContext`（注入高度、Gas Limit、Coinbase、时间戳）
+
+**Phase 2: 引入 Reth 核心原语 (Alloy)**
+- 引入 `alloy-primitives`（替代 `sp-core`），`alloy-rlp` 处理以太坊交易解码
+- 在 `Application::validate_tx` 中：RLP 解码 → `ecrecover` 签名恢复 → ChainID 校验 → Nonce 递增检查 → Balance 充足性校验
+- 密码学：使用 `libsecp256k1` 或 `k256` crate
+
+**Phase 3: 接入最强执行引擎 (Revm)**
+- 为 vsdb 实现 `revm::Database` trait（`basic`/`storage`/`code`/`block_hash` 约 4 个方法）
+- 在 `Application::execute_block` 中：实例化 `revm::Evm` → 交易按序执行 → 状态变更批量写入 vsdb
+- Gas 结算：执行前扣除最大 Gas 费，执行后退还剩余，消耗费用奖励给 Proposer
+- 事件与日志：将 EVM Logs 和 Receipt 持久化到 vsdb 交易回执存储
+- **app_hash 确定性：** 严格使用 `BTreeMap` / `vsdb::MapxOrd`（内部 B+ 树有序遍历）计算状态根，禁止 `HashMap` 参与哈希计算
+
+**Phase 4: 跨层桥接 (Precompiles 互通)**
+- 实现 `revm::Precompile` 接口，将底层原生函数暴露给 EVM 合约
+- 示例：地址 `0x0800` → 底层 `Staking` 模块（质押/委托/提取奖励）
+- 示例：地址 `0x0801` → 底层 `Balances` 模块（原生跨层转账）
+- AI 任务：编写桥接代码，将以太坊合约调用陷入（trap）到 Rust 原生层极速执行
+
+**Phase 5: 对外暴露 Web3 API (Alloy/Reth RPC)**
+- 使用 `jsonrpsee` 搭建 HTTP/WS 服务器
+- 实现标准以太坊 API：`eth_chainId`、`eth_blockNumber`、`eth_getBalance`、`eth_getTransactionCount`、`eth_call`（Dry-run）、`eth_estimateGas`、`eth_sendRawTransaction`（推入 Hotmint Mempool）、`eth_getLogs`（Bloom Filter / vsdb 回执查询）
+- 兼容 MetaMask、Hardhat、Foundry 等工具链
+
+#### 16.5.4 关键风险与避坑
+
+1. **状态回滚一致性 (State Reversion)：** EVM 交易 Revert / Out of Gas 时需回滚状态变更但保留 Gas 扣除。方案：每笔交易前利用 vsdb Write Batch 创建暂态快照，失败则丢弃，成功则 commit。
+2. **Mempool RBF 与以太坊 Nonce 冲突：** 以太坊 Nonce 严格递增，需在 `validate_tx` 中校验 `nonce >= account_nonce`，并在 Mempool 增加 `(sender, nonce)` 去重与 RBF 替换逻辑。
+3. **App Hash 确定性 (Determinism)：** `HashMap` 遍历无序会导致节点间 `app_hash` 不一致→链分叉停机。严格使用 `BTreeMap` / `vsdb::MapxOrd` 的有序遍历。
+4. **前置依赖：** Phase 1–4 的 infra（§13–15 全部 ⚠️ → ✅）必须稳定后方可启动 EVM 集成。
+
+#### 16.5.5 验收里程碑
+
+MetaMask 成功连接 Hotmint-EVM 并完成一次转账或合约部署 → Phase 1–4 打通的最小验证。
+
+---
+
+### 16.6 Competitive Positioning
 
 Post-completion Hotmint ecosystem position:
 
@@ -711,8 +787,8 @@ Post-completion Hotmint ecosystem position:
 |-----------|----------------------|---------------|
 | Consensus | HotStuff-2: lower latency, no GC tail-latency jitter | — |
 | Business Logic | — | AI-ported Substrate Pallets: pure Rust, type-safe, no Keeper/Handler nesting |
-| Smart Contracts | — | Native EVM compatibility (revm/SputnikVM) |
-| Positioning | High-performance AppChain consensus engine | Next-gen AppChain + Rollup Sequencer full-stack solution |
+| Smart Contracts | — | Native EVM compatibility via revm (世界最快 EVM 引擎) + Substrate Pallets 原生经济模型 |
+| Positioning | High-performance AppChain consensus engine | Next-gen AppChain + Rollup Sequencer full-stack solution ("六边形战士") |
 
 ---
 

@@ -170,6 +170,7 @@ impl From<&EquivocationProof> for pb::EquivocationProof {
             signature_a: e.signature_a.0.clone(),
             block_hash_b: e.block_hash_b.0.to_vec(),
             signature_b: e.signature_b.0.clone(),
+            epoch: e.epoch.as_u64(),
         }
     }
 }
@@ -190,6 +191,7 @@ impl From<pb::EquivocationProof> for EquivocationProof {
             } else {
                 VoteType::Vote
             },
+            epoch: EpochNumber(e.epoch),
             block_hash_a: bytes_to_hash(&e.block_hash_a),
             signature_a: Signature(e.signature_a),
             block_hash_b: bytes_to_hash(&e.block_hash_b),

@@ -165,27 +165,38 @@ impl Mempool {
     }
 
     /// Collect with both byte and gas limits.
+    ///
+    /// Skips transactions that exceed the remaining gas budget (instead of
+    /// stopping) to avoid head-of-line starvation by a single high-gas tx.
     pub async fn collect_payload_with_gas(&self, max_bytes: usize, max_gas: u64) -> Vec<u8> {
         let mut entries = self.entries.lock().await;
         let mut seen = self.seen.lock().await;
         let mut payload = Vec::new();
         let mut total_gas = 0u64;
+        let mut skipped = Vec::new();
 
-        while let Some(entry) = entries.last() {
-            // 4 bytes length prefix + tx bytes
+        while let Some(entry) = entries.pop_last() {
+            // Byte limit: hard stop (all remaining txs are at most this size or smaller,
+            // but we can't know without iterating — stop here for simplicity).
             if payload.len() + 4 + entry.tx.len() > max_bytes {
+                skipped.push(entry);
                 break;
             }
-            // Gas limit check (when max_gas > 0)
+            // Gas limit: skip this tx but continue collecting smaller ones.
             if max_gas > 0 && total_gas + entry.gas_wanted > max_gas {
-                break;
+                skipped.push(entry);
+                continue;
             }
-            let entry = entries.pop_last().expect("just checked non-empty");
             seen.remove(&entry.hash);
             total_gas += entry.gas_wanted;
             let len = entry.tx.len() as u32;
             payload.extend_from_slice(&len.to_le_bytes());
             payload.extend_from_slice(&entry.tx);
+        }
+
+        // Re-insert skipped entries back into the pool.
+        for entry in skipped {
+            entries.insert(entry);
         }
 
         payload

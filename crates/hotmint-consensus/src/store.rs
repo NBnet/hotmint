@@ -44,6 +44,12 @@ pub trait BlockStore: Send + Sync {
 ///
 /// Uses `blocking_read` / `blocking_write` (H-8) to wait for the lock instead of the
 /// previous `try_*().expect()` which panicked on contention.
+///
+/// Safety: this adapter is used from sync contexts (e.g. `replay_blocks`) running
+/// inside the tokio runtime. `blocking_read/write` is the correct tokio API for
+/// synchronous code on the runtime — it blocks the current OS thread but allows
+/// the tokio scheduler to steal other async tasks to remaining worker threads.
+/// The lock hold times are microsecond-level HashMap lookups.
 pub struct SharedStoreAdapter(pub Arc<RwLock<Box<dyn BlockStore>>>);
 
 impl BlockStore for SharedStoreAdapter {
