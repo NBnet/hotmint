@@ -553,8 +553,10 @@ impl NetworkService {
                 request,
                 ..
             } => {
-                if !self.connected_peers.contains(&peer) {
-                    warn!(peer = %peer, "rejecting sync request from unconnected peer");
+                // Only serve sync requests from peers with an active notification
+                // stream (which implies they passed the chain_id handshake).
+                if !self.notif_connected_peers.contains(&peer) {
+                    warn!(peer = %peer, "rejecting sync request: no notification stream (chain isolation)");
                     self.sync_handle.reject_request(request_id);
                     return;
                 }
