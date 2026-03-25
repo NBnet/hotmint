@@ -452,12 +452,11 @@ pub fn replay_blocks(
 
     // If the pending epoch's start_view was reached by the last block, apply it.
     // Otherwise, return it so the caller (engine) can defer activation correctly.
-    if let Some(ref ep) = pending_epoch {
-        if let Some((last_block, _)) = blocks.last() {
-            if last_block.view >= ep.start_view {
-                *state.current_epoch = pending_epoch.take().unwrap();
-            }
-        }
+    if let Some(ref ep) = pending_epoch
+        && let Some((last_block, _)) = blocks.last()
+        && last_block.view >= ep.start_view
+    {
+        *state.current_epoch = pending_epoch.take().unwrap();
     }
 
     // Return any still-pending epoch for the caller to handle.
