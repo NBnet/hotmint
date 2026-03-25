@@ -3,8 +3,6 @@ use ruc::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
-
 use crate::application::Application;
 use crate::commit::try_commit;
 use crate::evidence_store::EvidenceStore;
@@ -23,7 +21,7 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 /// Shared block store type used by the engine, RPC, and sync responder.
-pub type SharedBlockStore = Arc<RwLock<Box<dyn BlockStore>>>;
+pub type SharedBlockStore = Arc<parking_lot::RwLock<Box<dyn BlockStore>>>;
 
 /// Trait for persisting critical consensus state across restarts.
 pub trait StatePersistence: Send {
@@ -328,7 +326,7 @@ impl ConsensusEngine {
 
             // Propose is synchronous; acquire, run, and release the lock before any await.
             let proposed_block = {
-                let mut store = self.store.write().await;
+                let mut store = self.store.write();
                 view_protocol::propose(
                     &mut self.state,
                     store.as_mut(),
@@ -897,14 +895,14 @@ impl ConsensusEngine {
                         // Verify block hash before storing past-view blocks
                         let expected = hotmint_crypto::compute_block_hash(&block);
                         if block.hash == expected {
-                            let mut store = self.store.write().await;
+                            let mut store = self.store.write();
                             store.put_block(block);
                         }
                     }
                     return Ok(());
                 }
 
-                let mut store = self.store.write().await;
+                let mut store = self.store.write();
 
                 // R-25: verify any DoubleCert in the same-view proposal path.
                 // The future-view path already calls validate_double_cert; the same-view path
@@ -985,7 +983,7 @@ impl ConsensusEngine {
                     // store. Prevents locking onto a block whose app_hash diverges from
                     // our local state. When the block is absent (node caught up via TC),
                     // we defer to the QC's 2f+1 signatures for safety.
-                    let store = self.store.read().await;
+                    let store = self.store.read();
                     let block_opt = store.get_block(&certificate.block_hash);
                     if self.app.tracks_app_hash()
                         && let Some(ref block) = block_opt
@@ -1242,7 +1240,7 @@ impl ConsensusEngine {
         // Leader also does vote2 for its own prepare (self-vote for step 5)
         // Generate vote extension (ABCI++ Vote Extensions) if the block is available.
         let vote_extension = {
-            let store = self.store.read().await;
+            let store = self.store.read();
             store.get_block(&qc.block_hash).and_then(|block| {
                 let ctx = BlockContext {
                     height: block.height,
@@ -1403,7 +1401,7 @@ impl ConsensusEngine {
     /// Apply the result of a successful try_commit: update app_hash, pending epoch,
     /// store commit QCs, and flush. Called from both normal and fast-forward commit paths.
     async fn apply_commit(&mut self, dc: &DoubleCertificate, context: &str) {
-        let store = self.store.read().await;
+        let store = self.store.read();
         match try_commit(
             dc,
             store.as_ref(),
@@ -1420,7 +1418,7 @@ impl ConsensusEngine {
                 }
                 drop(store);
                 {
-                    let mut s = self.store.write().await;
+                    let mut s = self.store.write();
                     for (i, block) in result.committed_blocks.iter().enumerate() {
                         // R-28: only write the commit QC for the block it actually certifies.
                         if result.commit_qc.block_hash == block.hash {
@@ -1637,7 +1635,7 @@ mod tests {
 
     use std::sync::Arc;
 
-    use tokio::sync::RwLock;
+    use parking_lot::RwLock;
 
     use hotmint_crypto::{Ed25519Signer, Ed25519Verifier};
     use hotmint_types::Signer as SignerTrait;

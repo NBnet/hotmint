@@ -26,6 +26,7 @@ fn make_block_context(vs: &ValidatorSet) -> BlockContext<'_> {
         epoch: EpochNumber(0),
         epoch_start_view: ViewNumber(0),
         validator_set: vs,
+        vote_extensions: vec![],
     }
 }
 
@@ -126,7 +127,7 @@ fn rust_to_go_ipc() {
 
     // Test query — Go testApp echoes data back.
     let result = client.query("/state", &[42]).unwrap();
-    assert_eq!(result, &[42], "query echo mismatch");
+    assert_eq!(result.data, &[42], "query echo mismatch");
 
     // Test on_commit — should succeed.
     let result = client.on_commit(&block, &ctx);

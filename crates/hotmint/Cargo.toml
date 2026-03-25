@@ -28,6 +28,7 @@ hotmint-api = { workspace = true }
 hotmint-staking = { workspace = true }
 
 tokio = { workspace = true }
+parking_lot = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 ruc = { workspace = true }

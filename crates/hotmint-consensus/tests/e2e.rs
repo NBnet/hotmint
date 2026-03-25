@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 use hotmint_consensus::application::Application;
 use hotmint_consensus::engine::{ConsensusEngine, EngineConfig};

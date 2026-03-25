@@ -49,11 +49,14 @@ impl ApplicationHandler for EchoHandler {
         Ok(())
     }
 
-    fn query(&self, path: String, data: Vec<u8>) -> Result<Vec<u8>, String> {
-        // Echo: path bytes ++ data.
+    fn query(&self, path: String, data: Vec<u8>) -> Result<hotmint_types::QueryResponse, String> {
         let mut out = path.into_bytes();
         out.extend_from_slice(&data);
-        Ok(out)
+        Ok(hotmint_types::QueryResponse {
+            data: out,
+            proof: None,
+            height: 0,
+        })
     }
 }
 
@@ -73,6 +76,7 @@ fn make_block_context(vs: &ValidatorSet) -> BlockContext<'_> {
         epoch: EpochNumber(0),
         epoch_start_view: ViewNumber(0),
         validator_set: vs,
+        vote_extensions: vec![],
     }
 }
 
@@ -134,7 +138,7 @@ async fn ipc_roundtrip() {
 
     // query
     let result = client.query("hello/", &[42]).unwrap();
-    assert_eq!(result, b"hello/\x2a");
+    assert_eq!(result.data, b"hello/\x2a");
 
     server_handle.abort();
     let _ = std::fs::remove_dir_all(&dir);

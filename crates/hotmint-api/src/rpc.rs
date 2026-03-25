@@ -5,7 +5,7 @@ use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, mpsc};
 
 use crate::types::{
     BlockInfo, BlockResultsInfo, CommitQcInfo, EpochInfo, EventAttributeInfo, EventInfo, HeaderInfo,
@@ -67,7 +67,7 @@ pub struct RpcState {
     pub mempool: Arc<Mempool>,
     pub status_rx: watch::Receiver<ConsensusStatus>,
     /// Shared block store for block queries
-    pub store: Arc<RwLock<Box<dyn BlockStore>>>,
+    pub store: Arc<parking_lot::RwLock<Box<dyn BlockStore>>>,
     /// Peer info channel
     pub peer_info_rx: watch::Receiver<Vec<PeerStatus>>,
     /// Live validator set for get_validators
@@ -314,7 +314,7 @@ pub(crate) async fn handle_request(
                     );
                 }
             };
-            let store = state.store.read().await;
+            let store = state.store.read();
             match store.get_block_by_height(Height(height)) {
                 Some(block) => json_ok(req.id, &block_to_info(&block)),
                 None => RpcResponse::err(
@@ -329,7 +329,7 @@ pub(crate) async fn handle_request(
             let hash_hex = req.params.as_str().unwrap_or_default();
             match hex_to_block_hash(hash_hex) {
                 Some(hash) => {
-                    let store = state.store.read().await;
+                    let store = state.store.read();
                     match store.get_block(&hash) {
                         Some(block) => json_ok(req.id, &block_to_info(&block)),
                         None => RpcResponse::err(req.id, -32602, "block not found".to_string()),
@@ -370,7 +370,7 @@ pub(crate) async fn handle_request(
                     );
                 }
             };
-            let store = state.store.read().await;
+            let store = state.store.read();
             match store.get_block_by_height(Height(height)) {
                 Some(block) => {
                     let info = HeaderInfo {
@@ -402,7 +402,7 @@ pub(crate) async fn handle_request(
                     );
                 }
             };
-            let store = state.store.read().await;
+            let store = state.store.read();
             match store.get_commit_qc(Height(height)) {
                 Some(qc) => {
                     let info = CommitQcInfo {
@@ -446,7 +446,7 @@ pub(crate) async fn handle_request(
                     );
                 }
             };
-            let store = state.store.read().await;
+            let store = state.store.read();
             match store.get_tx_location(&hash_bytes) {
                 Some((height, index)) => match store.get_block_by_height(height) {
                     Some(block) => {
@@ -491,7 +491,7 @@ pub(crate) async fn handle_request(
                     );
                 }
             };
-            let store = state.store.read().await;
+            let store = state.store.read();
             match store.get_block_results(Height(height)) {
                 Some(results) => {
                     // Also compute tx hashes from the block payload.

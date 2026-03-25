@@ -3,7 +3,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 
 use std::time::Duration;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 use hotmint_abci::client::IpcApplicationClient;
 use hotmint_consensus::application::Application;
@@ -167,7 +167,7 @@ async fn go_ipc_consensus_e2e() {
     // Query commit count from one Go server via IPC.
     let client = IpcApplicationClient::new(&sock_paths[0]);
     let count_bytes = client.query("commits", &[]).unwrap();
-    let commits = u64::from_le_bytes(count_bytes.try_into().unwrap_or([0; 8]));
+    let commits = u64::from_le_bytes(count_bytes.data.try_into().unwrap_or([0; 8]));
 
     // Kill Go servers.
     for mut child in go_servers {

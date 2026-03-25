@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use std::time::Instant;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 use ed25519_dalek::SigningKey;
 use ruc::*;

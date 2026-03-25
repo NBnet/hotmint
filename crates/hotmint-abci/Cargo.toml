@@ -18,4 +18,5 @@ ruc = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
+parking_lot = { workspace = true }
 hotmint-crypto = { workspace = true }

@@ -235,7 +235,7 @@ mod tests {
         let b1 = make_block(1, BlockHash::GENESIS);
         store.put_block(b1.clone());
 
-        let dc = DoubleCertificate {
+        let dc = DoubleCertificate { vote_extensions: vec![],
             inner_qc: make_qc(b1.hash, 1),
             outer_qc: make_qc(b1.hash, 1),
         };
@@ -260,7 +260,7 @@ mod tests {
         store.put_block(b2);
         store.put_block(b3.clone());
 
-        let dc = DoubleCertificate {
+        let dc = DoubleCertificate { vote_extensions: vec![],
             inner_qc: make_qc(b3.hash, 3),
             outer_qc: make_qc(b3.hash, 3),
         };
@@ -282,7 +282,7 @@ mod tests {
         let b1 = make_block(1, BlockHash::GENESIS);
         store.put_block(b1.clone());
 
-        let dc = DoubleCertificate {
+        let dc = DoubleCertificate { vote_extensions: vec![],
             inner_qc: make_qc(b1.hash, 1),
             outer_qc: make_qc(b1.hash, 1),
         };
@@ -304,7 +304,7 @@ mod tests {
         store.put_block(b2);
         store.put_block(b3.clone());
 
-        let dc = DoubleCertificate {
+        let dc = DoubleCertificate { vote_extensions: vec![],
             inner_qc: make_qc(b3.hash, 3),
             outer_qc: make_qc(b3.hash, 3),
         };
@@ -321,7 +321,7 @@ mod tests {
         let store = MemoryBlockStore::new();
         let app = NoopApplication;
         let epoch = make_epoch();
-        let dc = DoubleCertificate {
+        let dc = DoubleCertificate { vote_extensions: vec![],
             inner_qc: make_qc(BlockHash([99u8; 32]), 1),
             outer_qc: make_qc(BlockHash([99u8; 32]), 1),
         };

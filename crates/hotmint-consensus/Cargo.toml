@@ -12,6 +12,7 @@ hotmint-types = { workspace = true }
 hotmint-crypto = { workspace = true }
 blake3 = { workspace = true }
 serde = { workspace = true }
+parking_lot = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 ruc = { workspace = true }

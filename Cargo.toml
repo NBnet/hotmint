@@ -55,6 +55,7 @@ prost = "0.13"
 zstd = "0.13"
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors"] }
+parking_lot = "0.12"
 
 hotmint = { version = "0.8.0", path = "crates/hotmint" }
 hotmint-types = { version = "0.8.0", path = "crates/hotmint-types" }

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 use hotmint_types::{Block, BlockHash, Height, QuorumCertificate};
 
@@ -63,52 +63,46 @@ pub trait BlockStore: Send + Sync {
 /// Adapter that implements `BlockStore` over a shared `Arc<RwLock<Box<dyn BlockStore>>>`,
 /// acquiring and releasing the lock for each individual operation.
 ///
-/// Uses `blocking_read` / `blocking_write` (H-8) to wait for the lock instead of the
-/// previous `try_*().expect()` which panicked on contention.
-///
-/// Safety: this adapter is used from sync contexts (e.g. `replay_blocks`) running
-/// inside the tokio runtime. `blocking_read/write` is the correct tokio API for
-/// synchronous code on the runtime — it blocks the current OS thread but allows
-/// the tokio scheduler to steal other async tasks to remaining worker threads.
-/// The lock hold times are microsecond-level HashMap lookups.
+/// Uses `read` / `write` on `parking_lot::RwLock` (R-1) for fast, non-poisoning
+/// synchronous locking. The lock hold times are microsecond-level HashMap lookups.
 pub struct SharedStoreAdapter(pub Arc<RwLock<Box<dyn BlockStore>>>);
 
 impl BlockStore for SharedStoreAdapter {
     fn put_block(&mut self, block: Block) {
-        self.0.blocking_write().put_block(block);
+        self.0.write().put_block(block);
     }
     fn get_block(&self, hash: &BlockHash) -> Option<Block> {
-        self.0.blocking_read().get_block(hash)
+        self.0.read().get_block(hash)
     }
     fn get_block_by_height(&self, h: Height) -> Option<Block> {
-        self.0.blocking_read().get_block_by_height(h)
+        self.0.read().get_block_by_height(h)
     }
     fn get_blocks_in_range(&self, from: Height, to: Height) -> Vec<Block> {
-        self.0.blocking_read().get_blocks_in_range(from, to)
+        self.0.read().get_blocks_in_range(from, to)
     }
     fn tip_height(&self) -> Height {
-        self.0.blocking_read().tip_height()
+        self.0.read().tip_height()
     }
     fn put_commit_qc(&mut self, height: Height, qc: QuorumCertificate) {
-        self.0.blocking_write().put_commit_qc(height, qc);
+        self.0.write().put_commit_qc(height, qc);
     }
     fn get_commit_qc(&self, height: Height) -> Option<QuorumCertificate> {
-        self.0.blocking_read().get_commit_qc(height)
+        self.0.read().get_commit_qc(height)
     }
     fn flush(&self) {
-        self.0.blocking_read().flush();
+        self.0.read().flush();
     }
     fn put_tx_index(&mut self, tx_hash: [u8; 32], height: Height, index: u32) {
-        self.0.blocking_write().put_tx_index(tx_hash, height, index);
+        self.0.write().put_tx_index(tx_hash, height, index);
     }
     fn get_tx_location(&self, tx_hash: &[u8; 32]) -> Option<(Height, u32)> {
-        self.0.blocking_read().get_tx_location(tx_hash)
+        self.0.read().get_tx_location(tx_hash)
     }
     fn put_block_results(&mut self, height: Height, results: hotmint_types::EndBlockResponse) {
-        self.0.blocking_write().put_block_results(height, results);
+        self.0.write().put_block_results(height, results);
     }
     fn get_block_results(&self, height: Height) -> Option<hotmint_types::EndBlockResponse> {
-        self.0.blocking_read().get_block_results(height)
+        self.0.read().get_block_results(height)
     }
 }
 
@@ -137,7 +131,7 @@ impl MemoryBlockStore {
         store
     }
 
-    /// Create a new in-memory block store wrapped in `Arc<tokio::sync::RwLock<Box<dyn BlockStore>>>`,
+    /// Create a new in-memory block store wrapped in `Arc<parking_lot::RwLock<Box<dyn BlockStore>>>`,
     /// ready for use with `ConsensusEngine`.
     pub fn new_shared() -> crate::engine::SharedBlockStore {
         Arc::new(RwLock::new(Box::new(Self::new())))

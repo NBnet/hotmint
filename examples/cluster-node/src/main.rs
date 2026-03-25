@@ -93,8 +93,8 @@ async fn run(home: &std::path::Path) -> Result<()> {
     std::fs::create_dir_all(&data_dir).c(d!("create data dir"))?;
     vsdb::vsdb_set_base_dir(&data_dir).c(d!("set vsdb base dir"))?;
 
-    let store: Arc<RwLock<Box<dyn BlockStore>>> =
-        Arc::new(RwLock::new(Box::new(VsdbBlockStore::new())));
+    let store: Arc<parking_lot::RwLock<Box<dyn BlockStore>>> =
+        Arc::new(parking_lot::RwLock::new(Box::new(VsdbBlockStore::new())));
 
     // Restore state
     let pcs = PersistentConsensusState::new();
@@ -243,7 +243,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
                             Height(to_height.as_u64().min(
                                 from_height.as_u64() + hotmint_types::sync::MAX_SYNC_BATCH - 1,
                             ));
-                        let s = store.read().await;
+                        let s = store.read();
                         let blocks = s.get_blocks_in_range(from_height, clamped);
                         let blocks_with_qcs: Vec<_> = blocks
                             .into_iter()
@@ -385,7 +385,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
     // (accurate even when the network experienced view timeouts where view >> height).
     if engine_state_height > Height::GENESIS {
         let synced_view = {
-            let s = store.read().await;
+            let s = store.read();
             s.get_block_by_height(engine_state_height)
                 .map(|b| ViewNumber(b.view.as_u64() + 1))
                 .unwrap_or(ViewNumber(engine_state_height.as_u64() + 1))
