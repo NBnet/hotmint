@@ -7,7 +7,7 @@ use axum::extract::connect_info::ConnectInfo;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
@@ -129,9 +129,75 @@ async fn ws_upgrade_handler(
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
+/// Client-sent subscription filter for WebSocket events.
+///
+/// The client can send a JSON message to control which events are forwarded.
+/// If no filter is sent, all events are forwarded.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct SubscribeFilter {
+    /// Event types to receive (e.g. ["NewBlock", "TxCommitted", "EpochChange"]).
+    /// If empty or absent, all event types are forwarded.
+    #[serde(default)]
+    pub event_types: Vec<String>,
+    /// Only forward events at or above this height (for NewBlock / TxCommitted).
+    #[serde(default)]
+    pub min_height: Option<u64>,
+    /// Only forward events at or below this height.
+    #[serde(default)]
+    pub max_height: Option<u64>,
+    /// Only forward TxCommitted events matching this tx hash (hex).
+    #[serde(default)]
+    pub tx_hash: Option<String>,
+}
+
+impl SubscribeFilter {
+    fn matches(&self, event: &ChainEvent) -> bool {
+        // Check event type filter.
+        if !self.event_types.is_empty() {
+            let event_type = match event {
+                ChainEvent::NewBlock { .. } => "NewBlock",
+                ChainEvent::TxCommitted { .. } => "TxCommitted",
+                ChainEvent::EpochChange { .. } => "EpochChange",
+            };
+            if !self.event_types.iter().any(|t| t == event_type) {
+                return false;
+            }
+        }
+        // Check height range.
+        let height = match event {
+            ChainEvent::NewBlock { height, .. } | ChainEvent::TxCommitted { height, .. } => {
+                Some(*height)
+            }
+            _ => None,
+        };
+        if let Some(h) = height {
+            if let Some(min) = self.min_height {
+                if h < min {
+                    return false;
+                }
+            }
+            if let Some(max) = self.max_height {
+                if h > max {
+                    return false;
+                }
+            }
+        }
+        // Check tx hash filter.
+        if let Some(ref filter_hash) = self.tx_hash {
+            if let ChainEvent::TxCommitted { tx_hash, .. } = event {
+                if tx_hash != filter_hash {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
 /// WebSocket connection handler: subscribe to chain events and forward them.
 async fn handle_ws(mut socket: WebSocket, state: Arc<HttpRpcState>) {
     let mut rx = state.event_tx.subscribe();
+    let mut filter = SubscribeFilter::default();
 
     loop {
         tokio::select! {
@@ -139,6 +205,9 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<HttpRpcState>) {
             event = rx.recv() => {
                 match event {
                     Ok(ev) => {
+                        if !filter.matches(&ev) {
+                            continue;
+                        }
                         let json = match serde_json::to_string(&ev) {
                             Ok(j) => j,
                             Err(e) => {
@@ -147,7 +216,6 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<HttpRpcState>) {
                             }
                         };
                         if socket.send(Message::Text(json.into())).await.is_err() {
-                            // Client disconnected
                             break;
                         }
                     }
@@ -159,12 +227,18 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<HttpRpcState>) {
                     }
                 }
             }
-            // Listen for client messages (e.g. close frames, pings)
+            // Listen for client messages (subscription filters, close frames, pings)
             msg = socket.recv() => {
                 match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        // Try to parse as a subscribe filter.
+                        if let Ok(f) = serde_json::from_str::<SubscribeFilter>(&text) {
+                            filter = f;
+                        }
+                    }
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Err(_)) => break,
-                    _ => {} // ignore text/binary from client for now
+                    _ => {}
                 }
             }
         }
