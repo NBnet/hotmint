@@ -352,7 +352,7 @@ impl SqliteBlockStore {
 impl BlockStore for SqliteBlockStore {
     fn put_block(&mut self, block: Block) {
         let hash = compute_block_hash(&block);
-        let data = serde_cbor_2::to_vec(&block).unwrap();
+        let data = postcard::to_allocvec(&block).unwrap();
         self.conn.execute(
             "INSERT OR REPLACE INTO blocks (hash, height, data) VALUES (?1, ?2, ?3)",
             (&hash.0[..], block.height.as_u64() as i64, &data),
@@ -366,7 +366,7 @@ impl BlockStore for SqliteBlockStore {
                 [&hash.0[..]],
                 |row| {
                     let data: Vec<u8> = row.get(0)?;
-                    Ok(serde_cbor_2::from_slice(&data).unwrap())
+                    Ok(postcard::from_bytes(&data).unwrap())
                 },
             )
             .ok()
@@ -379,7 +379,7 @@ impl BlockStore for SqliteBlockStore {
                 [h.as_u64() as i64],
                 |row| {
                     let data: Vec<u8> = row.get(0)?;
-                    Ok(serde_cbor_2::from_slice(&data).unwrap())
+                    Ok(postcard::from_bytes(&data).unwrap())
                 },
             )
             .ok()

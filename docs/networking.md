@@ -156,7 +156,7 @@ tokio::spawn(async move { engine.run().await });
 
 ### Message Serialization
 
-All `ConsensusMessage` values are serialized with CBOR (`serde_cbor_2`) before transmission and deserialized on receipt. This is handled automatically by the `NetworkService`.
+All `ConsensusMessage` values are serialized with postcard before transmission and deserialized on receipt. This is handled automatically by the `NetworkService`.
 
 ### Sub-Protocols
 
@@ -264,12 +264,12 @@ struct MyNetworkSink {
 
 impl NetworkSink for MyNetworkSink {
     fn broadcast(&self, msg: ConsensusMessage) {
-        let bytes = serde_cbor_2::to_vec(&msg).unwrap();
+        let bytes = postcard::to_allocvec(&msg).unwrap();
         // send `bytes` to all known peers
     }
 
     fn send_to(&self, target: ValidatorId, msg: ConsensusMessage) {
-        let bytes = serde_cbor_2::to_vec(&msg).unwrap();
+        let bytes = postcard::to_allocvec(&msg).unwrap();
         // send `bytes` to the peer corresponding to `target`
     }
 }
@@ -282,7 +282,7 @@ let (msg_tx, msg_rx) = tokio::sync::mpsc::channel(8192);
 
 // in your network receive loop:
 let sender_id = identify_sender(&peer); // Option<ValidatorId>
-let msg: ConsensusMessage = serde_cbor_2::from_slice(&bytes).unwrap();
+let msg: ConsensusMessage = postcard::from_bytes(&bytes).unwrap();
 msg_tx.send((sender_id, msg)).unwrap();
 
 // pass msg_rx to ConsensusEngine::new()
@@ -310,7 +310,7 @@ These methods send commands through an internal channel to the `NetworkService`,
 
 The `/hotmint/sync/1` request-response protocol enables new or lagging nodes to catch up with the network by requesting missing blocks from peers.
 
-The protocol uses `SyncRequest` and `SyncResponse` messages (defined in `hotmint_types::sync`) serialized with CBOR. The `Litep2pNetworkSink` provides methods for initiating sync:
+The protocol uses `SyncRequest` and `SyncResponse` messages (defined in `hotmint_types::sync`) serialized with postcard. The `Litep2pNetworkSink` provides methods for initiating sync:
 
 ```rust
 // send a sync request to a specific peer

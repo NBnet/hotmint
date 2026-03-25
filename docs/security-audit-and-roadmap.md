@@ -654,7 +654,7 @@ Parity's (Polkadot) **Substrate FRAME Pallets** represent the industry's most co
 | `DispatchError` / `#[pallet::error]` | `ruc::Result<()>` | Unified `ruc` chained error handling |
 | `#[pallet::event]` | `hotmint_types::ReceiptLog` | Events become block execution receipt logs |
 | `sp_runtime::traits::Currency` | Plain `std` Rust trait | Keep core abstractions, remove `no_std`/SCALE bindings |
-| SCALE Codec (`Encode`/`Decode`) | `serde` (CBOR/JSON) | Web-friendly standard serialization |
+| SCALE Codec (`Encode`/`Decode`) | `serde` (postcard/JSON) | Web-friendly standard serialization |
 | `no_std` environment | `std` environment | Hotmint runs natively as an OS process, no Wasm boundary |
 | `ensure_root` / `ensure_signed` | Transaction signer public key verification | Permission modifiers map to cryptographic identity checks |
 

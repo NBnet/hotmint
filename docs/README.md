@@ -17,6 +17,5 @@ Comprehensive documentation for the Hotmint BFT consensus framework.
 | [Networking](networking.md) | `NetworkSink` trait, in-memory channels, litep2p P2P |
 | [Mempool & API](mempool-api.md) | Transaction mempool and JSON-RPC server |
 | [Metrics](metrics.md) | Prometheus metrics and observability |
-| [Benchmarks](benchmarks.md) | Performance benchmarks and results |
-| [Wire Protocol](wire-protocol.md) | Codec framing, CBOR format, ABCI IPC protocol, block hash spec |
+| [Wire Protocol](wire-protocol.md) | Codec framing, postcard format, ABCI IPC protocol, block hash spec |
 | [Security Audit & Roadmap](security-audit-and-roadmap.md) | Security audit, CometBFT feature gap analysis, and evolution roadmap |

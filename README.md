@@ -192,27 +192,6 @@ cargo run --bin hotmint-node -- node
 
 ---
 
-## Benchmarks
-
-### Real-World WAN Cluster (4 nodes: macOS / Linux / FreeBSD, WiFi + Wired)
-
-| Mode | Throughput | Block Time |
-|:-----|:-----------|:-----------|
-| All embedded | ~2.1 blocks/sec | ~475 ms |
-| Mixed (embedded + Go ABCI + Rust ABCI) | ~1.4 blocks/sec | ~710 ms |
-
-### Local In-Process (Apple Silicon)
-
-| Workload | Throughput | Notes |
-|:---------|:-----------|:------|
-| Pure consensus | **~1,860 blocks/sec** | ~0.5 ms/block, 1KB payload |
-| EVM (10 revm transfers/block) | **~1,580 blocks/sec** | ~63K TX/sec |
-| IPC overhead | **~1,540 blocks/sec** | ~17% overhead vs direct calls |
-
-📖 **[Full benchmark report →](docs/benchmarks.md)**
-
----
-
 ## SDK & Tools
 
 | Component | Description |
@@ -286,7 +265,7 @@ Three deployment modes — all interoperable in the same cluster:
 | Hashing | [Blake3](https://crates.io/crates/blake3) | Community |
 | Networking | [litep2p](https://crates.io/crates/litep2p) (Polkadot ecosystem) | Community |
 | Async Runtime | [Tokio](https://crates.io/crates/tokio) | Community |
-| Serialization | [serde](https://crates.io/crates/serde) + [CBOR](https://crates.io/crates/serde_cbor_2) / [Protobuf](https://crates.io/crates/prost) | Community |
+| Serialization | [serde](https://crates.io/crates/serde) + [postcard](https://crates.io/crates/postcard) / [Protobuf](https://crates.io/crates/prost) | Community |
 | Metrics | [prometheus-client](https://crates.io/crates/prometheus-client) | Community |
 
 ---
@@ -306,8 +285,7 @@ Three deployment modes — all interoperable in the same cluster:
 | [Networking](docs/networking.md) | NetworkSink trait, litep2p P2P, PEX, block sync, dynamic peers |
 | [Mempool & API](docs/mempool-api.md) | Priority mempool, JSON-RPC (TCP + HTTP + WebSocket) |
 | [Metrics](docs/metrics.md) | Prometheus metrics, health interpretation, Grafana queries |
-| [Benchmarks](docs/benchmarks.md) | WAN cluster + local throughput benchmarks |
-| [Wire Protocol](docs/wire-protocol.md) | Codec framing, CBOR format, ABCI IPC protocol, block hash spec |
+| [Wire Protocol](docs/wire-protocol.md) | Codec framing, postcard format, ABCI IPC protocol, block hash spec |
 | [Security Audit & Roadmap](docs/security-audit-and-roadmap.md) | CometBFT gap analysis, security audit, evolution roadmap |
 
 ---
