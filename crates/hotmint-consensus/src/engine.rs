@@ -1009,6 +1009,7 @@ impl ConsensusEngine {
                             epoch: self.state.current_epoch.number,
                             epoch_start_view: self.state.current_epoch.start_view,
                             validator_set: &self.state.validator_set,
+                            vote_extensions: vec![],
                         };
                         self.app.extend_vote(&block, &ctx)
                     });
@@ -1056,7 +1057,8 @@ impl ConsensusEngine {
                     .c(d!())?;
                 self.handle_equivocation(&result);
                 if let Some(outer_qc) = result.qc {
-                    self.on_double_cert_formed(outer_qc).await;
+                    self.on_double_cert_formed(outer_qc, result.extensions)
+                        .await;
                 }
             }
 
@@ -1249,6 +1251,7 @@ impl ConsensusEngine {
                     epoch: self.state.current_epoch.number,
                     epoch_start_view: self.state.current_epoch.start_view,
                     validator_set: &self.state.validator_set,
+                    vote_extensions: vec![],
                 };
                 self.app.extend_vote(&block, &ctx)
             })
@@ -1285,7 +1288,8 @@ impl ConsensusEngine {
                 Ok(result) => {
                     self.handle_equivocation(&result);
                     if let Some(outer_qc) = result.qc {
-                        self.on_double_cert_formed(outer_qc).await;
+                        self.on_double_cert_formed(outer_qc, result.extensions)
+                            .await;
                     }
                 }
                 Err(e) => warn!(error = %e, "failed to add self vote2"),
@@ -1296,7 +1300,11 @@ impl ConsensusEngine {
         }
     }
 
-    async fn on_double_cert_formed(&mut self, outer_qc: QuorumCertificate) {
+    async fn on_double_cert_formed(
+        &mut self,
+        outer_qc: QuorumCertificate,
+        extensions: Vec<(ValidatorId, Vec<u8>)>,
+    ) {
         // Use the QC we explicitly saved from this view's first voting round
         let inner_qc = match self.current_view_qc.take() {
             Some(qc) if qc.block_hash == outer_qc.block_hash => qc,
@@ -1318,7 +1326,11 @@ impl ConsensusEngine {
             }
         };
 
-        let dc = DoubleCertificate { inner_qc, outer_qc };
+        let dc = DoubleCertificate {
+            inner_qc,
+            outer_qc,
+            vote_extensions: extensions,
+        };
 
         info!(
             validator = %self.state.validator_id,
@@ -1543,6 +1555,13 @@ impl ConsensusEngine {
 
         // Reset backoff on successful progress (DoubleCert path)
         let is_progress = matches!(&trigger, ViewEntryTrigger::DoubleCert(_));
+
+        // Capture vote extensions from DoubleCertificate for the next create_payload.
+        if let ViewEntryTrigger::DoubleCert(ref dc) = trigger {
+            self.state.pending_vote_extensions = dc.vote_extensions.clone();
+        } else {
+            self.state.pending_vote_extensions.clear();
+        }
 
         self.vote_collector.clear_view(self.state.current_view);
         self.vote_collector.prune_before(self.state.current_view);

@@ -146,6 +146,7 @@ pub fn propose(
         epoch: state.current_epoch.number,
         epoch_start_view: state.current_epoch.start_view,
         validator_set: &state.validator_set,
+        vote_extensions: std::mem::take(&mut state.pending_vote_extensions),
     };
 
     let payload = app.create_payload(&ctx);
@@ -321,6 +322,7 @@ pub fn on_proposal(
         epoch: state.current_epoch.number,
         epoch_start_view: state.current_epoch.start_view,
         validator_set: &state.validator_set,
+        vote_extensions: vec![],
     };
 
     if !app.validate_block(&block, &ctx) {

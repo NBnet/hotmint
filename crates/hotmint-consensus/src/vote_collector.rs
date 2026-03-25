@@ -15,6 +15,8 @@ pub struct VoteResult {
     pub qc: Option<QuorumCertificate>,
     /// Equivocation detected (same validator, same view+type, different block)
     pub equivocation: Option<EquivocationProof>,
+    /// Collected vote extensions from Vote2 messages when a QC is formed.
+    pub extensions: Vec<(hotmint_types::ValidatorId, Vec<u8>)>,
 }
 
 /// Collects votes and forms QCs when quorum is reached
@@ -75,24 +77,41 @@ impl VoteCollector {
             return Ok(VoteResult {
                 qc: None,
                 equivocation,
+                extensions: vec![],
             });
         }
 
         votes.push(vote);
 
         let agg = aggregate_votes(vs, votes).c(d!())?;
-        let qc = if has_quorum(vs, &agg) {
-            Some(QuorumCertificate {
-                block_hash: key.1,
-                view: key.0,
-                aggregate_signature: agg,
-                epoch,
-            })
+        let (qc, extensions) = if has_quorum(vs, &agg) {
+            // Collect extensions from Vote2 messages.
+            let exts: Vec<(hotmint_types::ValidatorId, Vec<u8>)> = votes
+                .iter()
+                .filter_map(|v| {
+                    v.extension
+                        .as_ref()
+                        .map(|ext| (v.validator, ext.clone()))
+                })
+                .collect();
+            (
+                Some(QuorumCertificate {
+                    block_hash: key.1,
+                    view: key.0,
+                    aggregate_signature: agg,
+                    epoch,
+                }),
+                exts,
+            )
         } else {
-            None
+            (None, vec![])
         };
 
-        Ok(VoteResult { qc, equivocation })
+        Ok(VoteResult {
+            qc,
+            equivocation,
+            extensions,
+        })
     }
 
     pub fn clear_view(&mut self, view: ViewNumber) {

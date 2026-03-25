@@ -155,6 +155,7 @@ impl From<pb::BlockContext> for OwnedBlockContext {
                 .validator_set
                 .map(ValidatorSet::from)
                 .unwrap_or_else(|| ValidatorSet::new(vec![])),
+            vote_extensions: vec![],
         }
     }
 }

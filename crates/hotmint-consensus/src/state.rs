@@ -42,6 +42,9 @@ pub struct ConsensusState {
     /// Included in the next proposed block for cross-node state divergence detection.
     pub last_app_hash: BlockHash,
     pub current_epoch: Epoch,
+    /// Vote extensions from the most recent DoubleCertificate's Vote2 round.
+    /// Set when a DC triggers a view advance; consumed by the next `create_payload`.
+    pub pending_vote_extensions: Vec<(ValidatorId, Vec<u8>)>,
 }
 
 impl ConsensusState {
@@ -69,6 +72,7 @@ impl ConsensusState {
             last_committed_height: Height::GENESIS,
             last_app_hash: BlockHash::GENESIS,
             current_epoch,
+            pending_vote_extensions: vec![],
         }
     }
 

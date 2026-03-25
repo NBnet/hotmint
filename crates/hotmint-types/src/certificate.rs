@@ -29,6 +29,11 @@ impl QuorumCertificate {
 pub struct DoubleCertificate {
     pub inner_qc: QuorumCertificate,
     pub outer_qc: QuorumCertificate,
+    /// Aggregated vote extensions from the Vote2 round.
+    /// Contains (validator_id, extension_bytes) for each validator that
+    /// provided an extension in their Vote2 message.
+    #[serde(default)]
+    pub vote_extensions: Vec<(crate::ValidatorId, Vec<u8>)>,
 }
 
 /// TC_v: timeout certificate — 2f+1 validators want to leave view v
