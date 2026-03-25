@@ -11,6 +11,7 @@ CRATES := \
 	hotmint-staking \
 	hotmint-network \
 	hotmint-storage \
+	hotmint-light \
 	hotmint-api \
 	hotmint
 
