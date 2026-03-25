@@ -16,6 +16,7 @@ fn make_block(payload_size: usize) -> Block {
         proposer: ValidatorId(0),
         payload: vec![0u8; payload_size],
         app_hash: BlockHash::GENESIS,
+        evidence: Vec::new(),
         hash: BlockHash::GENESIS,
     }
 }

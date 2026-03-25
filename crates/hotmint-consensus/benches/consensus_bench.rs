@@ -108,6 +108,7 @@ fn bench_block_store(c: &mut Criterion) {
             proposer: ValidatorId(0),
             payload: vec![0u8; 256],
             app_hash: BlockHash::GENESIS,
+            evidence: Vec::new(),
             hash,
         };
         parent = hash;

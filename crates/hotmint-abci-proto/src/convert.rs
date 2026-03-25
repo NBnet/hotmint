@@ -49,6 +49,7 @@ impl From<pb::Block> for Block {
             proposer: ValidatorId(b.proposer),
             payload: b.payload,
             app_hash: bytes_to_hash(&b.app_hash),
+            evidence: Vec::new(), // IPC blocks carry no evidence
             hash: bytes_to_hash(&b.hash),
         }
     }

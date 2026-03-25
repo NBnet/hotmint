@@ -22,6 +22,7 @@ mod tests {
             proposer: ValidatorId(0),
             payload: b"hello".to_vec(),
             app_hash: BlockHash::GENESIS,
+            evidence: Vec::new(),
             hash: BlockHash::GENESIS,
         };
         let h1 = compute_block_hash(&block);
@@ -39,6 +40,7 @@ mod tests {
             proposer: ValidatorId(0),
             payload: b"a".to_vec(),
             app_hash: BlockHash::GENESIS,
+            evidence: Vec::new(),
             hash: BlockHash::GENESIS,
         };
         let b2 = Block {
@@ -48,6 +50,7 @@ mod tests {
             proposer: ValidatorId(0),
             payload: b"b".to_vec(),
             app_hash: BlockHash::GENESIS,
+            evidence: Vec::new(),
             hash: BlockHash::GENESIS,
         };
         assert_ne!(compute_block_hash(&b1), compute_block_hash(&b2));
@@ -62,6 +65,7 @@ mod tests {
             proposer: ValidatorId(0),
             payload: b"hello".to_vec(),
             app_hash: BlockHash::GENESIS,
+            evidence: Vec::new(),
             hash: BlockHash::GENESIS,
         };
         assert_eq!(compute_block_hash(&block), block.compute_hash());

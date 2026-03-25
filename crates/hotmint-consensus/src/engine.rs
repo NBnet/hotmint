@@ -319,6 +319,13 @@ impl ConsensusEngine {
         &mut self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         Box::pin(async move {
+            // Collect pending evidence to embed in the block (C-3).
+            let pending_evidence = self
+                .evidence_store
+                .as_ref()
+                .map(|s| s.get_pending())
+                .unwrap_or_default();
+
             // Propose is synchronous; acquire, run, and release the lock before any await.
             let proposed_block = {
                 let mut store = self.store.write().await;
@@ -328,22 +335,12 @@ impl ConsensusEngine {
                     self.network.as_ref(),
                     self.app.as_ref(),
                     self.signer.as_ref(),
+                    pending_evidence,
                 )
             }; // lock released here
 
             match proposed_block {
                 Ok(block) => {
-                    // Log pending evidence (full block inclusion is a later step)
-                    if let Some(ref store) = self.evidence_store {
-                        let pending = store.get_pending();
-                        if !pending.is_empty() {
-                            info!(
-                                validator = %self.state.validator_id,
-                                count = pending.len(),
-                                "pending equivocation evidence available for inclusion"
-                            );
-                        }
-                    }
                     // Leader votes for its own block
                     self.leader_self_vote(block.hash).await;
                 }
@@ -1424,9 +1421,15 @@ impl ConsensusEngine {
                     }
                     s.flush();
                 }
-                // C-3: Mark evidence as committed for views included in committed blocks.
+                // C-3: Mark evidence as committed — both evidence whose view has
+                // been finalized AND evidence directly embedded in committed blocks.
                 if let Some(ref mut ev_store) = self.evidence_store {
                     for block in &result.committed_blocks {
+                        // Mark evidence embedded in this block as committed.
+                        for proof in &block.evidence {
+                            ev_store.mark_committed(proof.view, proof.validator);
+                        }
+                        // Also mark any pending evidence whose view is now finalized.
                         for proof in ev_store.get_pending() {
                             if proof.view <= block.view {
                                 ev_store.mark_committed(proof.view, proof.validator);

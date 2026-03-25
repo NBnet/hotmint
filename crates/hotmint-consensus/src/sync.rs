@@ -500,6 +500,7 @@ mod tests {
             proposer: ValidatorId(0),
             payload: vec![],
             app_hash: BlockHash::GENESIS,
+            evidence: Vec::new(),
             hash: BlockHash::GENESIS, // placeholder
         };
         block.hash = hotmint_crypto::compute_block_hash(&block);

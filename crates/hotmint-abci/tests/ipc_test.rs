@@ -84,6 +84,7 @@ fn make_block() -> Block {
         proposer: ValidatorId(0),
         payload: vec![1, 2, 3],
         app_hash: BlockHash::default(),
+        evidence: Vec::new(),
         hash: BlockHash::default(),
     }
 }

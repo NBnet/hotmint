@@ -105,6 +105,7 @@ fn rust_to_go_ipc() {
         proposer: ValidatorId(0),
         payload: vec![],
         app_hash: BlockHash::default(),
+        evidence: Vec::new(),
         hash: BlockHash::default(),
     };
     assert!(

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::evidence::EquivocationProof;
 use crate::validator::ValidatorId;
 use crate::view::ViewNumber;
 
@@ -64,6 +65,12 @@ pub struct Block {
     /// This ties the state transition chain to the block chain, allowing nodes
     /// to detect divergent application state before voting.
     pub app_hash: BlockHash,
+    /// Equivocation evidence collected by the proposer (C-3).
+    ///
+    /// The leader embeds any pending `EquivocationProof`s so they are committed
+    /// on-chain and can drive slashing logic deterministically.
+    #[serde(default)]
+    pub evidence: Vec<EquivocationProof>,
     pub hash: BlockHash,
 }
 
@@ -76,13 +83,14 @@ impl Block {
             proposer: ValidatorId::default(),
             payload: Vec::new(),
             app_hash: BlockHash::GENESIS,
+            evidence: Vec::new(),
             hash: BlockHash::GENESIS,
         }
     }
 
     /// Compute the Blake3 hash of this block's content and return it.
     ///
-    /// This hashes `height || parent_hash || view || proposer || app_hash || payload`
+    /// This hashes `height || parent_hash || view || proposer || app_hash || evidence || payload`
     /// (excluding the `hash` field itself).
     pub fn compute_hash(&self) -> BlockHash {
         let mut hasher = blake3::Hasher::new();
@@ -91,6 +99,11 @@ impl Block {
         hasher.update(&self.view.as_u64().to_le_bytes());
         hasher.update(&self.proposer.0.to_le_bytes());
         hasher.update(&self.app_hash.0);
+        // Include evidence in the block hash so it is tamper-proof (C-3).
+        for ev in &self.evidence {
+            hasher.update(&ev.validator.0.to_le_bytes());
+            hasher.update(&ev.view.as_u64().to_le_bytes());
+        }
         hasher.update(&self.payload);
         let hash = hasher.finalize();
         BlockHash(*hash.as_bytes())

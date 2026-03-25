@@ -9,6 +9,7 @@ use crate::store::BlockStore;
 use hotmint_crypto::hash::compute_block_hash;
 use hotmint_types::context::BlockContext;
 use hotmint_types::epoch::{Epoch, EpochNumber};
+use hotmint_types::evidence::EquivocationProof;
 use hotmint_types::vote::VoteType;
 use hotmint_types::*;
 use tracing::{debug, info, warn};
@@ -125,6 +126,7 @@ pub fn propose(
     network: &dyn NetworkSink,
     app: &dyn Application,
     signer: &dyn Signer,
+    evidence: Vec<EquivocationProof>,
 ) -> Result<Block> {
     let justify = state
         .highest_qc
@@ -148,6 +150,14 @@ pub fn propose(
 
     let payload = app.create_payload(&ctx);
 
+    if !evidence.is_empty() {
+        info!(
+            validator = %state.validator_id,
+            count = evidence.len(),
+            "embedding equivocation evidence in block"
+        );
+    }
+
     let mut block = Block {
         height,
         parent_hash,
@@ -155,6 +165,7 @@ pub fn propose(
         proposer: state.validator_id,
         payload,
         app_hash: state.last_app_hash,
+        evidence,
         hash: BlockHash::GENESIS, // placeholder
     };
     block.hash = compute_block_hash(&block);

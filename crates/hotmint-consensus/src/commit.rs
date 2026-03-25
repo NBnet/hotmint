@@ -135,6 +135,18 @@ pub fn try_commit(
             )
         });
 
+        // Process embedded evidence — notify the application layer for each
+        // proof so it can apply slashing deterministically (C-3).
+        for proof in &block.evidence {
+            if let Err(e) = app.on_evidence(proof) {
+                tracing::warn!(
+                    validator = %proof.validator,
+                    error = %e,
+                    "on_evidence failed for embedded proof"
+                );
+            }
+        }
+
         // When the application does not track state roots, carry the block's
         // authoritative app_hash forward so the engine state stays coherent
         // with the chain even when NoopApplication always returns GENESIS.
@@ -182,6 +194,7 @@ mod tests {
             proposer: ValidatorId(0),
             payload: vec![],
             app_hash: BlockHash::GENESIS,
+            evidence: Vec::new(),
             hash,
         }
     }
