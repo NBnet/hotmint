@@ -58,17 +58,16 @@ pub struct Block {
     pub parent_hash: BlockHash,
     pub view: ViewNumber,
     pub proposer: ValidatorId,
+    /// Unix timestamp in milliseconds, set by the proposer.
+    ///
+    /// Validators verify that `timestamp >= parent.timestamp` and that
+    /// it is within a reasonable drift window of the local clock.
+    #[serde(default)]
+    pub timestamp: u64,
     pub payload: Vec<u8>,
     /// Application state root after executing the **parent** block.
-    ///
-    /// Block N+1 carries the `app_hash` produced by `execute_block(Block N)`.
-    /// This ties the state transition chain to the block chain, allowing nodes
-    /// to detect divergent application state before voting.
     pub app_hash: BlockHash,
     /// Equivocation evidence collected by the proposer (C-3).
-    ///
-    /// The leader embeds any pending `EquivocationProof`s so they are committed
-    /// on-chain and can drive slashing logic deterministically.
     #[serde(default)]
     pub evidence: Vec<EquivocationProof>,
     pub hash: BlockHash,
@@ -81,6 +80,7 @@ impl Block {
             parent_hash: BlockHash::GENESIS,
             view: ViewNumber::GENESIS,
             proposer: ValidatorId::default(),
+            timestamp: 0,
             payload: Vec::new(),
             app_hash: BlockHash::GENESIS,
             evidence: Vec::new(),
@@ -89,17 +89,14 @@ impl Block {
     }
 
     /// Compute the Blake3 hash of this block's content and return it.
-    ///
-    /// This hashes `height || parent_hash || view || proposer || app_hash || evidence || payload`
-    /// (excluding the `hash` field itself).
     pub fn compute_hash(&self) -> BlockHash {
         let mut hasher = blake3::Hasher::new();
         hasher.update(&self.height.as_u64().to_le_bytes());
         hasher.update(&self.parent_hash.0);
         hasher.update(&self.view.as_u64().to_le_bytes());
         hasher.update(&self.proposer.0.to_le_bytes());
+        hasher.update(&self.timestamp.to_le_bytes());
         hasher.update(&self.app_hash.0);
-        // Include evidence in the block hash so it is tamper-proof (C-3).
         for ev in &self.evidence {
             hasher.update(&ev.validator.0.to_le_bytes());
             hasher.update(&ev.view.as_u64().to_le_bytes());

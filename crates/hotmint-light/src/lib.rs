@@ -19,6 +19,7 @@ pub struct BlockHeader {
     pub parent_hash: BlockHash,
     pub view: ViewNumber,
     pub proposer: ValidatorId,
+    pub timestamp: u64,
     pub app_hash: BlockHash,
     pub hash: BlockHash,
 }
@@ -30,6 +31,7 @@ impl From<&Block> for BlockHeader {
             parent_hash: block.parent_hash,
             view: block.view,
             proposer: block.proposer,
+            timestamp: block.timestamp,
             app_hash: block.app_hash,
             hash: block.hash,
         }
@@ -152,6 +154,7 @@ mod tests {
             parent_hash: BlockHash::GENESIS,
             view: ViewNumber(height),
             proposer: ValidatorId(0),
+            timestamp: 0,
             app_hash: BlockHash::GENESIS,
             hash,
         }

@@ -9,6 +9,7 @@ message Block {
   bytes parent_hash = 2;      // 32 bytes
   uint64 view = 3;
   uint64 proposer = 4;
+  uint64 timestamp = 8;        // unix millis, set by proposer
   bytes payload = 5;
   bytes hash = 6;             // 32 bytes
   bytes app_hash = 7;         // 32 bytes, state root after executing parent block

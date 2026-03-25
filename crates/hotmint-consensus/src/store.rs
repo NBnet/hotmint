@@ -165,6 +165,7 @@ mod tests {
             parent_hash: parent,
             view: ViewNumber(height),
             proposer: ValidatorId(0),
+            timestamp: 0,
             payload: vec![],
             app_hash: BlockHash::GENESIS,
             evidence: Vec::new(),

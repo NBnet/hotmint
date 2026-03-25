@@ -27,6 +27,7 @@ type Block struct {
 	ParentHash    []byte                 `protobuf:"bytes,2,opt,name=parent_hash,json=parentHash,proto3" json:"parent_hash,omitempty"` // 32 bytes
 	View          uint64                 `protobuf:"varint,3,opt,name=view,proto3" json:"view,omitempty"`
 	Proposer      uint64                 `protobuf:"varint,4,opt,name=proposer,proto3" json:"proposer,omitempty"`
+	Timestamp     uint64                 `protobuf:"varint,8,opt,name=timestamp,proto3" json:"timestamp,omitempty"` // unix millis, set by proposer
 	Payload       []byte                 `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
 	Hash          []byte                 `protobuf:"bytes,6,opt,name=hash,proto3" json:"hash,omitempty"`                      // 32 bytes
 	AppHash       []byte                 `protobuf:"bytes,7,opt,name=app_hash,json=appHash,proto3" json:"app_hash,omitempty"` // 32 bytes, state root after executing parent block
@@ -88,6 +89,13 @@ func (x *Block) GetView() uint64 {
 func (x *Block) GetProposer() uint64 {
 	if x != nil {
 		return x.Proposer
+	}
+	return 0
+}
+
+func (x *Block) GetTimestamp() uint64 {
+	if x != nil {
+		return x.Timestamp
 	}
 	return 0
 }
@@ -1605,13 +1613,14 @@ var File_proto_abci_proto protoreflect.FileDescriptor
 
 const file_proto_abci_proto_rawDesc = "" +
 	"\n" +
-	"\x10proto/abci.proto\x12\fhotmint.abci\"\xb9\x01\n" +
+	"\x10proto/abci.proto\x12\fhotmint.abci\"\xd7\x01\n" +
 	"\x05Block\x12\x16\n" +
 	"\x06height\x18\x01 \x01(\x04R\x06height\x12\x1f\n" +
 	"\vparent_hash\x18\x02 \x01(\fR\n" +
 	"parentHash\x12\x12\n" +
 	"\x04view\x18\x03 \x01(\x04R\x04view\x12\x1a\n" +
-	"\bproposer\x18\x04 \x01(\x04R\bproposer\x12\x18\n" +
+	"\bproposer\x18\x04 \x01(\x04R\bproposer\x12\x1c\n" +
+	"\ttimestamp\x18\b \x01(\x04R\ttimestamp\x12\x18\n" +
 	"\apayload\x18\x05 \x01(\fR\apayload\x12\x12\n" +
 	"\x04hash\x18\x06 \x01(\fR\x04hash\x12\x19\n" +
 	"\bapp_hash\x18\a \x01(\fR\aappHash\"9\n" +

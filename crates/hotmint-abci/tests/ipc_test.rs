@@ -82,6 +82,7 @@ fn make_block() -> Block {
         parent_hash: BlockHash::default(),
         view: ViewNumber(0),
         proposer: ValidatorId(0),
+        timestamp: 0,
         payload: vec![1, 2, 3],
         app_hash: BlockHash::default(),
         evidence: Vec::new(),

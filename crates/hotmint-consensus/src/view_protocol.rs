@@ -158,11 +158,18 @@ pub fn propose(
         );
     }
 
+    // BFT Time: proposer sets current Unix timestamp in milliseconds.
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
     let mut block = Block {
         height,
         parent_hash,
         view: state.current_view,
         proposer: state.validator_id,
+        timestamp,
         payload,
         app_hash: state.last_app_hash,
         evidence,
@@ -277,6 +284,34 @@ pub fn on_proposal(
             block.parent_hash,
             justify.block_hash
         ));
+    }
+
+    // BFT Time: verify the block timestamp is monotonically non-decreasing
+    // and within a reasonable drift window of the local clock.
+    if block.timestamp > 0 {
+        // Check monotonicity against parent block (if available).
+        if let Some(parent) = store.get_block(&block.parent_hash) {
+            if block.timestamp < parent.timestamp {
+                return Err(eg!(
+                    "block timestamp {} < parent timestamp {}",
+                    block.timestamp,
+                    parent.timestamp
+                ));
+            }
+        }
+        // Allow up to 15 seconds of clock drift into the future.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        const MAX_FUTURE_DRIFT_MS: u64 = 15_000;
+        if block.timestamp > now_ms + MAX_FUTURE_DRIFT_MS {
+            return Err(eg!(
+                "block timestamp {} is too far in the future (local: {})",
+                block.timestamp,
+                now_ms
+            ));
+        }
     }
 
     let ctx = BlockContext {

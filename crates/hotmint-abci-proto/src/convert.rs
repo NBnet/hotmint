@@ -19,6 +19,7 @@ impl From<&Block> for pb::Block {
             parent_hash: b.parent_hash.0.to_vec(),
             view: b.view.0,
             proposer: b.proposer.0,
+            timestamp: b.timestamp,
             payload: b.payload.clone(),
             hash: b.hash.0.to_vec(),
             app_hash: b.app_hash.0.to_vec(),
@@ -33,6 +34,7 @@ impl From<Block> for pb::Block {
             parent_hash: b.parent_hash.0.to_vec(),
             view: b.view.0,
             proposer: b.proposer.0,
+            timestamp: b.timestamp,
             payload: b.payload,
             hash: b.hash.0.to_vec(),
             app_hash: b.app_hash.0.to_vec(),
@@ -47,6 +49,7 @@ impl From<pb::Block> for Block {
             parent_hash: bytes_to_hash(&b.parent_hash),
             view: ViewNumber(b.view),
             proposer: ValidatorId(b.proposer),
+            timestamp: b.timestamp,
             payload: b.payload,
             app_hash: bytes_to_hash(&b.app_hash),
             evidence: Vec::new(), // IPC blocks carry no evidence

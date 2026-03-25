@@ -103,6 +103,7 @@ fn rust_to_go_ipc() {
         parent_hash: BlockHash::default(),
         view: ViewNumber(0),
         proposer: ValidatorId(0),
+        timestamp: 0,
         payload: vec![],
         app_hash: BlockHash::default(),
         evidence: Vec::new(),
