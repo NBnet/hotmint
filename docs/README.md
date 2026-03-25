@@ -18,4 +18,4 @@ Comprehensive documentation for the Hotmint BFT consensus framework.
 | [Mempool & API](mempool-api.md) | Transaction mempool and JSON-RPC server |
 | [Metrics](metrics.md) | Prometheus metrics and observability |
 | [Benchmarks](benchmarks.md) | Performance benchmarks and results |
-| [CometBFT Comparison](cometbft-comparison.md) | Feature gap analysis vs CometBFT v0.38 and evolution roadmap |
+| [Security Audit & Roadmap](security-audit-and-roadmap.md) | Security audit, CometBFT feature gap analysis, and evolution roadmap |

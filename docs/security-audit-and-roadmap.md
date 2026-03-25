@@ -1,9 +1,9 @@
 # Hotmint 完整审查报告：安全漏洞、工程缺陷与演进路线图
 
 > **报告版本：** 基于 Hotmint v0.7 / CometBFT v0.38
-> **生成日期：** 2026-03-24
-> **来源：** CometBFT 特性差异分析 + 代码安全审计
-> **用途：** 作为长期演进路线图的参考基准，每次迭代后可对照更新完成状态（将 `[ ]` 改为 `[x]`）。
+> **生成日期：** 2026-03-24 | **最后审计：** 2026-03-25
+> **来源：** CometBFT 特性差异分析 + 两轮代码安全审计
+> **用途：** 作为长期演进路线图的参考基准，每次迭代后可对照更新完成状态（将 `[ ]` 改为 `[x]`，部分完成标记 `[~]`）。
 
 ---
 
@@ -462,6 +462,28 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 | P1-2 | 🟢 P1 | 加权提议者选举 | ✅ | — |
 | P2-1 | 🟢 P2 | 轻客户端验证协议 | ⚠️ | Merkle proof 输出、RPC 暴露验证接口 |
 | P2-2 | 🟢 P2 | ABCI++ Vote Extensions | ✅ | DC 聚合 extension、next-round payload 读取（可由应用层自行追踪） |
+| R-1 | 🟢 低危 | RwLock 公平锁 RPC 拥塞 | 📋 | 无锁只读快照 / watch channel / parking_lot 迁移 |
+
+---
+
+## 15. 中长期改进建议（第二轮审计补充）
+
+以下条目来自第二轮代码深度复审，属于低危但影响长期吞吐量的架构改进方向。
+
+#### [ ] R-1. `tokio::sync::RwLock` 公平锁导致 RPC 高并发下共识写入排队 `[性能隐患]`
+
+**位置：** `crates/hotmint-api/src/rpc.rs`、`crates/hotmint-consensus/src/engine.rs`
+
+**问题：** 共识引擎和 RPC 层共享 `Arc<tokio::sync::RwLock<Box<dyn BlockStore>>>`。`tokio::sync::RwLock` 是公平锁——当写入者（共识引擎 `store.write().await`）排队时，新的读取者也会被阻塞。若 RPC 暴露给公网并遭遇突发高频 `get_block` / `get_commit_qc` 请求，大量并发读锁会使共识引擎的 `put_block` 写入被迫排队，轻微拖慢出块确认速度。
+
+**当前缓解：** 所有锁持有期间均无 `.await` 点（纯同步 HashMap 操作，微秒级），实际竞争概率极低。`try_propose` 中写锁已被限定在最小作用域内（block scope 内释放后才 `.await`）。
+
+**建议优化路径（中长期）：**
+- **方案 A：** 为 RPC 端提供基于 VSDB 底层特性的无锁只读快照句柄（Snapshot），使 RPC 查询彻底与共识写入解耦
+- **方案 B：** 将最新高度的块信息（Header、高度）放入 `Arc<tokio::sync::watch::Sender>` 中，基础状态 RPC 查询零锁竞争
+- **方案 C：** 迁移至 `parking_lot::RwLock`（guard 为 `Send`，支持跨 `.await`），或 `dashmap` 等无锁并发结构
+
+**风险等级：** 🟢 低危 — 仅在超大规模并发 RPC（数千 QPS）场景下影响 TPS
 
 ---
 
