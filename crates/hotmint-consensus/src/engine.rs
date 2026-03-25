@@ -7,6 +7,7 @@ use crate::application::Application;
 use crate::commit::try_commit;
 use crate::evidence_store::EvidenceStore;
 use crate::leader;
+use crate::liveness::{LivenessTracker, OfflineEvidence};
 use crate::network::NetworkSink;
 use crate::pacemaker::{Pacemaker, PacemakerConfig};
 use crate::state::{ConsensusState, ViewStep};
@@ -55,6 +56,8 @@ pub struct ConsensusEngine {
     persistence: Option<Box<dyn StatePersistence>>,
     /// Optional evidence store for persisting equivocation proofs.
     evidence_store: Option<Box<dyn EvidenceStore>>,
+    /// Tracks per-validator liveness for offline slashing.
+    liveness_tracker: LivenessTracker,
 }
 
 /// Configuration for ConsensusEngine.
@@ -248,6 +251,7 @@ impl ConsensusEngine {
             pending_epoch: None,
             persistence: config.persistence,
             evidence_store: config.evidence_store,
+            liveness_tracker: LivenessTracker::new(),
         }
     }
 
@@ -1453,6 +1457,14 @@ impl ConsensusEngine {
                         }
                     }
                 }
+                // Liveness tracking: record which validators signed the commit QC.
+                // This is deterministic — all nodes process the same committed QC.
+                if !result.committed_blocks.is_empty() {
+                    self.liveness_tracker.record_commit(
+                        &self.state.validator_set,
+                        &result.commit_qc.aggregate_signature.signers,
+                    );
+                }
                 // C-7: Persist consensus state immediately after committing blocks so
                 // that a crash between apply_commit and the next advance_view does not
                 // lose the updated last_committed_height / app_hash / epoch.
@@ -1588,6 +1600,29 @@ impl ConsensusEngine {
                 validators = new_epoch.validator_set.validator_count(),
                 "epoch transition"
             );
+            // Report offline validators to the application before transitioning.
+            let offline = self.liveness_tracker.offline_validators();
+            if !offline.is_empty() {
+                let evidence: Vec<OfflineEvidence> = offline
+                    .iter()
+                    .map(|&(validator, missed, total)| OfflineEvidence {
+                        validator,
+                        missed_commits: missed,
+                        total_commits: total,
+                        evidence_height: self.state.last_committed_height,
+                    })
+                    .collect();
+                info!(
+                    offline_count = evidence.len(),
+                    epoch = %self.state.current_epoch.number,
+                    "reporting offline validators"
+                );
+                if let Err(e) = self.app.on_offline_validators(&evidence) {
+                    warn!(error = %e, "on_offline_validators callback failed");
+                }
+            }
+            self.liveness_tracker.reset();
+
             self.state.validator_set = new_epoch.validator_set.clone();
             self.state.current_epoch = new_epoch;
             // Notify network layer of the new validator set and epoch

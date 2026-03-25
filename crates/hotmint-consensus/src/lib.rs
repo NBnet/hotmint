@@ -4,6 +4,7 @@ pub mod engine;
 pub mod error;
 pub mod evidence_store;
 pub mod leader;
+pub mod liveness;
 pub mod metrics;
 pub mod network;
 pub mod pacemaker;

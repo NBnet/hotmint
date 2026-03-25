@@ -113,6 +113,18 @@ pub trait Application: Send + Sync {
         Ok(())
     }
 
+    /// Called at epoch boundaries with validators whose commit-QC sign rate
+    /// fell below the liveness threshold (>50% missed).
+    ///
+    /// The application can use this to apply downtime slashing.
+    /// Each entry contains `(validator_id, missed_commits, total_commits)`.
+    fn on_offline_validators(
+        &self,
+        _offline: &[crate::liveness::OfflineEvidence],
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// Generate a vote extension for the given block (ABCI++ Vote Extensions).
     /// Called before casting a Vote2 (second-phase vote).
     /// Returns None to skip extension (default behavior).
