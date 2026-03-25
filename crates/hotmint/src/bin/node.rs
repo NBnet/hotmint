@@ -422,13 +422,16 @@ async fn run_node(
     // Channel for tx gossip: RPC → network sink.
     let (tx_gossip_tx, mut tx_gossip_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4096);
 
+    // Channel for chain event broadcasting (WebSocket subscribers).
+    let (event_tx, _event_rx) = broadcast::channel::<ChainEvent>(256);
+
     let app: Arc<dyn Application> = Arc::new(AppWithStatus {
         inner: app_box,
         status_tx,
         vs_tx,
         epoch_tx,
         mempool: mempool.clone(),
-        event_tx: None, // set after HTTP server is created
+        event_tx: Some(event_tx),
     });
 
     // 11. Create RPC server
