@@ -112,8 +112,12 @@ pub async fn sync_to_tip(
             break;
         }
 
-        // Validate chain continuity and replay
-        replay_blocks(&blocks, state)?;
+        // Validate chain continuity and replay.
+        // Ignore the pending epoch return — across multiple sync batches,
+        // the next batch's replay will apply it when start_view is reached.
+        // After sync_to_tip finishes, the engine's regular epoch logic handles
+        // any remaining pending epoch via its PersistentConsensusState.
+        let _pending = replay_blocks(&blocks, state)?;
 
         info!(
             synced_to = state.last_committed_height.as_u64(),
@@ -264,10 +268,13 @@ pub async fn sync_via_snapshot(
 
 /// Replay a batch of blocks: store them and run the application lifecycle.
 /// Validates chain continuity (parent_hash linkage).
+/// Replay synced blocks and return any pending epoch that hasn't reached its
+/// `start_view` yet. The caller should store this as `pending_epoch` in the
+/// engine so the epoch transition fires at the correct view.
 pub fn replay_blocks(
     blocks: &[(Block, Option<hotmint_types::QuorumCertificate>)],
     state: &mut SyncState<'_>,
-) -> Result<()> {
+) -> Result<Option<Epoch>> {
     // H-7: Track pending epoch separately, matching the runtime's deferred
     // activation semantics. The new epoch only takes effect when we reach
     // its start_view, preventing validator set mismatches during replay.
@@ -443,13 +450,18 @@ pub fn replay_blocks(
         *state.last_committed_height = block.height;
     }
 
-    // Apply any pending epoch that was never reached during replay
-    // (the remaining blocks in the batch ended before start_view).
-    if let Some(ep) = pending_epoch {
-        *state.current_epoch = ep;
+    // If the pending epoch's start_view was reached by the last block, apply it.
+    // Otherwise, return it so the caller (engine) can defer activation correctly.
+    if let Some(ref ep) = pending_epoch {
+        if let Some((last_block, _)) = blocks.last() {
+            if last_block.view >= ep.start_view {
+                *state.current_epoch = pending_epoch.take().unwrap();
+            }
+        }
     }
 
-    Ok(())
+    // Return any still-pending epoch for the caller to handle.
+    Ok(pending_epoch)
 }
 
 #[cfg(test)]
