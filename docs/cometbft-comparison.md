@@ -220,13 +220,15 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 **风险等级：** 🔴 高危 — 可导致网络级活性失败（Liveness Failure）
 
+> **实现状态：✅ 基本完成。** 已在入站握手阶段检查 `peer_to_validator`，验证者即使超 `max_peers` 也不被拒。尚未实现：独立保留槽计数器、主动驱逐非验证者连接为验证者腾位。
+
 ---
 
-#### [x] C-2. FIFO Mempool DoS：垃圾交易阻断合法交易 `[安全漏洞 × 功能缺失]`
+#### [~] C-2. FIFO Mempool DoS：垃圾交易阻断合法交易 `[安全漏洞 × 功能缺失]`
 
 **位置：** `crates/hotmint-mempool/src/lib.rs`、`crates/hotmint-api/src/rpc.rs`
 
-**问题 A（Spam DoS）：** Mempool 是无优先级的 FIFO 队列（默认上限 10,000 条），API 层无任何速率限制。攻击者可在瞬间向 RPC 接口提交 10,000 笔体积微小但满足 `validate_tx` 的无用交易，把队列塞满。后续合法交易全部被拒绝，实质上实现了针对链交易通道的 DoS 攻击。
+**问题 A（Spam DoS）：** Mempool 是无优先级的 FIFO 队列（默认上限 10,000 条），API 层无任何速率限制。攻击者可在瞬间向 RPC 接口提交 10,000 笔体积微小但满足 `validate_tx` 的无用交易，把队列塞满。后续合法交易全部被拒绝，实质上实现了针对链交易通道 DoS 攻击。
 
 **问题 B（DeFi 不可用）：** 无 Gas/Priority 排序意味着无法支持手续费竞价机制，DeFi 应用无法正常运行。
 
@@ -240,9 +242,11 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 **风险等级：** 🔴 高危 — 可实现链上交易通道 DoS
 
+> **实现状态：⚠️ 部分完成。** 已完成：BTreeSet 优先级队列 + RBF、`TxValidationResult { valid, priority }` 返回值、池满驱逐最低优先级、令牌桶限速（100 tx/sec per connection）。尚未实现：`gas_wanted` 字段、per-IP/PeerId 来源限额（当前限速仅 per-connection，攻击者可多连接绕过）、`collect_payload` 的 `max_gas_per_block` 截断。
+
 ---
 
-#### [x] C-3. 证据广播缺失：双签者可免于惩罚 `[安全漏洞 × 功能缺失]`
+#### [~] C-3. 证据广播缺失：双签者可免于惩罚 `[安全漏洞 × 功能缺失]`
 
 **位置：** `crates/hotmint-consensus/src/vote_collector.rs`、`crates/hotmint-consensus/src/engine.rs`（约第 991 行）
 
@@ -258,11 +262,13 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 **风险等级：** 🔴 高危 — 惩罚机制形同虚设，恶意验证者可无成本双签
 
+> **实现状态：⚠️ 部分完成。** 已完成：`ConsensusMessage::Evidence` 消息类型、`broadcast_evidence()` 通过现有 notification 协议广播（非独立协议）、`EvidenceStore` trait（put/get_pending/mark_committed/all）、`MemoryEvidenceStore` 内存实现、引擎检测到双签后立即广播+存储、收到 gossip 证据后存储并通知应用层。尚未实现：vsdb 持久化存储（当前仅内存，重启丢失）、Leader 打包证据进 Block（代码注释 "full block inclusion is a later step"）、`mark_committed` 从未被调用。
+
 ---
 
 ### 🟡 High — 工程安全（生产部署前应修复）
 
-#### [x] H-1. O(N) 签名验证 CPU DoS 风险 `[安全漏洞]`
+#### [x] H-1. O(N) 签名验证 CPU DoS 风险 `[安全漏洞]` ✅
 
 **位置：** `crates/hotmint-crypto/src/aggregate.rs`
 
@@ -276,9 +282,11 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 **风险等级：** 🟡 中危 — 在大型验证者集合（100+ 节点）下可触发 Liveness 失败
 
+> **实现状态：✅ 100% 完成。** 方案 B 全部落地：`verify_aggregate` 改用 `ed25519_dalek::verify_batch`（Bos-Coster 批验证）；`verify_message` / `validate_double_cert` / Wish QC 验证均包裹在 `tokio::task::block_in_place` 中；签名域绑定 epoch 防重放。
+
 ---
 
-#### [x] H-2. `pending_epoch` 强制解包 Panic 向量 `[工程缺陷]`
+#### [x] H-2. `pending_epoch` 强制解包 Panic 向量 `[工程缺陷]` ✅
 
 **位置：** `crates/hotmint-consensus/src/engine.rs`（Epoch 切换逻辑）
 
@@ -295,7 +303,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [x] H-3. zstd 压缩端 `unwrap()` Panic 向量 `[工程缺陷]`
+#### [x] H-3. zstd 压缩端 `unwrap()` Panic 向量 `[工程缺陷]` ✅
 
 **位置：** `crates/hotmint-network/src/codec.rs`
 
@@ -311,7 +319,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [x] H-4. ABCI IPC 通信无超时保护 `[工程缺陷]`
+#### [x] H-4. ABCI IPC 通信无超时保护 `[工程缺陷]` ✅
 
 **位置：** `crates/hotmint-abci/src/client.rs`
 
@@ -327,7 +335,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [x] H-5. 投票签名缺少 `epoch_number`，存在跨 Epoch 重放风险 `[安全隐患]`
+#### [x] H-5. 投票签名缺少 `epoch_number`，存在跨 Epoch 重放风险 `[安全隐患]` ✅
 
 **位置：** `crates/hotmint-types/src/vote.rs`（`signing_bytes` 方法）
 
@@ -346,7 +354,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ### 🟢 P0 — 功能演进：生产链必需
 
-#### [x] P0-1. 标准 HTTP/WebSocket RPC + 事件订阅 `[功能缺失]`
+#### [~] P0-1. 标准 HTTP/WebSocket RPC + 事件订阅 `[功能缺失]`
 
 **当前差距：** 原始 TCP 换行 JSON 协议对前端 dApp 不友好；无 WebSocket 事件订阅使 DApp 无法实时监听链上状态。
 
@@ -358,11 +366,13 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 **关键文件：** `crates/hotmint-api/src/rpc.rs`、`crates/hotmint-api/src/types.rs`
 
+> **实现状态：⚠️ 部分完成。** 已完成：axum HTTP `POST /` + WS `GET /ws`、`broadcast::Sender<ChainEvent>` 事件总线、`NewBlock` 事件实时推送、`get_header` / `get_commit_qc` RPC。尚未实现：`get_tx`（按 hash 查交易）、`get_block_results`、`subscribe` RPC（当前仅 WS 推所有事件，无过滤）、`TxCommitted` / `EpochChange` 事件类型。
+
 ---
 
 ### 🟢 P1 — 功能演进：网络健壮性
 
-#### [x] P1-1. 快照状态同步（State Sync via Snapshots） `[功能缺失]`
+#### [x] P1-1. 快照状态同步（State Sync via Snapshots） `[功能缺失]` ✅
 
 **当前差距：** 新节点必须从高度 0 全量重放，链运行数月后入网时间不可接受，是招募新验证者的障碍。
 
@@ -380,9 +390,11 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 
 **关键文件：** `crates/hotmint-consensus/src/application.rs`、`crates/hotmint-consensus/src/sync.rs`
 
+> **实现状态：✅ 100% 完成。** Application trait 4 个快照方法全部就位；P2P 消息 `SyncRequest::GetSnapshots` / `GetSnapshotChunk` 及对应 Response 已定义；`sync_via_snapshot()` 完整实现（请求快照列表→选最新→offer→逐块下载→apply→更新高度）。`state_sync` 配置标志可由应用层控制。
+
 ---
 
-#### [x] P1-2. 加权提议者选举（Weighted Proposer Selection） `[功能缺失]`
+#### [x] P1-2. 加权提议者选举（Weighted Proposer Selection） `[功能缺失]` ✅
 
 **当前差距：** `view % validator_count` 不考虑质押权重，对不均匀质押分布不公平。
 
@@ -397,7 +409,7 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 
 ### 🟢 P2 — 功能演进：生态扩展
 
-#### [x] P2-1. 轻客户端验证协议（Light Client Protocol） `[功能缺失]`
+#### [~] P2-1. 轻客户端验证协议（Light Client Protocol） `[功能缺失]`
 
 **当前差距：** 无法支持 IBC 跨链通讯，无法支持移动端钱包无信任验证。
 
@@ -408,6 +420,8 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 - 提供独立 `hotmint-light` crate 供第三方集成
 
 **关键文件：** `crates/hotmint-api/`、`crates/hotmint-types/src/certificate.rs`
+
+> **实现状态：⚠️ 部分完成。** 已完成：`hotmint-light` crate（`LightClient` + `verify_header` + `update_validator_set`，含 4 项单元测试）、RPC `get_header` / `get_commit_qc` 方法。尚未实现：Merkle proof 输出（`query` 返回值无 proof 字段）、轻客户端验证未通过 RPC 直接暴露。
 
 ---
 
@@ -427,25 +441,27 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 
 **关键文件：** `crates/hotmint-types/src/message.rs`、`crates/hotmint-consensus/src/view_protocol.rs`
 
+> **实现状态：✅ 基本完成。** 已完成：`Vote.extension: Option<Vec<u8>>` 字段、`extend_vote()` / `verify_vote_extension()` 应用回调（含默认 no-op）、引擎在 Vote2 创建前调用 `extend_vote`、收到 Vote2 时调用 `verify_vote_extension` 验证。尚未实现：DoubleCert 中显式聚合所有 extension、下一轮 `create_payload` 直接读取上轮 extension 集合（需应用层自行追踪）。
+
 ---
 
 ## 14. 全量优先级汇总表
 
-| ID | 类型 | 严重度 | 描述 | 关键文件 | 实现成本 |
-|----|------|--------|------|---------|---------|
-| C-1 | 安全漏洞 | 🔴 高危 | Eclipse 攻击：验证者连接槽无保护 | `hotmint-network/src/service.rs` | 中 |
-| C-2 | 安全漏洞 × 功能缺失 | 🔴 高危 | FIFO Mempool DoS + 无 API 速率限制 | `hotmint-mempool/src/lib.rs` | 中 |
-| C-3 | 安全漏洞 × 功能缺失 | 🔴 高危 | 证据广播缺失，双签者可逃脱惩罚 | `engine.rs`、`hotmint-network` | 中 |
-| H-1 | 安全漏洞 | 🟡 中危 | O(N) 签名验证 CPU DoS 风险 | `hotmint-crypto/src/aggregate.rs` | 高（BLS）/ 低（spawn_blocking）|
-| H-2 | 工程缺陷 | 🟡 中危 | `pending_epoch.unwrap()` Panic 向量 | `consensus/src/engine.rs` | 低 |
-| H-3 | 工程缺陷 | 🟡 中危 | zstd 压缩端 `unwrap()` Panic 向量 | `hotmint-network/src/codec.rs` | 低 |
-| H-4 | 工程缺陷 | 🟡 中危 | ABCI IPC 无读写超时，可致永久挂起 | `hotmint-abci/src/client.rs` | 低 |
-| H-5 | 安全隐患 | 🟡 低-中 | 签名缺 `epoch_number`，跨 Epoch 重放风险 | `hotmint-types/src/vote.rs` | 低 |
-| P0-1 | 功能缺失 | 🟢 P0 | 标准 HTTP/WS RPC + 事件订阅系统 | `hotmint-api/` | 中 |
-| P1-1 | 功能缺失 | 🟢 P1 | 快照状态同步（State Sync） | `application.rs`、`sync.rs` | 高 |
-| P1-2 | 功能缺失 | 🟢 P1 | 加权提议者选举 | `leader.rs`、`validator.rs` | 低 |
-| P2-1 | 功能缺失 | 🟢 P2 | 轻客户端验证协议 | `hotmint-api/`、`certificate.rs` | 中 |
-| P2-2 | 功能缺失 | 🟢 P2 | ABCI++ Vote Extensions | `message.rs`、`view_protocol.rs` | 高 |
+| ID | 严重度 | 描述 | 状态 | 缺失项 |
+|----|--------|------|:----:|--------|
+| C-1 | 🔴 高危 | Eclipse 攻击：验证者连接槽无保护 | ✅ | 独立保留槽计数、主动驱逐非验证者 |
+| C-2 | 🔴 高危 | FIFO Mempool DoS + 无 API 速率限制 | ⚠️ | `gas_wanted`、per-IP 来源限额、`max_gas_per_block` |
+| C-3 | 🔴 高危 | 证据广播缺失，双签者可逃脱惩罚 | ⚠️ | vsdb 持久化、证据打包上链、`mark_committed` |
+| H-1 | 🟡 中危 | O(N) 签名验证 CPU DoS 风险 | ✅ | — |
+| H-2 | 🟡 中危 | `pending_epoch.unwrap()` Panic 向量 | ✅ | — |
+| H-3 | 🟡 中危 | zstd 压缩端 `unwrap()` Panic 向量 | ✅ | — |
+| H-4 | 🟡 中危 | ABCI IPC 无读写超时，可致永久挂起 | ✅ | — |
+| H-5 | 🟡 低-中 | 签名缺 `epoch_number`，跨 Epoch 重放风险 | ✅ | — |
+| P0-1 | 🟢 P0 | 标准 HTTP/WS RPC + 事件订阅系统 | ⚠️ | `get_tx`、`get_block_results`、`subscribe` 过滤、更多事件类型 |
+| P1-1 | 🟢 P1 | 快照状态同步（State Sync） | ✅ | — |
+| P1-2 | 🟢 P1 | 加权提议者选举 | ✅ | — |
+| P2-1 | 🟢 P2 | 轻客户端验证协议 | ⚠️ | Merkle proof 输出、RPC 暴露验证接口 |
+| P2-2 | 🟢 P2 | ABCI++ Vote Extensions | ✅ | DC 聚合 extension、next-round payload 读取（可由应用层自行追踪） |
 
 ---
 
