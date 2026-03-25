@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::application::Application;
-use crate::commit::try_commit;
+use crate::commit::{CommitResult, try_commit};
 use crate::evidence_store::EvidenceStore;
 use crate::leader;
 use crate::liveness::{LivenessTracker, OfflineEvidence};
@@ -963,7 +963,7 @@ impl ConsensusEngine {
                     store.put_commit_qc(justified_block.height, justify.clone());
                 }
 
-                let maybe_pending = view_protocol::on_proposal(
+                let proposal_result = view_protocol::on_proposal(
                     &mut self.state,
                     view_protocol::ProposalData {
                         block,
@@ -978,7 +978,12 @@ impl ConsensusEngine {
                 .c(d!())?;
                 drop(store);
 
-                if let Some(epoch) = maybe_pending {
+                // Process fast-forward commit result (WAL, tx indexing,
+                // evidence marking, liveness tracking, persist_state).
+                if let Some(result) = proposal_result.commit_result {
+                    self.process_commit_result(&result);
+                }
+                if let Some(epoch) = proposal_result.pending_epoch {
                     self.pending_epoch = Some(epoch);
                 }
             }
@@ -1435,11 +1440,59 @@ impl ConsensusEngine {
         self.pacemaker.on_timeout();
     }
 
+    /// Post-commit processing: store commit QCs, index txs, mark evidence,
+    /// track liveness, persist state, and log WAL done.
+    /// Shared by both `apply_commit` (normal DC path) and the on_proposal
+    /// fast-forward path to ensure all commit side-effects happen consistently.
+    fn process_commit_result(&mut self, result: &CommitResult) {
+        if result.committed_blocks.is_empty() {
+            return;
+        }
+        {
+            let mut s = self.store.write();
+            for (i, block) in result.committed_blocks.iter().enumerate() {
+                if result.commit_qc.block_hash == block.hash {
+                    s.put_commit_qc(block.height, result.commit_qc.clone());
+                }
+                let txs = crate::commit::decode_payload(&block.payload);
+                for (tx_idx, tx) in txs.iter().enumerate() {
+                    let tx_hash = *blake3::hash(tx).as_bytes();
+                    s.put_tx_index(tx_hash, block.height, tx_idx as u32);
+                }
+                if let Some(resp) = result.block_responses.get(i) {
+                    s.put_block_results(block.height, resp.clone());
+                }
+            }
+            s.flush();
+        }
+        if let Some(ref mut ev_store) = self.evidence_store {
+            for block in &result.committed_blocks {
+                for proof in &block.evidence {
+                    ev_store.mark_committed(proof.view, proof.validator);
+                }
+                for proof in ev_store.get_pending() {
+                    if proof.view <= block.view {
+                        ev_store.mark_committed(proof.view, proof.validator);
+                    }
+                }
+            }
+        }
+        self.liveness_tracker.record_commit(
+            &self.state.validator_set,
+            &result.commit_qc.aggregate_signature.signers,
+        );
+        self.persist_state();
+        if let Some(ref mut wal) = self.wal {
+            if let Err(e) = wal.log_commit_done(self.state.last_committed_height) {
+                warn!(error = %e, "WAL: failed to log commit done");
+            }
+        }
+    }
+
     /// Apply the result of a successful try_commit: update app_hash, pending epoch,
     /// store commit QCs, and flush. Called from both normal and fast-forward commit paths.
     async fn apply_commit(&mut self, dc: &DoubleCertificate, context: &str) {
         // WAL: log commit intent before executing blocks.
-        // Look up the target block height from the store for the WAL entry.
         if let Some(ref mut wal) = self.wal {
             let target_height = {
                 let store = self.store.read();
@@ -1467,63 +1520,10 @@ impl ConsensusEngine {
                     self.state.last_app_hash = result.last_app_hash;
                 }
                 if result.pending_epoch.is_some() {
-                    self.pending_epoch = result.pending_epoch;
+                    self.pending_epoch = result.pending_epoch.clone();
                 }
                 drop(store);
-                {
-                    let mut s = self.store.write();
-                    for (i, block) in result.committed_blocks.iter().enumerate() {
-                        // R-28: only write the commit QC for the block it actually certifies.
-                        if result.commit_qc.block_hash == block.hash {
-                            s.put_commit_qc(block.height, result.commit_qc.clone());
-                        }
-                        // Index individual transactions by their blake3 hash.
-                        let txs = crate::commit::decode_payload(&block.payload);
-                        for (tx_idx, tx) in txs.iter().enumerate() {
-                            let tx_hash = *blake3::hash(tx).as_bytes();
-                            s.put_tx_index(tx_hash, block.height, tx_idx as u32);
-                        }
-                        // Store the EndBlockResponse for get_block_results RPC.
-                        if let Some(resp) = result.block_responses.get(i) {
-                            s.put_block_results(block.height, resp.clone());
-                        }
-                    }
-                    s.flush();
-                }
-                // C-3: Mark evidence as committed — both evidence whose view has
-                // been finalized AND evidence directly embedded in committed blocks.
-                if let Some(ref mut ev_store) = self.evidence_store {
-                    for block in &result.committed_blocks {
-                        // Mark evidence embedded in this block as committed.
-                        for proof in &block.evidence {
-                            ev_store.mark_committed(proof.view, proof.validator);
-                        }
-                        // Also mark any pending evidence whose view is now finalized.
-                        for proof in ev_store.get_pending() {
-                            if proof.view <= block.view {
-                                ev_store.mark_committed(proof.view, proof.validator);
-                            }
-                        }
-                    }
-                }
-                // Liveness tracking: record which validators signed the commit QC.
-                // This is deterministic — all nodes process the same committed QC.
-                if !result.committed_blocks.is_empty() {
-                    self.liveness_tracker.record_commit(
-                        &self.state.validator_set,
-                        &result.commit_qc.aggregate_signature.signers,
-                    );
-                }
-                // C-7: Persist consensus state immediately after committing blocks so
-                // that a crash between apply_commit and the next advance_view does not
-                // lose the updated last_committed_height / app_hash / epoch.
-                self.persist_state();
-                // WAL: mark commit as done.
-                if let Some(ref mut wal) = self.wal {
-                    if let Err(e) = wal.log_commit_done(self.state.last_committed_height) {
-                        warn!(error = %e, "WAL: failed to log commit done");
-                    }
-                }
+                self.process_commit_result(&result);
             }
             Err(e) => {
                 warn!(error = %e, "try_commit failed during {context}");

@@ -1,7 +1,7 @@
 use ruc::*;
 
 use crate::application::Application;
-use crate::commit::try_commit;
+use crate::commit::{CommitResult, try_commit};
 use crate::leader;
 use crate::network::NetworkSink;
 use crate::state::{ConsensusState, ViewRole, ViewStep};
@@ -216,6 +216,15 @@ pub struct ProposalData {
 
 /// Execute step (3): Replica receives proposal, validates, votes.
 /// Returns `Option<Epoch>` if fast-forward commit triggered an epoch change.
+/// Result of on_proposal that may include a fast-forward commit.
+pub struct ProposalResult {
+    /// Pending epoch from the fast-forward commit (if any).
+    pub pending_epoch: Option<Epoch>,
+    /// CommitResult from the fast-forward DC commit (if any).
+    /// The engine must process this for WAL, tx indexing, evidence marking, etc.
+    pub commit_result: Option<CommitResult>,
+}
+
 pub fn on_proposal(
     state: &mut ConsensusState,
     proposal: ProposalData,
@@ -223,7 +232,7 @@ pub fn on_proposal(
     network: &dyn NetworkSink,
     app: &dyn Application,
     signer: &dyn Signer,
-) -> Result<Option<Epoch>> {
+) -> Result<ProposalResult> {
     let ProposalData {
         block,
         justify,
@@ -235,7 +244,10 @@ pub fn on_proposal(
             step = ?state.step,
             "ignoring proposal, not waiting"
         );
-        return Ok(None);
+        return Ok(ProposalResult {
+            pending_epoch: None,
+            commit_result: None,
+        });
     }
 
     // Safety check: justify.rank() >= locked_qc.rank()
@@ -347,6 +359,7 @@ pub fn on_proposal(
     // for both the leader (who committed the parent independently) and replicas
     // (who commit the parent only via this DC).
     let mut pending_epoch = None;
+    let mut fast_forward_commit = None;
     if let Some(ref dc) = double_cert {
         match try_commit(
             dc,
@@ -359,7 +372,8 @@ pub fn on_proposal(
                 if !result.committed_blocks.is_empty() {
                     state.last_app_hash = result.last_app_hash;
                 }
-                pending_epoch = result.pending_epoch;
+                pending_epoch = result.pending_epoch.clone();
+                fast_forward_commit = Some(result);
             }
             Err(e) => {
                 return Err(eg!("try_commit failed during fast-forward: {}", e));
@@ -412,7 +426,10 @@ pub fn on_proposal(
     }
 
     state.step = ViewStep::Voted;
-    Ok(pending_epoch)
+    Ok(ProposalResult {
+        pending_epoch,
+        commit_result: fast_forward_commit,
+    })
 }
 
 /// Execute step (4): Leader collected 2f+1 votes → form QC → broadcast prepare
