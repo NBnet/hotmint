@@ -976,6 +976,9 @@ impl ConsensusEngine {
                 if vote.view != self.state.current_view {
                     return Ok(());
                 }
+                if vote.vote_type != VoteType::Vote2 {
+                    return Ok(());
+                }
 
                 // Verify vote extension (ABCI++ Vote Extensions) if present.
                 if let Some(ref ext) = vote.extension
