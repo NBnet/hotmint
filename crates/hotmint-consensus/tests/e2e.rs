@@ -18,7 +18,7 @@ use hotmint_consensus::application::Application;
 use hotmint_consensus::engine::{ConsensusEngine, EngineConfig};
 use hotmint_consensus::network::NetworkSink;
 use hotmint_consensus::state::ConsensusState;
-use hotmint_consensus::store::MemoryBlockStore;
+use hotmint_consensus::store::{BlockStore, MemoryBlockStore};
 use hotmint_crypto::{Ed25519Signer, Ed25519Verifier};
 use hotmint_types::context::BlockContext;
 use hotmint_types::evidence::EquivocationProof;
@@ -78,13 +78,30 @@ impl NetworkSink for DynamicNetwork {
 // Helper: spawn a single validator node
 // ---------------------------------------------------------------------------
 
+type SharedBlockStore = Arc<RwLock<Box<dyn hotmint_consensus::store::BlockStore>>>;
+
 fn spawn_node(
     vid: ValidatorId,
     signer: Ed25519Signer,
     validator_set: ValidatorSet,
     routing: &SharedRouting,
     app: impl Application + 'static,
-) -> (MsgSender, tokio::task::JoinHandle<()>) {
+) -> (MsgSender, SharedBlockStore, tokio::task::JoinHandle<()>) {
+    let store: SharedBlockStore = Arc::new(RwLock::new(
+        Box::new(MemoryBlockStore::new()) as Box<dyn hotmint_consensus::store::BlockStore>
+    ));
+    let state = ConsensusState::new(vid, validator_set);
+    spawn_node_with_state(state, store, signer, routing, app)
+}
+
+fn spawn_node_with_state(
+    state: ConsensusState,
+    store: SharedBlockStore,
+    signer: Ed25519Signer,
+    routing: &SharedRouting,
+    app: impl Application + 'static,
+) -> (MsgSender, SharedBlockStore, tokio::task::JoinHandle<()>) {
+    let vid = state.validator_id;
     let (tx, rx) = mpsc::channel(8192);
     routing.register(vid, tx.clone());
 
@@ -92,13 +109,9 @@ fn spawn_node(
         self_id: vid,
         routing: routing.clone(),
     };
-    let store = Arc::new(RwLock::new(
-        Box::new(MemoryBlockStore::new()) as Box<dyn hotmint_consensus::store::BlockStore>
-    ));
-    let state = ConsensusState::new(vid, validator_set);
     let engine = ConsensusEngine::new(
         state,
-        store,
+        store.clone(),
         Box::new(network),
         Box::new(app),
         Box::new(signer),
@@ -113,7 +126,7 @@ fn spawn_node(
     );
 
     let handle = tokio::spawn(async move { engine.run().await });
-    (tx, handle)
+    (tx, store, handle)
 }
 
 // ---------------------------------------------------------------------------
@@ -167,7 +180,7 @@ async fn test_basic_four_node_dynamic_network() {
         let commits = Arc::new(AtomicU64::new(0));
         counters.push(commits.clone());
         let app = CountingApp { commits };
-        let (_, h) = spawn_node(vid, signer, vs.clone(), &routing, app);
+        let (_, _, h) = spawn_node(vid, signer, vs.clone(), &routing, app);
         handles.push(h);
     }
 
@@ -246,6 +259,7 @@ async fn test_validator_join() {
     let join_observed = Arc::new(AtomicBool::new(false));
     let mut initial_commits: Vec<Arc<AtomicU64>> = Vec::new();
     let mut handles = Vec::new();
+    let mut stores: Vec<SharedBlockStore> = Vec::new();
 
     for signer in signers3 {
         let vid = signer.validator_id();
@@ -257,7 +271,8 @@ async fn test_validator_join() {
             new_validator: new_validator_update.clone(),
             join_observed: join_observed.clone(),
         };
-        let (_, h) = spawn_node(vid, signer, vs3.clone(), &routing, app);
+        let (_, store, h) = spawn_node(vid, signer, vs3.clone(), &routing, app);
+        stores.push(store);
         handles.push(h);
     }
 
@@ -270,7 +285,7 @@ async fn test_validator_join() {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 
-    // Wire up the 4th validator with the expanded set
+    // Build the expanded 4-validator set
     let new_vid = new_signer.validator_id();
     let mut vs4_validators = vs3.validators().to_vec();
     vs4_validators.push(ValidatorInfo {
@@ -280,11 +295,54 @@ async fn test_validator_join() {
     });
     let vs4 = ValidatorSet::new(vs4_validators);
 
+    // Simulate sync: copy committed blocks from an initial node into the
+    // joining validator's store and build the correct consensus state.
+    let ref_store = stores[0].read();
+    let mut new_store = MemoryBlockStore::new();
+    let mut last_committed = Height::GENESIS;
+    let mut commit_view = ViewNumber::GENESIS;
+
+    // Copy all committed blocks from the reference node
+    for h in 1u64.. {
+        let height = Height(h);
+        match ref_store.get_block_by_height(height) {
+            Some(block) => {
+                commit_view = block.view;
+                new_store.put_block(block);
+                if let Some(qc) = ref_store.get_commit_qc(height) {
+                    new_store.put_commit_qc(height, qc);
+                }
+                last_committed = height;
+            }
+            None => break,
+        }
+    }
+
+    // Read the highest commit QC to use as the joining node's highest_qc
+    let highest_qc = ref_store.get_commit_qc(last_committed);
+    drop(ref_store);
+
+    // The epoch transition starts at commit_view + 2 (deterministic rule from commit.rs)
+    let epoch_start_view = ViewNumber(commit_view.as_u64() + 2);
+    let new_epoch = Epoch::new(EpochNumber(1), epoch_start_view, vs4);
+
+    // Build consensus state as if sync_to_tip had run: the joining node starts
+    // at the new epoch with the committed height already applied.
+    let mut state = ConsensusState::new(new_vid, new_epoch.validator_set.clone());
+    state.current_epoch = new_epoch.clone();
+    state.last_committed_height = last_committed;
+    // Set current_view above 1 so engine.run() takes the resume path, not genesis
+    state.current_view = ViewNumber(epoch_start_view.as_u64());
+    state.highest_qc = highest_qc;
+
+    let shared_store: SharedBlockStore = Arc::new(RwLock::new(Box::new(new_store)));
+
     let new_commits = Arc::new(AtomicU64::new(0));
     let new_app = CountingApp {
         commits: new_commits.clone(),
     };
-    let (_, new_handle) = spawn_node(new_vid, new_signer, vs4, &routing, new_app);
+    let (_, _, new_handle) =
+        spawn_node_with_state(state, shared_store, new_signer, &routing, new_app);
     handles.push(new_handle);
 
     tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
@@ -368,7 +426,7 @@ async fn test_validator_leave() {
             validator_to_remove: to_remove,
             leave_observed: leave_observed.clone(),
         };
-        let (_, h) = spawn_node(vid, signer, vs.clone(), &routing, app);
+        let (_, _, h) = spawn_node(vid, signer, vs.clone(), &routing, app);
         handles.push(h);
     }
 
@@ -606,7 +664,7 @@ async fn test_epoch_transition_increments_correctly() {
             transition_at_height: 2,
             new_validator: new_validator.clone(),
         };
-        let (_, h) = spawn_node(vid, signer, vs.clone(), &routing, app);
+        let (_, _, h) = spawn_node(vid, signer, vs.clone(), &routing, app);
         handles.push(h);
     }
 
@@ -706,7 +764,7 @@ async fn test_multiple_consecutive_epoch_transitions() {
             epoch_transitions,
             dummy_key: dummy_key.clone(),
         };
-        let (_, h) = spawn_node(vid, signer, vs.clone(), &routing, app);
+        let (_, _, h) = spawn_node(vid, signer, vs.clone(), &routing, app);
         handles.push(h);
     }
 
@@ -756,7 +814,7 @@ async fn test_node_crash_does_not_halt_consensus() {
         let app = CountingApp {
             commits: counters.last().unwrap().clone(),
         };
-        let (_, h) = spawn_node(vid, signer, vs.clone(), &routing, app);
+        let (_, _, h) = spawn_node(vid, signer, vs.clone(), &routing, app);
         handles.push(h);
     }
 
@@ -845,7 +903,7 @@ async fn test_validator_set_shrinks_to_two_nodes() {
             commits,
             remove_observed: remove_observed.clone(),
         };
-        let (_, h) = spawn_node(vid, signer, vs.clone(), &routing, app);
+        let (_, _, h) = spawn_node(vid, signer, vs.clone(), &routing, app);
         handles.push(h);
     }
 
