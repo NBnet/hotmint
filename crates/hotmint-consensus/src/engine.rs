@@ -1363,6 +1363,10 @@ impl ConsensusEngine {
                     }
                     s.flush();
                 }
+                // C-7: Persist consensus state immediately after committing blocks so
+                // that a crash between apply_commit and the next advance_view does not
+                // lose the updated last_committed_height / app_hash / epoch.
+                self.persist_state();
             }
             Err(e) => {
                 warn!(error = %e, "try_commit failed during {context}");
