@@ -184,6 +184,8 @@ pub struct NetworkService {
     /// Dedup sets for mempool gossip (two-set rotation like relay dedup).
     mempool_seen_active: HashSet<[u8; 32]>,
     mempool_seen_backup: HashSet<[u8; 32]>,
+    /// Peers with open mempool notification substreams.
+    mempool_notif_connected_peers: HashSet<PeerId>,
 }
 
 /// Configuration for creating a [`NetworkService`].
@@ -357,6 +359,7 @@ impl NetworkService {
                 mempool_tx_tx,
                 mempool_seen_active: HashSet::new(),
                 mempool_seen_backup: HashSet::new(),
+                mempool_notif_connected_peers: HashSet::new(),
             },
             sink,
             msg_rx,
@@ -932,8 +935,8 @@ impl NetworkService {
     async fn handle_command(&mut self, cmd: NetCommand) {
         match cmd {
             NetCommand::Broadcast(bytes) => {
-                // Broadcast to all connected peers (validators + fullnodes).
-                for &peer in &self.connected_peers {
+                // Broadcast to peers with open notification substreams only.
+                for &peer in &self.notif_connected_peers {
                     let _ = self
                         .notif_handle
                         .send_sync_notification(peer, bytes.clone());
@@ -974,7 +977,7 @@ impl NetworkService {
                 self.handle_epoch_change(validators).await;
             }
             NetCommand::BroadcastTx(bytes) => {
-                for &peer in &self.connected_peers {
+                for &peer in &self.mempool_notif_connected_peers {
                     let _ = self
                         .mempool_notif_handle
                         .send_sync_notification(peer, bytes.clone());
@@ -992,9 +995,11 @@ impl NetworkService {
             }
             NotificationEvent::NotificationStreamOpened { peer, .. } => {
                 trace!(peer = %peer, "mempool notif stream opened");
+                self.mempool_notif_connected_peers.insert(peer);
             }
             NotificationEvent::NotificationStreamClosed { peer } => {
                 trace!(peer = %peer, "mempool notif stream closed");
+                self.mempool_notif_connected_peers.remove(&peer);
             }
             NotificationEvent::NotificationReceived {
                 peer: _,

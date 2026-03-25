@@ -39,6 +39,7 @@ clap = { workspace = true }
 toml = { workspace = true }
 dirs = { workspace = true }
 hex = { workspace = true }
+blake3 = { workspace = true }
 ed25519-dalek = { workspace = true }
 litep2p = { workspace = true }
 vsdb = { workspace = true }

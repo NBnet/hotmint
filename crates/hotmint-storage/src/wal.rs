@@ -50,11 +50,15 @@ impl ConsensusWal {
     /// Open or create the WAL file in the given data directory.
     pub fn open(data_dir: &Path) -> io::Result<Self> {
         let path = data_dir.join(WAL_FILE);
-        let file = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .create(true)
-            .append(true)
+            .write(true)
             .read(true)
             .open(&path)?;
+        // Seek to end so new entries append after any existing content.
+        // Unlike `.append(true)`, this allows truncate+seek(0) to work
+        // correctly — subsequent writes go to position 0, not the old EOF.
+        file.seek(io::SeekFrom::End(0))?;
         Ok(Self { path, file })
     }
 

@@ -919,6 +919,15 @@ impl Application for AppWithStatus {
                 proposer: block.proposer.0,
                 timestamp: block.timestamp,
             });
+            // Emit TxCommitted for each transaction in the block.
+            let txs = hotmint::consensus::commit::decode_payload(&block.payload);
+            for tx_bytes in &txs {
+                let tx_hash = hex::encode(blake3::hash(tx_bytes).as_bytes());
+                let _ = tx.send(ChainEvent::TxCommitted {
+                    tx_hash,
+                    height: block.height.as_u64(),
+                });
+            }
         }
         // Mempool re-validation: evict txs that are no longer valid after commit.
         let app = self.inner.as_ref();
