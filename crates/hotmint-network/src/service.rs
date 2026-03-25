@@ -200,10 +200,12 @@ impl NetworkService {
             initial_validators,
             chain_id_hash,
         } = config;
+        // H-6: Use chain_id_hash as handshake bytes for chain isolation.
+        // Peers on different chains will have mismatched handshakes and be rejected.
         let (notif_config, notif_handle) = NotifConfigBuilder::new(NOTIF_PROTOCOL.into())
             .with_max_size(MAX_NOTIFICATION_SIZE)
-            .with_handshake(vec![])
-            .with_auto_accept_inbound(true)
+            .with_handshake(chain_id_hash.to_vec())
+            .with_auto_accept_inbound(false)
             .with_sync_channel_size(1024)
             .with_async_channel_size(1024)
             .build();
@@ -407,9 +409,19 @@ impl NetworkService {
 
     async fn handle_notification_event(&mut self, event: NotificationEvent) {
         match event {
-            NotificationEvent::ValidateSubstream { peer, .. } => {
-                self.notif_handle
-                    .send_validation_result(peer, ValidationResult::Accept);
+            NotificationEvent::ValidateSubstream {
+                peer, handshake, ..
+            } => {
+                // H-6: Verify handshake carries our chain_id_hash.
+                // Reject peers on a different chain or with empty handshake.
+                if handshake.as_slice() == self.chain_id_hash.as_slice() {
+                    self.notif_handle
+                        .send_validation_result(peer, ValidationResult::Accept);
+                } else {
+                    warn!(peer = %peer, "rejecting peer: chain_id_hash handshake mismatch");
+                    self.notif_handle
+                        .send_validation_result(peer, ValidationResult::Reject);
+                }
             }
             NotificationEvent::NotificationStreamOpened { peer, .. } => {
                 info!(peer = %peer, "notification stream opened");
