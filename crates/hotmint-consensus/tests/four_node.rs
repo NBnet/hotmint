@@ -91,6 +91,7 @@ fn spawn_network(n: u64) -> (Vec<Arc<AtomicU64>>, Vec<tokio::task::JoinHandle<()
                 pacemaker: None,
                 persistence: None,
                 evidence_store: None,
+                wal: None,
             },
         );
 

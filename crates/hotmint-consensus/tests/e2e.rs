@@ -108,6 +108,7 @@ fn spawn_node(
             pacemaker: None,
             persistence: None,
             evidence_store: None,
+            wal: None,
         },
     );
 
@@ -520,6 +521,7 @@ async fn test_equivocation_detected_via_injected_votes() {
                 pacemaker: None,
                 persistence: None,
                 evidence_store: None,
+                wal: None,
             },
         );
         handles.push(tokio::spawn(async move { engine.run().await }));

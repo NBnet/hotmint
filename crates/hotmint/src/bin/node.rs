@@ -296,6 +296,24 @@ async fn run_node(
         state.last_app_hash = hash;
     }
 
+    // Check WAL for incomplete commits (crash recovery).
+    match hotmint_storage::wal::ConsensusWal::check_recovery(&data_dir) {
+        Ok(hotmint_storage::wal::WalRecovery::NeedsReplay { target_height }) => {
+            tracing::warn!(
+                target_height = target_height.as_u64(),
+                last_committed = state.last_committed_height.as_u64(),
+                "WAL: detected incomplete commit, node will re-sync missing blocks from peers"
+            );
+            // The blocks were partially executed but state was not persisted.
+            // On restart the node will re-sync from peers using the persisted
+            // last_committed_height, which effectively replays the missing blocks.
+        }
+        Ok(hotmint_storage::wal::WalRecovery::Clean) => {}
+        Err(e) => {
+            tracing::warn!(%e, "WAL: failed to check recovery status");
+        }
+    }
+
     // 7. Parse peers and create network
     let (peer_map, known_addresses) = if config.p2p.persistent_peers.is_empty() {
         (PeerMap::new(), vec![])
@@ -764,6 +782,10 @@ async fn run_node(
                         // Fallback: use the constructor that doesn't need a path
                         panic!("persistent evidence store required: {e}");
                     }),
+            )),
+            wal: Some(Box::new(
+                hotmint_storage::wal::ConsensusWal::open(&data_dir)
+                    .expect("failed to open consensus WAL"),
             )),
         },
     );

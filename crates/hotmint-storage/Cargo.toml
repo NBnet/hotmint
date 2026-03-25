@@ -11,7 +11,11 @@ keywords.workspace = true
 hotmint-types = { workspace = true }
 hotmint-consensus = { workspace = true }
 serde = { workspace = true }
+postcard = { workspace = true }
 ruc = { workspace = true }
 tracing = { workspace = true }
 vsdb = { workspace = true }
 blake3 = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

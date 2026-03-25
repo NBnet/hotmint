@@ -117,6 +117,7 @@ async fn ipc_consensus_e2e() {
                 pacemaker: None,
                 persistence: None,
                 evidence_store: None,
+                wal: None,
             },
         );
 

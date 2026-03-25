@@ -35,6 +35,14 @@ pub trait StatePersistence: Send {
     fn flush(&self);
 }
 
+/// Write-Ahead Log trait for commit crash recovery.
+pub trait Wal: Send {
+    /// Log intent to commit blocks up to `target_height`. Must fsync before returning.
+    fn log_commit_intent(&mut self, target_height: Height) -> std::io::Result<()>;
+    /// Log that commit succeeded. May truncate the WAL.
+    fn log_commit_done(&mut self, target_height: Height) -> std::io::Result<()>;
+}
+
 pub struct ConsensusEngine {
     state: ConsensusState,
     store: SharedBlockStore,
@@ -58,6 +66,8 @@ pub struct ConsensusEngine {
     evidence_store: Option<Box<dyn EvidenceStore>>,
     /// Tracks per-validator liveness for offline slashing.
     liveness_tracker: LivenessTracker,
+    /// Optional write-ahead log for commit crash recovery.
+    wal: Option<Box<dyn Wal>>,
 }
 
 /// Configuration for ConsensusEngine.
@@ -66,6 +76,7 @@ pub struct EngineConfig {
     pub pacemaker: Option<PacemakerConfig>,
     pub persistence: Option<Box<dyn StatePersistence>>,
     pub evidence_store: Option<Box<dyn EvidenceStore>>,
+    pub wal: Option<Box<dyn Wal>>,
 }
 
 impl EngineConfig {
@@ -77,6 +88,7 @@ impl EngineConfig {
             pacemaker: None,
             persistence: None,
             evidence_store: None,
+            wal: None,
         }
     }
 
@@ -119,6 +131,7 @@ pub struct ConsensusEngineBuilder {
     pacemaker: Option<PacemakerConfig>,
     persistence: Option<Box<dyn StatePersistence>>,
     evidence_store: Option<Box<dyn EvidenceStore>>,
+    wal: Option<Box<dyn Wal>>,
 }
 
 impl ConsensusEngineBuilder {
@@ -134,6 +147,7 @@ impl ConsensusEngineBuilder {
             pacemaker: None,
             persistence: None,
             evidence_store: None,
+            wal: None,
         }
     }
 
@@ -190,6 +204,11 @@ impl ConsensusEngineBuilder {
         self
     }
 
+    pub fn wal(mut self, wal: Box<dyn Wal>) -> Self {
+        self.wal = Some(wal);
+        self
+    }
+
     pub fn build(self) -> ruc::Result<ConsensusEngine> {
         let state = self.state.ok_or_else(|| ruc::eg!("state is required"))?;
         let store = self.store.ok_or_else(|| ruc::eg!("store is required"))?;
@@ -210,6 +229,7 @@ impl ConsensusEngineBuilder {
             pacemaker: self.pacemaker,
             persistence: self.persistence,
             evidence_store: self.evidence_store,
+            wal: self.wal,
         };
 
         Ok(ConsensusEngine::new(
@@ -252,6 +272,7 @@ impl ConsensusEngine {
             persistence: config.persistence,
             evidence_store: config.evidence_store,
             liveness_tracker: LivenessTracker::new(),
+            wal: config.wal,
         }
     }
 
@@ -1405,6 +1426,22 @@ impl ConsensusEngine {
     /// Apply the result of a successful try_commit: update app_hash, pending epoch,
     /// store commit QCs, and flush. Called from both normal and fast-forward commit paths.
     async fn apply_commit(&mut self, dc: &DoubleCertificate, context: &str) {
+        // WAL: log commit intent before executing blocks.
+        // Look up the target block height from the store for the WAL entry.
+        if let Some(ref mut wal) = self.wal {
+            let target_height = {
+                let store = self.store.read();
+                store
+                    .get_block(&dc.inner_qc.block_hash)
+                    .map(|b| b.height)
+            };
+            if let Some(h) = target_height {
+                if let Err(e) = wal.log_commit_intent(h) {
+                    warn!(error = %e, "WAL: failed to log commit intent");
+                }
+            }
+        }
+
         let store = self.store.read();
         match try_commit(
             dc,
@@ -1469,6 +1506,12 @@ impl ConsensusEngine {
                 // that a crash between apply_commit and the next advance_view does not
                 // lose the updated last_committed_height / app_hash / epoch.
                 self.persist_state();
+                // WAL: mark commit as done.
+                if let Some(ref mut wal) = self.wal {
+                    if let Err(e) = wal.log_commit_done(self.state.last_committed_height) {
+                        warn!(error = %e, "WAL: failed to log commit done");
+                    }
+                }
             }
             Err(e) => {
                 warn!(error = %e, "try_commit failed during {context}");
@@ -1738,6 +1781,7 @@ mod tests {
                 pacemaker: None,
                 persistence: None,
                 evidence_store: None,
+                wal: None,
             },
         );
         (engine, tx)

@@ -190,6 +190,7 @@ async fn run_bench(label: &str, base_timeout_ms: u64) {
                 }),
                 persistence: None,
                 evidence_store: None,
+                wal: None,
             },
         );
 

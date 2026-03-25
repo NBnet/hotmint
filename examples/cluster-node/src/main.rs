@@ -416,6 +416,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
             }),
             persistence: Some(Box::new(pcs)),
             evidence_store: None,
+            wal: None,
         },
     );
 

@@ -15,7 +15,7 @@ pub mod view_protocol;
 pub mod vote_collector;
 
 pub use engine::{
-    ConsensusEngine, ConsensusEngineBuilder, EngineConfig, SharedBlockStore, StatePersistence,
+    ConsensusEngine, ConsensusEngineBuilder, EngineConfig, SharedBlockStore, StatePersistence, Wal,
 };
 pub use evidence_store::EvidenceStore;
 pub use pacemaker::PacemakerConfig;
