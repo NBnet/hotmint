@@ -297,30 +297,30 @@ async fn test_validator_join() {
 
     // Simulate sync: copy committed blocks from an initial node into the
     // joining validator's store and build the correct consensus state.
-    let ref_store = stores[0].read();
-    let mut new_store = MemoryBlockStore::new();
-    let mut last_committed = Height::GENESIS;
-    let mut commit_view = ViewNumber::GENESIS;
+    let (new_store, last_committed, commit_view, highest_qc) = {
+        let ref_store = stores[0].read();
+        let mut store = MemoryBlockStore::new();
+        let mut committed = Height::GENESIS;
+        let mut cv = ViewNumber::GENESIS;
 
-    // Copy all committed blocks from the reference node
-    for h in 1u64.. {
-        let height = Height(h);
-        match ref_store.get_block_by_height(height) {
-            Some(block) => {
-                commit_view = block.view;
-                new_store.put_block(block);
-                if let Some(qc) = ref_store.get_commit_qc(height) {
-                    new_store.put_commit_qc(height, qc);
+        for h in 1u64.. {
+            let height = Height(h);
+            match ref_store.get_block_by_height(height) {
+                Some(block) => {
+                    cv = block.view;
+                    store.put_block(block);
+                    if let Some(qc) = ref_store.get_commit_qc(height) {
+                        store.put_commit_qc(height, qc);
+                    }
+                    committed = height;
                 }
-                last_committed = height;
+                None => break,
             }
-            None => break,
         }
-    }
 
-    // Read the highest commit QC to use as the joining node's highest_qc
-    let highest_qc = ref_store.get_commit_qc(last_committed);
-    drop(ref_store);
+        let hqc = ref_store.get_commit_qc(committed);
+        (store, committed, cv, hqc)
+    };
 
     // The epoch transition starts at commit_view + 2 (deterministic rule from commit.rs)
     let epoch_start_view = ViewNumber(commit_view.as_u64() + 2);
