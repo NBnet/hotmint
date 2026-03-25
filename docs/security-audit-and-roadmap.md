@@ -797,7 +797,7 @@ Post-completion Hotmint ecosystem position:
 - [CometBFT v0.38 Documentation](https://docs.cometbft.com/v0.38/introduction/)
 - [CometBFT ABCI++ Specification](https://docs.cometbft.com/v0.38/spec/abci/)
 - [HotStuff-2 Paper](https://arxiv.org/abs/2301.03253)
-- [Substrate FRAME Pallets Source](https://github.com/niccolocorsini/polkadot-sdk/tree/master/substrate/frame)
+- [Substrate FRAME Pallets Source](https://github.com/paritytech/polkadot-sdk/tree/master/substrate/frame)
 - [Hotmint Architecture](architecture.md)
 - [Hotmint Application Trait Guide](application.md)
 - [Hotmint Mempool & API](mempool-api.md)

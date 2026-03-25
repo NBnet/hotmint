@@ -4,48 +4,151 @@
 [![Rust](https://img.shields.io/badge/Rust-2024_edition-orange.svg)](https://www.rust-lang.org/)
 [![CI](https://github.com/rust-util-collections/hotmint/actions/workflows/ci.yml/badge.svg)](https://github.com/rust-util-collections/hotmint/actions/workflows/ci.yml)
 [![HotStuff-2](https://img.shields.io/badge/protocol-HotStuff--2-purple.svg)](https://arxiv.org/abs/2301.03253)
+[![crates.io](https://img.shields.io/crates/v/hotmint.svg)](https://crates.io/crates/hotmint)
 
-A Rust BFT consensus framework combining Tendermint's engineering ergonomics with HotStuff-2's protocol efficiency.
+**A next-generation BFT consensus framework** — built from scratch in Rust, combining Tendermint's battle-tested architecture with HotStuff-2's optimal two-chain commit protocol.
 
-## Design Goals
+Every critical layer — from the consensus state machine down to the on-disk LSM-Tree storage engine — is independently developed, giving the project **complete sovereignty over its entire technology stack**.
 
-Hotmint is a BFT consensus framework built from scratch. It retains the clean, modular architecture of Tendermint while adopting HotStuff-2's two-chain commit protocol for lower confirmation latency and simpler view-change mechanics.
+---
 
-**Core design philosophy:**
+## Origins & Motivation
 
-- **Protocol**: HotStuff-2 two-chain commit + simplified view change, replacing Tendermint's three-phase voting
-- **Architecture**: Tendermint-inspired modular design (consensus / network / application separation) with clean trait boundaries
-- **Storage**: [vsdb](https://crates.io/crates/vsdb) as the persistence backend, with Merkle proof support (MPT/SMT)
-- **Networking**: [litep2p](https://crates.io/crates/litep2p) as the P2P foundation, lighter weight than libp2p
-- **Error handling**: [ruc](https://crates.io/crates/ruc) chained error tracing
+### The Industry Baseline
+
+[CometBFT](https://github.com/cometbft/cometbft) (formerly Tendermint) has served as the backbone of the Cosmos ecosystem for years, proving the viability of BFT consensus for production blockchains. Its clean separation of consensus and application (ABCI) set the gold standard for developer ergonomics. However, years of evolution have surfaced fundamental limitations:
+
+- **Three-phase voting** (Propose → Pre-vote → Pre-commit) imposes an inherent extra round-trip on every block
+- **Go runtime** — garbage collection causes tail-latency jitter that is structurally impossible to eliminate in a latency-sensitive consensus protocol
+- **RocksDB dependency** — the storage layer relies on a massive C++ codebase, introducing cross-language build complexity, C memory safety risks, and limited control over the most critical data path
+- **Accumulated technical debt** — organic growth over many years makes deep architectural changes increasingly costly
+
+### The Breakthrough
+
+In 2023, Dahlia Malkhi and Ling Ren published [HotStuff-2](https://arxiv.org/abs/2301.03253), proving that **two-chain commit is sufficient for optimal BFT consensus** — achieving the same safety guarantees as Tendermint's three phases while eliminating an entire voting round. Confirmation latency drops, and view-change mechanics simplify dramatically: from complex Nil-vote collection to a linear Wish → TimeoutCert aggregation.
+
+### The Thesis
+
+Hotmint was born from the convergence of three insights:
+
+1. **HotStuff-2's two-chain commit** eliminates Tendermint's latency overhead while preserving its proven safety properties (f < n/3 Byzantine tolerance)
+2. **Rust's zero-cost abstractions** deliver C-level performance with compile-time memory safety — no GC pauses, no data races, no use-after-free
+3. **A fully self-developed storage stack** eliminates the RocksDB/LevelDB dependency entirely — pure Rust from the application API down to the LSM-Tree write path
+
+The result: a consensus framework where **every performance-critical path is written in safe Rust**, and the team has complete control from the consensus commit decision down to the on-disk byte layout.
+
+---
+
+## Vision
+
+Hotmint is not just a consensus engine. It is the foundation for a **next-generation full-stack blockchain framework**.
+
+### Phase 1 — Production-Ready AppChain Engine *(current)*
+
+A battle-hardened BFT consensus engine that any Rust developer can embed to build application-specific blockchains, with the same ABCI-style ergonomics that made Tendermint successful — but with lower latency, stronger type safety, and zero C/C++ dependencies in the critical path.
+
+### Phase 2 — EVM-Compatible Chain (Hotmint-EVM)
+
+Build a production-grade EVM-compatible chain by combining the best-in-class component for each layer:
+
+- **[revm](https://github.com/bluealloy/revm)** — the world's fastest EVM execution engine (adopted by Paradigm, OP Stack, Arbitrum)
+- **[alloy](https://github.com/alloy-rs)** — modern Ethereum primitives, RLP codec, and Web3 RPC types
+- **AI-ported [Substrate Pallets](https://github.com/niccolocorsini/polkadot-sdk/tree/master/substrate/frame)** — battle-tested economic models (staking, governance, multi-asset) ported into Hotmint's `std + vsdb + serde` environment
+
+This "hybrid architecture" assembles each ecosystem's strongest module, sidestepping any single ecosystem's historical baggage.
+
+### Phase 3 — Full-Stack Blockchain Framework
+
+The long-term goal is a **"hexagonal warrior" (六边形战士)** — a framework that excels across every dimension of blockchain infrastructure:
+
+| Dimension | Advantage |
+|:----------|:----------|
+| **Consensus** | HotStuff-2 — lower latency than Tendermint, simpler than PBFT |
+| **Execution** | revm — world's fastest EVM engine |
+| **Storage** | vsdb + mmdb — pure-Rust, zero C deps, Git-model versioning + Merkle proofs |
+| **Networking** | litep2p — lightweight, from Polkadot ecosystem |
+| **Business Logic** | AI-ported Substrate Pallets — type-safe Rust, audited by top security firms |
+| **Developer Experience** | ABCI-style trait API, Go SDK, cross-language IPC, cluster management tooling |
+
+> 📖 **[Full roadmap and security audit →](docs/security-audit-and-roadmap.md)**
+
+---
+
+## Full-Stack Self-Developed Core
+
+Unlike frameworks that aggregate third-party C/C++ components for their most critical paths, Hotmint's deepest layers are **independently developed** under the same organization ([rust-util-collections](https://github.com/rust-util-collections)):
+
+### 🔷 Consensus — Hotmint *(this project)*
+
+HotStuff-2 two-chain commit protocol, implemented from scratch. The consensus state machine has **zero I/O dependencies** — all storage, networking, and application logic is injected through four pluggable traits. Domain-separated signing (`chain_id_hash + epoch + view + block_hash`) prevents all cross-chain, cross-epoch, and cross-message replay attacks.
+
+### 🔷 Storage — [vsdb](https://github.com/rust-util-collections/vsdb) + [mmdb](https://github.com/rust-util-collections/mmdb)
+
+**[vsdb](https://crates.io/crates/vsdb)** (Version-controlled Storage Database) is a high-performance embedded key-value database with a standard-collections API:
+
+- `Mapx` / `MapxOrd` — persistent `HashMap` / `BTreeMap` replacements
+- `VerMap` — **Git-model versioning**: branching, commits, three-way merge, rollback, garbage collection over a COW B+ tree with structural sharing
+- `MptCalc` / `SmtCalc` — stateless **Merkle Patricia Trie** and **Sparse Merkle Tree** computation layers
+- `VerMapWithProof` — integrates `VerMap` with `MptCalc` for versioned 32-byte Merkle root commitments
+
+**[mmdb](https://github.com/rust-util-collections/mmdb)** is the storage engine underneath vsdb — a **pure-Rust LSM-Tree** that replaces RocksDB/LevelDB:
+
+- WAL with group commit and crash recovery
+- SST files with prefix compression, bloom filters, leveled compaction
+- MVCC snapshots, block cache (moka LRU), multi-threaded background compaction
+- Performance comparable to RocksDB in typical workloads; 250+ tests
+
+This gives Hotmint **100% control** over the entire data path — from the consensus commit decision down to the on-disk compaction strategy — with **zero C/C++ dependencies**.
+
+### 🔷 Error Handling — [ruc](https://github.com/rust-util-collections/ruc)
+
+Chained error tracing library, also independently developed. Provides rich error context propagation throughout the entire stack.
+
+---
 
 ## Protocol
 
 Hotmint implements the HotStuff-2 two-chain commit protocol ([arXiv:2301.03253](https://arxiv.org/abs/2301.03253)):
 
 ```
-Block  <──  QC (2f+1 votes)  <──  Double Cert (2f+1 votes on QC)  ──>  Commit
+Block  ←──  QC (2f+1 votes)  ←──  Double Cert (2f+1 votes on QC)  ──→  Commit
 ```
 
-Each view follows a 5-step protocol: Enter → Propose → Vote → Prepare (QC) → Vote2. A double certificate triggers commit of the block and all uncommitted ancestors. View changes use a timeout + wish + TC mechanism with exponential backoff.
+Each view follows a 5-step protocol:
+
+```
+Enter  →  Propose  →  Vote  →  Prepare (QC)  →  Vote2  →  [DC triggers Commit]
+```
+
+- **Safety**: Locking rule (`justify.rank ≥ locked_qc.rank`) prevents conflicting commits; double certificate commits the block and all uncommitted ancestors
+- **Liveness**: Timeout → Wish → TimeoutCert mechanism with exponential backoff (1.5×, capped at 30s)
+- **Epochs**: Validator set changes take effect at `commit_view + 2`, ensuring all honest nodes agree on the transition point
 
 📖 **[Full protocol specification →](docs/protocol.md)**
 
+---
+
 ## Architecture
 
-| Crate | Description | Version |
-|:------|:------------|:--------|
-| [hotmint](https://crates.io/crates/hotmint) | Library facade (re-exports everything) | [![crates.io](https://img.shields.io/crates/v/hotmint.svg)](https://crates.io/crates/hotmint) |
-| [hotmint-types](https://crates.io/crates/hotmint-types) | Core data types (Block, QC, Vote, ValidatorSet, ...) | [![crates.io](https://img.shields.io/crates/v/hotmint-types.svg)](https://crates.io/crates/hotmint-types) |
-| [hotmint-crypto](https://crates.io/crates/hotmint-crypto) | Ed25519 signing + Blake3 hashing | [![crates.io](https://img.shields.io/crates/v/hotmint-crypto.svg)](https://crates.io/crates/hotmint-crypto) |
-| [hotmint-consensus](https://crates.io/crates/hotmint-consensus) | Consensus state machine (engine, pacemaker, vote collector) | [![crates.io](https://img.shields.io/crates/v/hotmint-consensus.svg)](https://crates.io/crates/hotmint-consensus) |
-| [hotmint-abci](https://crates.io/crates/hotmint-abci) | IPC proxy for out-of-process applications (Unix socket) | [![crates.io](https://img.shields.io/crates/v/hotmint-abci.svg)](https://crates.io/crates/hotmint-abci) |
-| [hotmint-storage](https://crates.io/crates/hotmint-storage) | Persistent storage (vsdb) | [![crates.io](https://img.shields.io/crates/v/hotmint-storage.svg)](https://crates.io/crates/hotmint-storage) |
-| [hotmint-network](https://crates.io/crates/hotmint-network) | P2P networking (litep2p) | [![crates.io](https://img.shields.io/crates/v/hotmint-network.svg)](https://crates.io/crates/hotmint-network) |
-| [hotmint-mempool](https://crates.io/crates/hotmint-mempool) | Transaction mempool (FIFO, dedup) | [![crates.io](https://img.shields.io/crates/v/hotmint-mempool.svg)](https://crates.io/crates/hotmint-mempool) |
-| [hotmint-api](https://crates.io/crates/hotmint-api) | JSON-RPC server | [![crates.io](https://img.shields.io/crates/v/hotmint-api.svg)](https://crates.io/crates/hotmint-api) |
+### Workspace
 
-The consensus engine is decoupled from all I/O through four pluggable traits:
+| Crate | Description |
+|:------|:------------|
+| [hotmint](https://crates.io/crates/hotmint) | Library facade — re-exports all crates; includes `hotmint-node` binary |
+| [hotmint-types](https://crates.io/crates/hotmint-types) | Core data types: Block, QC, DC, TC, Vote, ValidatorSet, Epoch |
+| [hotmint-crypto](https://crates.io/crates/hotmint-crypto) | Ed25519 signing + batch verification, Blake3 hashing |
+| [hotmint-consensus](https://crates.io/crates/hotmint-consensus) | Consensus state machine: engine, pacemaker, vote collector, sync |
+| [hotmint-storage](https://crates.io/crates/hotmint-storage) | Persistent storage backends (vsdb) |
+| [hotmint-network](https://crates.io/crates/hotmint-network) | P2P networking (litep2p): 4 sub-protocols (consensus, reqresp, sync, PEX) |
+| [hotmint-mempool](https://crates.io/crates/hotmint-mempool) | Priority mempool with RBF, gas-aware selection, deduplication |
+| [hotmint-api](https://crates.io/crates/hotmint-api) | HTTP/WebSocket JSON-RPC + TCP JSON-RPC server |
+| [hotmint-abci](https://crates.io/crates/hotmint-abci) | IPC proxy for out-of-process apps (Unix socket + protobuf) |
+| [hotmint-staking](https://crates.io/crates/hotmint-staking) | Staking toolkit: validator registration, delegation, slashing, rewards |
+| [hotmint-light](https://crates.io/crates/hotmint-light) | Light client: header verification and validator set tracking |
+
+### Pluggable Traits
+
+The consensus engine is fully decoupled from all I/O through four pluggable traits:
 
 | Trait | Purpose | Built-in Implementations |
 |:------|:--------|:-------------------------|
@@ -54,32 +157,14 @@ The consensus engine is decoupled from all I/O through four pluggable traits:
 | `NetworkSink` | Message transport | `ChannelNetwork`, `Litep2pNetworkSink` |
 | `Signer` | Cryptographic signing | `Ed25519Signer` |
 
-📖 **[Architecture details →](docs/architecture.md)** · **[Core types reference →](docs/types.md)**
+📖 **[Architecture →](docs/architecture.md)** · **[Core types →](docs/types.md)** · **[Wire protocol →](docs/wire-protocol.md)**
 
-## Technology Stack
-
-| Component | Implementation |
-|:----------|:---------------|
-| Signatures | Ed25519 ([ed25519-dalek](https://crates.io/crates/ed25519-dalek)) |
-| Hashing | [Blake3](https://crates.io/crates/blake3) |
-| Storage | [vsdb](https://crates.io/crates/vsdb) MapxOrd |
-| Networking | [litep2p](https://crates.io/crates/litep2p) |
-| Async Runtime | [Tokio](https://crates.io/crates/tokio) |
-| Error Handling | [ruc](https://crates.io/crates/ruc) |
-| Serialization | [serde](https://crates.io/crates/serde) + [CBOR](https://crates.io/crates/serde_cbor_2) |
-| Metrics | [prometheus-client](https://crates.io/crates/prometheus-client) |
-
-## References
-
-| Paper | Link |
-|:------|:-----|
-| HotStuff-2: Optimal Two-Chain BFT (2023) | [arXiv:2301.03253](https://arxiv.org/abs/2301.03253) |
-| HotStuff: BFT Consensus (PODC 2019) | [arXiv:1803.05069](https://arxiv.org/abs/1803.05069) |
-| Tendermint: Latest Gossip on BFT (2018) | [arXiv:1807.04938](https://arxiv.org/abs/1807.04938) |
+---
 
 ## Quick Start
 
 ```bash
+# build and test
 cargo build --workspace && cargo test --workspace
 
 # run the 4-node in-process demo
@@ -92,26 +177,54 @@ cargo run --bin hotmint-node -- node
 
 📖 **[Getting started guide →](docs/getting-started.md)**
 
-## Documentation
+---
 
-| Guide | Description |
-|:------|:------------|
-| [Getting Started](docs/getting-started.md) | Installation, quick start, first integration |
-| [Protocol](docs/protocol.md) | HotStuff-2 two-chain commit, view protocol, pacemaker |
-| [Architecture](docs/architecture.md) | Module structure, dependency graph, design decisions |
-| [Application](docs/application.md) | `Application` trait guide with ABCI-like lifecycle |
-| [Consensus Engine](docs/consensus-engine.md) | Engine internals: state machine, event loop, vote collection |
-| [Core Types](docs/types.md) | Block, QC, DC, TC, Vote, ValidatorSet, wire protocol |
-| [Cryptography](docs/crypto.md) | Signer/Verifier traits, Ed25519, aggregate signatures |
-| [Storage](docs/storage.md) | BlockStore trait, vsdb persistence, crash recovery |
-| [Networking](docs/networking.md) | NetworkSink trait, in-memory channels, litep2p P2P |
-| [Mempool & API](docs/mempool-api.md) | Transaction mempool and JSON-RPC server |
-| [Metrics](docs/metrics.md) | Prometheus metrics and observability |
-| [Benchmarks](docs/benchmarks.md) | Performance benchmarks and results |
+## Examples
+
+| Example | Description | Run |
+|:--------|:------------|:----|
+| [demo](examples/demo) | Minimal 4-node in-process cluster with a counting app | `cargo run --bin hotmint-demo` |
+| [evm-chain](examples/evm-chain) | Complete EVM chain using **revm** + vsdb MPT state trie | `cargo run --bin hotmint-evm-chain` |
+| [utxo-chain](examples/utxo-chain) | Bitcoin-style UTXO chain with ed25519 sigs + SMT proofs | `cargo run --bin hotmint-utxo-chain` |
+| [cluster-node](examples/cluster-node) | Production-style P2P node with persistent storage, sync, PEX | `cargo run --bin hotmint-cluster-node` |
+| [bench-consensus](examples/bench-consensus) | Raw consensus throughput benchmark | `make bench-consensus` |
+| [bench-ipc](examples/bench-ipc) | ABCI IPC overhead benchmark (Unix socket + protobuf) | `make bench-ipc` |
+
+---
+
+## Benchmarks
+
+### Real-World WAN Cluster (4 nodes: macOS / Linux / FreeBSD, WiFi + Wired)
+
+| Mode | Throughput | Block Time |
+|:-----|:-----------|:-----------|
+| All embedded | ~2.1 blocks/sec | ~475 ms |
+| Mixed (embedded + Go ABCI + Rust ABCI) | ~1.4 blocks/sec | ~710 ms |
+
+### Local In-Process (Apple Silicon)
+
+| Workload | Throughput | Notes |
+|:---------|:-----------|:------|
+| Pure consensus | **~1,860 blocks/sec** | ~0.5 ms/block, 1KB payload |
+| EVM (10 revm transfers/block) | **~1,580 blocks/sec** | ~63K TX/sec |
+| IPC overhead | **~1,540 blocks/sec** | ~17% overhead vs direct calls |
+
+📖 **[Full benchmark report →](docs/benchmarks.md)**
+
+---
+
+## SDK & Tools
+
+| Component | Description |
+|:----------|:------------|
+| [Go SDK](sdk/go) | Out-of-process application framework for Go — `Application` interface + Unix socket IPC server |
+| [hotmint-mgmt](tools/hotmint-mgmt) | Cluster management CLI: `init` / `start` / `stop` / `deploy` / `logs` (local + remote SSH) |
+
+---
 
 ## Usage
 
-Add `hotmint` as a dependency in your `Cargo.toml`:
+Add `hotmint` as a dependency:
 
 ```toml
 [dependencies]
@@ -120,9 +233,7 @@ tokio = { version = "1", features = ["full"] }
 ruc = "9.3"
 ```
 
-### Implement the Application Trait
-
-All methods have default no-op implementations, so you only need to implement the ones your application cares about. The lifecycle is: `execute_block(txs, ctx)` → `on_commit(block, ctx)`. The `execute_block` method receives all decoded transactions at once as `&[&[u8]]` plus a `BlockContext` with height, view, proposer, epoch number, and the current validator set, and returns an `EndBlockResponse`.
+Implement the `Application` trait — all methods have default no-op implementations:
 
 ```rust
 use ruc::*;
@@ -132,300 +243,82 @@ use hotmint::consensus::application::Application;
 struct MyApp;
 
 impl Application for MyApp {
-    fn on_commit(&self, block: &Block, _ctx: &BlockContext) -> Result<()> {
-        println!("committed block at height {}", block.height.as_u64());
-        Ok(())
-    }
-}
-```
-
-All methods have default no-op implementations. Override the ones your application needs:
-
-```rust
-impl Application for MyApp {
-    fn create_payload(&self, _ctx: &BlockContext) -> Vec<u8> {
-        // called when this validator is the leader;
-        // return the block payload (e.g. serialized transactions)
-        vec![]
-    }
-
-    fn validate_block(&self, block: &Block, _ctx: &BlockContext) -> bool {
-        // validate a proposed block before voting
-        !block.payload.is_empty()
-    }
-
-    fn validate_tx(&self, tx: &[u8], _ctx: Option<&TxContext>) -> bool {
-        // validate an individual transaction (used by mempool)
-        tx.len() <= 1024
-    }
-
     fn execute_block(&self, txs: &[&[u8]], ctx: &BlockContext) -> Result<EndBlockResponse> {
-        // called once per committed block with all transactions at once
-        println!("execute block at height {} with {} txs", ctx.height.as_u64(), txs.len());
-        for tx in txs {
-            println!("  tx: {} bytes", tx.len());
-        }
+        println!("height {} — {} txs", ctx.height.as_u64(), txs.len());
         Ok(EndBlockResponse::default())
     }
 
     fn on_commit(&self, block: &Block, _ctx: &BlockContext) -> Result<()> {
-        println!("committed block at height {}", block.height.as_u64());
+        println!("committed height {}", block.height.as_u64());
         Ok(())
     }
-
-    fn query(&self, path: &str, _data: &[u8]) -> Result<Vec<u8>> {
-        match path {
-            "info" => Ok(b"my-app v0.1".to_vec()),
-            _ => Err(eg!("unknown query path")),
-        }
-    }
 }
 ```
 
-### Set Up Validators
+Build a cluster and run:
 
 ```rust
-use hotmint::prelude::*;
-use hotmint::crypto::Ed25519Signer;
-
-const NUM_VALIDATORS: u64 = 4;
-
-// generate keypairs
-let signers: Vec<Ed25519Signer> = (0..NUM_VALIDATORS)
-    .map(|i| Ed25519Signer::generate(ValidatorId(i)))
-    .collect();
-
-// build the validator set from public keys
-let validator_infos: Vec<ValidatorInfo> = signers
-    .iter()
-    .enumerate()
-    .map(|(i, s)| ValidatorInfo {
-        id: ValidatorId(i as u64),
-        public_key: Signer::public_key(s),
-        power: 1,
-    })
-    .collect();
-
-let validator_set = ValidatorSet::new(validator_infos);
-// quorum_threshold = ceil(2n/3), e.g. 3 out of 4
+// see examples/demo for the complete working code
+let engine = ConsensusEngine::new(state, store, network, app, signer, rx, config);
+tokio::spawn(async move { engine.run().await });
 ```
 
-### Run an In-Process Multi-Node Cluster
+Three deployment modes — all interoperable in the same cluster:
 
-Wire up all validators connected via in-memory channels — useful for testing and development:
+| Mode | Application Language | Communication |
+|:-----|:--------------------|:--------------|
+| **Embedded** | Rust (same process) | Direct trait calls |
+| **Go ABCI** | Go | Unix socket + protobuf |
+| **Rust ABCI** | Rust (separate process) | Unix socket + protobuf |
 
-```rust
-use std::collections::HashMap;
-use tokio::sync::mpsc;
-use hotmint::consensus::engine::{ConsensusEngine, EngineConfig};
-use hotmint::consensus::state::ConsensusState;
-use hotmint::consensus::store::MemoryBlockStore;
-use hotmint::consensus::network::ChannelNetwork;
-use hotmint::crypto::Ed25519Verifier;
+📖 **[Application trait guide →](docs/application.md)** · **[Storage guide →](docs/storage.md)** · **[Networking guide →](docs/networking.md)** · **[Mempool & API →](docs/mempool-api.md)**
 
-// create a message channel for each validator
-let mut receivers = HashMap::new();
-let mut all_senders = HashMap::new();
-for i in 0..NUM_VALIDATORS {
-    let (tx, rx) = mpsc::channel(8192);
-    receivers.insert(ValidatorId(i), rx);
-    all_senders.insert(ValidatorId(i), tx);
-}
+---
 
-// spawn each validator
-for i in 0..NUM_VALIDATORS {
-    let vid = ValidatorId(i);
-    let rx = receivers.remove(&vid).unwrap();
-    let senders: Vec<_> = all_senders
-        .iter()
-        .map(|(&id, tx)| (id, tx.clone()))
-        .collect();
+## Technology Stack
 
-    let store: hotmint::consensus::engine::SharedBlockStore =
-        Arc::new(std::sync::RwLock::new(Box::new(MemoryBlockStore::new())));
+| Component | Implementation | Origin |
+|:----------|:---------------|:-------|
+| Consensus Protocol | HotStuff-2 (arXiv:2301.03253) | Self-developed |
+| Storage Engine | [vsdb](https://crates.io/crates/vsdb) + [mmdb](https://crates.io/crates/mmdb) (pure-Rust LSM-Tree) | Self-developed |
+| Error Handling | [ruc](https://crates.io/crates/ruc) | Self-developed |
+| Signatures | Ed25519 ([ed25519-dalek](https://crates.io/crates/ed25519-dalek)) | Community |
+| Hashing | [Blake3](https://crates.io/crates/blake3) | Community |
+| Networking | [litep2p](https://crates.io/crates/litep2p) (Polkadot ecosystem) | Community |
+| Async Runtime | [Tokio](https://crates.io/crates/tokio) | Community |
+| Serialization | [serde](https://crates.io/crates/serde) + [CBOR](https://crates.io/crates/serde_cbor_2) / [Protobuf](https://crates.io/crates/prost) | Community |
+| Metrics | [prometheus-client](https://crates.io/crates/prometheus-client) | Community |
 
-    let engine = ConsensusEngine::new(
-        ConsensusState::new(vid, validator_set.clone()),
-        store,
-        Box::new(ChannelNetwork::new(vid, senders)),
-        Box::new(MyApp),
-        Box::new(signers[i as usize].clone()),
-        rx,
-        EngineConfig {
-            verifier: Box::new(Ed25519Verifier),
-            pacemaker: None,
-            persistence: None,
-        },
-    );
+---
 
-    tokio::spawn(async move { engine.run().await });
-}
-```
+## Documentation
 
-### Use Persistent Storage
+| Guide | Description |
+|:------|:------------|
+| [Getting Started](docs/getting-started.md) | Installation, quick start, first integration |
+| [Protocol](docs/protocol.md) | HotStuff-2 two-chain commit, view protocol, pacemaker |
+| [Architecture](docs/architecture.md) | Module structure, dependency graph, design decisions |
+| [Application](docs/application.md) | `Application` trait — ABCI-like lifecycle, epoch transitions, evidence |
+| [Consensus Engine](docs/consensus-engine.md) | Engine internals: state machine, event loop, vote collection |
+| [Core Types](docs/types.md) | Block, QC, DC, TC, Vote, ValidatorSet, signing bytes, wire format |
+| [Cryptography](docs/crypto.md) | Signer/Verifier traits, Ed25519, aggregate signatures, custom signers |
+| [Storage](docs/storage.md) | BlockStore trait, vsdb persistence, crash recovery, Merkle proofs |
+| [Networking](docs/networking.md) | NetworkSink trait, litep2p P2P, PEX, block sync, dynamic peers |
+| [Mempool & API](docs/mempool-api.md) | Priority mempool, JSON-RPC (TCP + HTTP + WebSocket) |
+| [Metrics](docs/metrics.md) | Prometheus metrics, health interpretation, Grafana queries |
+| [Benchmarks](docs/benchmarks.md) | WAN cluster + local throughput benchmarks |
+| [Wire Protocol](docs/wire-protocol.md) | Codec framing, CBOR format, ABCI IPC protocol, block hash spec |
+| [Security Audit & Roadmap](docs/security-audit-and-roadmap.md) | CometBFT gap analysis, security audit, evolution roadmap |
 
-Replace the in-memory store with vsdb-backed storage for crash recovery:
+---
 
-```rust
-use hotmint::storage::block_store::VsdbBlockStore;
-use hotmint::storage::consensus_state::PersistentConsensusState;
+## References
 
-// persistent block store (backed by vsdb)
-let store = VsdbBlockStore::new();
-
-// persistent consensus state (survives restarts)
-let mut persistent_state = PersistentConsensusState::new();
-
-// restore state after crash
-let mut state = ConsensusState::new(vid, validator_set.clone());
-if let Some(view) = persistent_state.load_current_view() {
-    state.current_view = view;
-}
-if let Some(qc) = persistent_state.load_locked_qc() {
-    state.locked_qc = Some(qc);
-}
-if let Some(qc) = persistent_state.load_highest_qc() {
-    state.highest_qc = Some(qc);
-}
-if let Some(h) = persistent_state.load_last_committed_height() {
-    state.last_committed_height = h;
-}
-if let Some(epoch) = persistent_state.load_current_epoch() {
-    state.current_epoch = epoch;
-}
-
-use hotmint::consensus::engine::SharedBlockStore;
-
-let shared_store: SharedBlockStore =
-    Arc::new(std::sync::RwLock::new(Box::new(store)));
-
-let engine = ConsensusEngine::new(
-    state,
-    shared_store,
-    Box::new(network_sink),  // ChannelNetwork or Litep2pNetworkSink
-    Box::new(MyApp),
-    Box::new(signer),
-    msg_rx,
-    EngineConfig {
-        verifier: Box::new(Ed25519Verifier),
-        pacemaker: None,
-        persistence: None,
-    },
-);
-```
-
-📖 **[Storage guide →](docs/storage.md)**
-
-### Use Real P2P Networking
-
-Replace in-memory channels with litep2p for multi-process / multi-machine deployments:
-
-```rust
-use hotmint::network::service::{NetworkConfig, NetworkService, PeerMap};
-
-// build the peer map (ValidatorId <-> litep2p PeerId)
-let mut peer_map = PeerMap::new();
-peer_map.insert(ValidatorId(0), peer_id_0);
-peer_map.insert(ValidatorId(1), peer_id_1);
-// ...
-
-let known_addresses = vec![
-    (peer_id_0, vec!["/ip4/10.0.0.1/tcp/26656".parse().unwrap()]),
-    (peer_id_1, vec!["/ip4/10.0.0.2/tcp/26656".parse().unwrap()]),
-    // ...
-];
-
-let handles = NetworkService::create(NetworkConfig {
-    listen_addr: "/ip4/0.0.0.0/tcp/26656".parse().unwrap(),
-    peer_map,
-    known_addresses,
-    keypair: None,           // auto-generated if None
-    peer_book,
-    pex_config,
-    relay_consensus: true,
-    initial_validators,
-    chain_id_hash,
-}).unwrap();
-
-// run the network event loop in background
-tokio::spawn(async move { handles.service.run().await });
-
-// pass handles.sink and handles.msg_rx to ConsensusEngine
-```
-
-📖 **[Networking guide →](docs/networking.md)**
-
-### Add Mempool and JSON-RPC API
-
-Accept external transactions via JSON-RPC:
-
-```rust
-use std::sync::Arc;
-use tokio::sync::watch;
-use hotmint::mempool::Mempool;
-use hotmint::api::rpc::{RpcServer, RpcState};
-
-// shared mempool (10k txs max, 1MB per tx)
-let mempool = Arc::new(Mempool::new(10_000, 1_048_576));
-
-// status channel (updated by your commit handler)
-// tuple: (current_view, last_committed_height, epoch, validator_count, epoch_start_view)
-let (status_tx, status_rx) = watch::channel((0u64, 0u64, 0u64, 4usize, 0u64));
-
-use std::sync::RwLock;
-use hotmint::consensus::engine::SharedBlockStore;
-use hotmint::consensus::store::MemoryBlockStore;
-
-let store: SharedBlockStore =
-    Arc::new(RwLock::new(Box::new(MemoryBlockStore::new())));
-let (_peer_tx, peer_info_rx) = watch::channel(vec![]);
-
-let (_vs_tx, validator_set_rx): (watch::Sender<Vec<ValidatorInfoResponse>>, _) = watch::channel(vec![]);
-
-let rpc_state = RpcState {
-    validator_id: 0,
-    mempool: mempool.clone(),
-    status_rx,
-    store,
-    peer_info_rx,
-    validator_set_rx,
-};
-
-let server = RpcServer::bind("127.0.0.1:26657", rpc_state).await.unwrap();
-tokio::spawn(async move { server.run().await });
-```
-
-Submit transactions via JSON-RPC (newline-delimited JSON over TCP):
-
-```bash
-# query node status
-echo '{"method":"status","params":{},"id":1}' | nc 127.0.0.1 26657
-
-# submit a transaction (hex-encoded)
-echo '{"method":"submit_tx","params":"deadbeef","id":2}' | nc 127.0.0.1 26657
-```
-
-📖 **[Mempool & API guide →](docs/mempool-api.md)**
-
-### Collect Prometheus Metrics
-
-```rust
-use prometheus_client::registry::Registry;
-use hotmint::consensus::metrics::ConsensusMetrics;
-
-let mut registry = Registry::default();
-let metrics = ConsensusMetrics::new(&mut registry);
-
-// metrics are automatically incremented by the consensus engine:
-//   hotmint_blocks_committed, hotmint_blocks_proposed,
-//   hotmint_votes_sent, hotmint_qcs_formed,
-//   hotmint_double_certs_formed, hotmint_view_timeouts,
-//   hotmint_tcs_formed, hotmint_current_view,
-//   hotmint_current_height, hotmint_consecutive_timeouts,
-//   hotmint_view_duration_seconds
-```
-
-📖 **[Metrics guide →](docs/metrics.md)**
+| Paper | Link |
+|:------|:-----|
+| HotStuff-2: Optimal Two-Chain BFT (2023) | [arXiv:2301.03253](https://arxiv.org/abs/2301.03253) |
+| HotStuff: BFT Consensus (PODC 2019) | [arXiv:1803.05069](https://arxiv.org/abs/1803.05069) |
+| Tendermint: Latest Gossip on BFT (2018) | [arXiv:1807.04938](https://arxiv.org/abs/1807.04938) |
 
 ## License
 
