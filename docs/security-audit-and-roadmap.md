@@ -264,7 +264,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 > **实现状态：⚠️ 部分完成。** 已完成：`ConsensusMessage::Evidence` 消息类型、`broadcast_evidence()` 通过现有 notification 协议广播（非独立协议）、`EvidenceStore` trait（put/get_pending/mark_committed/all）、`MemoryEvidenceStore` 内存实现、引擎检测到双签后立即广播+存储、收到 gossip 证据后存储并通知应用层。尚未实现：vsdb 持久化存储（当前仅内存，重启丢失）、Leader 打包证据进 Block（代码注释 "full block inclusion is a later step"）、`mark_committed` 从未被调用。
 
-#### [ ] C-4. Proposal ancestor constraint missing `[Safety Violation]`
+#### [x] C-4. Proposal ancestor constraint missing `[Safety Violation]` ✅
 
 **Location:** `crates/hotmint-consensus/src/view_protocol.rs` (`on_proposal`, ~line 200)
 
@@ -278,7 +278,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] C-5. Vote2Msg path missing vote_type check — phase confusion `[Safety Violation]`
+#### [x] C-5. Vote2Msg path missing vote_type check — phase confusion `[Safety Violation]` ✅
 
 **Location:** `crates/hotmint-consensus/src/engine.rs` (~line 975, `ConsensusMessage::Vote2Msg`)
 
@@ -290,7 +290,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] C-6. Evidence gossip accepted without cryptographic verification `[Safety Violation]`
+#### [x] C-6. Evidence gossip accepted without cryptographic verification `[Safety Violation]` ✅
 
 **Location:** `crates/hotmint-consensus/src/engine.rs` (~line 1098, `ConsensusMessage::Evidence`)
 
@@ -304,7 +304,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] C-7. `apply_commit` + `persist_state` not atomic — crash recovery gap `[Engineering Defect]`
+#### [x] C-7. `apply_commit` + `persist_state` not atomic — crash recovery gap `[Engineering Defect]` ✅
 
 **Location:** `crates/hotmint-consensus/src/engine.rs` (`apply_commit` ~line 1296, `persist_state` ~line 1475)
 
@@ -404,7 +404,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 **风险等级：** 🟡 低-中危 — 当前模式下无法触发，但影响未来扩展的安全性
 
-#### [ ] H-6. P2P handshake empty — no chain/genesis/version isolation `[Engineering Defect]`
+#### [x] H-6. P2P handshake empty — no chain/genesis/version isolation `[Engineering Defect]` ✅
 
 **Location:** `crates/hotmint-network/src/service.rs` (~line 205, 410)
 
@@ -416,7 +416,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] H-7. Sync replay epoch transition applies immediately, runtime delays to start_view `[Engineering Defect]`
+#### [x] H-7. Sync replay epoch transition applies immediately, runtime delays to start_view `[Engineering Defect]` ✅
 
 **Location:** `crates/hotmint-consensus/src/sync.rs` (~line 413) vs `crates/hotmint-consensus/src/engine.rs` (~line 1431)
 
@@ -428,7 +428,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] H-8. `SharedStoreAdapter` panics on lock contention (`try_read/try_write`) `[Engineering Defect]`
+#### [x] H-8. `SharedStoreAdapter` panics on lock contention (`try_read/try_write`) `[Engineering Defect]` ✅
 
 **Location:** `crates/hotmint-consensus/src/store.rs` (lines 48–97)
 
@@ -440,7 +440,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] H-9. Node binary defaults `evidence_store: None` — evidence system inert `[Engineering Defect]`
+#### [x] H-9. Node binary defaults `evidence_store: None` — evidence system inert `[Engineering Defect]` ✅
 
 **Location:** `crates/hotmint/src/bin/node.rs` (~line 724)
 
@@ -452,7 +452,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] H-10. HTTP RPC rate limiter created per-request — effectively disabled `[Engineering Defect]`
+#### [x] H-10. HTTP RPC rate limiter created per-request — effectively disabled `[Engineering Defect]` ✅
 
 **Location:** `crates/hotmint-api/src/http_rpc.rs` (~line 95)
 
@@ -464,7 +464,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] H-11. ABCI IPC `ValidateTx` returns only `bool`, client hardcodes `priority: 0` `[Engineering Defect]`
+#### [x] H-11. ABCI IPC `ValidateTx` returns only `bool`, client hardcodes `priority: 0` `[Engineering Defect]` ✅
 
 **Location:** `crates/hotmint-abci-proto/proto/abci.proto` (ValidateTxResponse), `crates/hotmint-abci/src/client.rs` (~line 172)
 
@@ -476,7 +476,7 @@ Hotmint 凭借 **Rust + HotStuff-2 + litep2p** 的组合，在核心共识算法
 
 ---
 
-#### [ ] H-12. Sync replay does not persist `commit_qc` `[Engineering Defect]`
+#### [x] H-12. Sync replay does not persist `commit_qc` `[Engineering Defect]` ✅
 
 **Location:** `crates/hotmint-consensus/src/sync.rs` (`replay_blocks`, ~line 375)
 
@@ -593,17 +593,17 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 | H-3 | 🟡 中危 | zstd 压缩端 `unwrap()` Panic 向量 | ✅ | — |
 | H-4 | 🟡 中危 | ABCI IPC 无读写超时，可致永久挂起 | ✅ | — |
 | H-5 | 🟡 低-中 | 签名缺 `epoch_number`，跨 Epoch 重放风险 | ✅ | — |
-| **C-4** | 🔴 Critical | Proposal missing parent_hash == justify.block_hash check | 📋 | — |
-| **C-5** | 🔴 Critical | Vote2Msg no vote_type == Vote2 guard — phase confusion | 📋 | — |
-| **C-6** | 🔴 Critical | Evidence gossip accepted without signature verification | 📋 | — |
-| **C-7** | 🔴 Critical | apply_commit + persist_state not atomic — crash gap | 📋 | — |
-| **H-6** | 🟡 High | Empty P2P handshake — no chain/version isolation | 📋 | — |
-| **H-7** | 🟡 High | Sync epoch transition immediate vs runtime delayed | 📋 | — |
-| **H-8** | 🟡 High | SharedStoreAdapter try_read/try_write panics on contention | 📋 | — |
-| **H-9** | 🟡 High | Node binary defaults evidence_store: None | 📋 | — |
-| **H-10** | 🟡 High | HTTP rate limiter per-request — effectively disabled | 📋 | — |
-| **H-11** | 🟡 Medium | ABCI IPC ValidateTx returns bool, priority hardcoded 0 | 📋 | — |
-| **H-12** | 🟡 Medium | Sync replay doesn't persist commit_qc | 📋 | — |
+| **C-4** | 🔴 Critical | Proposal missing parent_hash == justify.block_hash check | ✅ | — |
+| **C-5** | 🔴 Critical | Vote2Msg no vote_type == Vote2 guard — phase confusion | ✅ | — |
+| **C-6** | 🔴 Critical | Evidence gossip accepted without signature verification | ✅ | — |
+| **C-7** | 🔴 Critical | apply_commit + persist_state not atomic — crash gap | ✅ | — |
+| **H-6** | 🟡 High | Empty P2P handshake — no chain/version isolation | ✅ | — |
+| **H-7** | 🟡 High | Sync epoch transition immediate vs runtime delayed | ✅ | — |
+| **H-8** | 🟡 High | SharedStoreAdapter try_read/try_write panics on contention | ✅ | — |
+| **H-9** | 🟡 High | Node binary defaults evidence_store: None | ✅ | — |
+| **H-10** | 🟡 High | HTTP rate limiter per-request — effectively disabled | ✅ | — |
+| **H-11** | 🟡 Medium | ABCI IPC ValidateTx returns bool, priority hardcoded 0 | ✅ | — |
+| **H-12** | 🟡 Medium | Sync replay doesn't persist commit_qc | ✅ | — |
 | P0-1 | 🟢 P0 | 标准 HTTP/WS RPC + 事件订阅系统 | ⚠️ | `get_tx`、`get_block_results`、`subscribe` 过滤、更多事件类型 |
 | P1-1 | 🟢 P1 | 快照状态同步（State Sync） | ✅ | — |
 | P1-2 | 🟢 P1 | 加权提议者选举 | ✅ | — |
