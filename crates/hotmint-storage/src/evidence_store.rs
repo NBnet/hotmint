@@ -1,9 +1,12 @@
 use std::collections::HashSet;
+use std::path::Path;
 
 use hotmint_consensus::evidence_store::EvidenceStore;
 use hotmint_types::evidence::EquivocationProof;
 use hotmint_types::validator::ValidatorId;
 use hotmint_types::view::ViewNumber;
+use ruc::*;
+use vsdb::MapxOrd;
 
 /// In-memory evidence store backed by a `Vec` and a committed-set.
 pub struct MemoryEvidenceStore {
@@ -52,6 +55,111 @@ impl EvidenceStore for MemoryEvidenceStore {
 
     fn all(&self) -> Vec<EquivocationProof> {
         self.proofs.clone()
+    }
+}
+
+// ---- Persistent vsdb-backed evidence store (C-3) ----
+
+const META_FILE: &str = "evidence_store.meta";
+
+/// Persistent evidence store backed by vsdb.
+///
+/// Proofs survive node restarts. Uses a `MapxOrd<u64, EquivocationProof>` for
+/// the proof list (keyed by auto-increment ID) and a `MapxOrd<u64, u8>` as a
+/// committed-set (keyed by a hash of (view, validator)).
+pub struct PersistentEvidenceStore {
+    proofs: MapxOrd<u64, EquivocationProof>,
+    committed: MapxOrd<u64, u8>,
+    next_id: u64,
+}
+
+impl PersistentEvidenceStore {
+    /// Open an existing store or create a new one.
+    /// Must be called after `vsdb::vsdb_set_base_dir`.
+    pub fn open(data_dir: &Path) -> Result<Self> {
+        let meta_path = data_dir.join(META_FILE);
+        if meta_path.exists() {
+            let bytes = std::fs::read(&meta_path).c(d!("read evidence_store.meta"))?;
+            if bytes.len() != 24 {
+                return Err(eg!(
+                    "corrupt evidence_store.meta: expected 24 bytes, got {}",
+                    bytes.len()
+                ));
+            }
+            let proofs_id = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+            let committed_id = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+            let next_id = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
+            let proofs = MapxOrd::from_meta(proofs_id).c(d!("restore proofs"))?;
+            let committed = MapxOrd::from_meta(committed_id).c(d!("restore committed"))?;
+            Ok(Self {
+                proofs,
+                committed,
+                next_id,
+            })
+        } else {
+            let proofs: MapxOrd<u64, EquivocationProof> = MapxOrd::new();
+            let committed: MapxOrd<u64, u8> = MapxOrd::new();
+            let proofs_id = proofs.save_meta().c(d!())?;
+            let committed_id = committed.save_meta().c(d!())?;
+            let next_id = 0u64;
+            let mut meta = Vec::with_capacity(24);
+            meta.extend_from_slice(&proofs_id.to_le_bytes());
+            meta.extend_from_slice(&committed_id.to_le_bytes());
+            meta.extend_from_slice(&next_id.to_le_bytes());
+            std::fs::write(&meta_path, &meta).c(d!("write evidence_store.meta"))?;
+            Ok(Self {
+                proofs,
+                committed,
+                next_id,
+            })
+        }
+    }
+
+    fn committed_key(view: ViewNumber, validator: ValidatorId) -> u64 {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&view.as_u64().to_le_bytes());
+        hasher.update(&validator.0.to_le_bytes());
+        let hash = hasher.finalize();
+        u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap())
+    }
+
+    fn is_duplicate(&self, proof: &EquivocationProof) -> bool {
+        self.proofs
+            .iter()
+            .any(|(_, p)| p.view == proof.view && p.validator == proof.validator)
+    }
+}
+
+impl EvidenceStore for PersistentEvidenceStore {
+    fn put_evidence(&mut self, proof: EquivocationProof) {
+        if self.is_duplicate(&proof) {
+            return;
+        }
+        self.proofs.insert(&self.next_id, &proof);
+        self.next_id += 1;
+    }
+
+    fn get_pending(&self) -> Vec<EquivocationProof> {
+        self.proofs
+            .iter()
+            .filter_map(|(_, p)| {
+                let key = Self::committed_key(p.view, p.validator);
+                if self.committed.get(&key).is_some() {
+                    None
+                } else {
+                    Some(p)
+                }
+            })
+            .collect()
+    }
+
+    fn mark_committed(&mut self, view: ViewNumber, validator: ValidatorId) {
+        let key = Self::committed_key(view, validator);
+        self.committed.insert(&key, &1);
+    }
+
+    fn all(&self) -> Vec<EquivocationProof> {
+        self.proofs.iter().map(|(_, p)| p).collect()
     }
 }
 

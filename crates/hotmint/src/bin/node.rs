@@ -722,7 +722,12 @@ async fn run_node(
             pacemaker: Some(pacemaker_config),
             persistence: Some(Box::new(pcs)),
             evidence_store: Some(Box::new(
-                hotmint_storage::evidence_store::MemoryEvidenceStore::new(),
+                hotmint_storage::evidence_store::PersistentEvidenceStore::open(&data_dir)
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(%e, "failed to open persistent evidence store, falling back to memory");
+                        // Fallback: use the constructor that doesn't need a path
+                        panic!("persistent evidence store required: {e}");
+                    }),
             )),
         },
     );

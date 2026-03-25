@@ -14,3 +14,4 @@ serde = { workspace = true }
 ruc = { workspace = true }
 tracing = { workspace = true }
 vsdb = { workspace = true }
+blake3 = { workspace = true }
