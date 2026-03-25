@@ -1367,6 +1367,16 @@ impl ConsensusEngine {
                     }
                     s.flush();
                 }
+                // C-3: Mark evidence as committed for views included in committed blocks.
+                if let Some(ref mut ev_store) = self.evidence_store {
+                    for block in &result.committed_blocks {
+                        for proof in ev_store.get_pending() {
+                            if proof.view <= block.view {
+                                ev_store.mark_committed(proof.view, proof.validator);
+                            }
+                        }
+                    }
+                }
                 // C-7: Persist consensus state immediately after committing blocks so
                 // that a crash between apply_commit and the next advance_view does not
                 // lose the updated last_committed_height / app_hash / epoch.
