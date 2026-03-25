@@ -307,7 +307,7 @@ All security vulnerabilities (C-1..C-7) and engineering defects (H-1..H-12, R-1)
 | P0-1 | 🟢 P0 | Standard HTTP/WS RPC + event subscription | ✅ | — |
 | P1-1 | 🟢 P1 | Snapshot State Sync | ✅ | — |
 | P1-2 | 🟢 P1 | Weighted proposer selection | ✅ | — |
-| P2-1 | 🟢 P2 | Light client verification protocol | ⚠️ | MPT proof: wire `VerMapWithProof<K,V,MptCalc>.prove()` / `MptProof` through `query` RPC (vsdb API now exists) |
+| P2-1 | 🟢 P2 | Light client verification protocol | ✅ | — |
 | P2-2 | 🟢 P2 | ABCI++ Vote Extensions | ✅ | — |
 
 ---
