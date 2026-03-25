@@ -23,3 +23,18 @@ pub use validator::{ValidatorId, ValidatorInfo, ValidatorSet};
 pub use validator_update::{EndBlockResponse, Event, EventAttribute, ValidatorUpdate};
 pub use view::ViewNumber;
 pub use vote::{Vote, VoteType};
+
+/// Response from an application query, optionally containing a Merkle proof.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct QueryResponse {
+    /// The result data (opaque application bytes).
+    pub data: Vec<u8>,
+    /// Optional Merkle proof (application-defined format).
+    /// Applications using IAVL/SMT trees can populate this to enable
+    /// trustless verification by light clients.
+    #[serde(default)]
+    pub proof: Option<Vec<u8>>,
+    /// Height at which the query was evaluated.
+    #[serde(default)]
+    pub height: u64,
+}

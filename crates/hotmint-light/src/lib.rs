@@ -13,7 +13,7 @@ use hotmint_types::view::ViewNumber;
 use hotmint_types::vote::{Vote, VoteType};
 
 /// Lightweight version of Block without the payload.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BlockHeader {
     pub height: Height,
     pub parent_hash: BlockHash,

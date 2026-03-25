@@ -244,19 +244,24 @@ impl Application for EvmApplication {
         Ok(())
     }
 
-    fn query(&self, path: &str, data: &[u8]) -> Result<Vec<u8>> {
-        match path {
+    fn query(&self, path: &str, data: &[u8]) -> Result<hotmint_types::QueryResponse> {
+        let result = match path {
             "balance" if data.len() == 20 => {
                 let addr: [u8; 20] = data.try_into().unwrap();
                 let bal = self.get_balance(&addr);
-                Ok(bal.to_be_bytes::<32>().to_vec())
+                bal.to_be_bytes::<32>().to_vec()
             }
             "nonce" if data.len() == 20 => {
                 let addr: [u8; 20] = data.try_into().unwrap();
                 let nonce = self.get_nonce(&addr);
-                Ok(nonce.to_le_bytes().to_vec())
+                nonce.to_le_bytes().to_vec()
             }
-            _ => Ok(vec![]),
-        }
+            _ => vec![],
+        };
+        Ok(hotmint_types::QueryResponse {
+            data: result,
+            proof: None,
+            height: 0,
+        })
     }
 }

@@ -922,7 +922,7 @@ impl Application for AppWithStatus {
         self.inner.on_evidence(proof)
     }
 
-    fn query(&self, path: &str, data: &[u8]) -> Result<Vec<u8>> {
+    fn query(&self, path: &str, data: &[u8]) -> Result<hotmint_types::QueryResponse> {
         self.inner.query(path, data)
     }
 
@@ -957,7 +957,7 @@ impl Application for ArcApp {
     fn on_evidence(&self, proof: &EquivocationProof) -> Result<()> {
         self.0.on_evidence(proof)
     }
-    fn query(&self, path: &str, data: &[u8]) -> Result<Vec<u8>> {
+    fn query(&self, path: &str, data: &[u8]) -> Result<hotmint_types::QueryResponse> {
         self.0.query(path, data)
     }
     fn tracks_app_hash(&self) -> bool {

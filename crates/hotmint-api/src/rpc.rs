@@ -9,7 +9,8 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::types::{
     BlockInfo, BlockResultsInfo, CommitQcInfo, EpochInfo, EventAttributeInfo, EventInfo, HeaderInfo,
-    RpcRequest, RpcResponse, StatusInfo, TxInfo, TxResult, ValidatorInfoResponse,
+    QueryResponseInfo, RpcRequest, RpcResponse, StatusInfo, TxInfo, TxResult,
+    ValidatorInfoResponse, VerifyHeaderResult,
 };
 use hotmint_consensus::application::Application;
 use hotmint_consensus::commit::decode_payload;
@@ -529,6 +530,128 @@ pub(crate) async fn handle_request(
                     req.id,
                     -32602,
                     format!("block results at height {height} not found"),
+                ),
+            }
+        }
+
+        "query" => {
+            let path = match req.params.get("path").and_then(|v| v.as_str()) {
+                Some(p) => p,
+                None => {
+                    return RpcResponse::err(
+                        req.id,
+                        -32602,
+                        "missing 'path' parameter".to_string(),
+                    );
+                }
+            };
+            let data_hex = req.params.get("data").and_then(|v| v.as_str()).unwrap_or("");
+            let data = hex_decode(data_hex).unwrap_or_default();
+            match &state.app {
+                Some(app) => match app.query(path, &data) {
+                    Ok(resp) => {
+                        let info = QueryResponseInfo {
+                            data: hex_encode(&resp.data),
+                            proof: resp.proof.as_ref().map(|p| hex_encode(p)),
+                            height: resp.height,
+                        };
+                        json_ok(req.id, &info)
+                    }
+                    Err(e) => RpcResponse::err(req.id, -32602, format!("query failed: {e}")),
+                },
+                None => RpcResponse::err(
+                    req.id,
+                    -32602,
+                    "no application available for queries".to_string(),
+                ),
+            }
+        }
+
+        "verify_header" => {
+            // Accepts { header: BlockHeader JSON, qc: CommitQC JSON }.
+            // Uses the light client to verify the header.
+            let header_val = match req.params.get("header") {
+                Some(v) => v,
+                None => {
+                    return RpcResponse::err(
+                        req.id,
+                        -32602,
+                        "missing 'header' parameter".to_string(),
+                    );
+                }
+            };
+            let qc_val = match req.params.get("qc") {
+                Some(v) => v,
+                None => {
+                    return RpcResponse::err(
+                        req.id,
+                        -32602,
+                        "missing 'qc' parameter".to_string(),
+                    );
+                }
+            };
+            let header: hotmint_light::BlockHeader = match serde_json::from_value(header_val.clone())
+            {
+                Ok(h) => h,
+                Err(e) => {
+                    return RpcResponse::err(
+                        req.id,
+                        -32602,
+                        format!("invalid header: {e}"),
+                    );
+                }
+            };
+            let qc: hotmint_types::QuorumCertificate =
+                match serde_json::from_value(qc_val.clone()) {
+                    Ok(q) => q,
+                    Err(e) => {
+                        return RpcResponse::err(
+                            req.id,
+                            -32602,
+                            format!("invalid qc: {e}"),
+                        );
+                    }
+                };
+            // Build a LightClient from the current validator set.
+            let validators_info = state.validator_set_rx.borrow().clone();
+            let validators: Vec<hotmint_types::ValidatorInfo> = validators_info
+                .iter()
+                .map(|v| hotmint_types::ValidatorInfo {
+                    id: hotmint_types::ValidatorId(v.id),
+                    public_key: {
+                        let bytes = hex_decode(&v.public_key).unwrap_or_default();
+                        let mut arr = [0u8; 32];
+                        if bytes.len() == 32 {
+                            arr.copy_from_slice(&bytes);
+                        }
+                        hotmint_types::PublicKey(arr.to_vec())
+                    },
+                    power: v.power,
+                })
+                .collect();
+            let vs = hotmint_types::ValidatorSet::new(validators);
+            let status = *state.status_rx.borrow();
+            let chain_id_hash = [0u8; 32]; // Placeholder — light client doesn't use chain_id_hash for verify_header
+            let lc = hotmint_light::LightClient::new(
+                vs.clone(),
+                hotmint_types::Height(status.last_committed_height),
+                chain_id_hash,
+            );
+            let verifier = hotmint_crypto::Ed25519Verifier;
+            match lc.verify_header(&header, &qc, &verifier) {
+                Ok(()) => json_ok(
+                    req.id,
+                    &VerifyHeaderResult {
+                        valid: true,
+                        error: None,
+                    },
+                ),
+                Err(e) => json_ok(
+                    req.id,
+                    &VerifyHeaderResult {
+                        valid: false,
+                        error: Some(e.to_string()),
+                    },
                 ),
             }
         }

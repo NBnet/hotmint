@@ -259,9 +259,9 @@ impl Application for UtxoApplication {
         Ok(())
     }
 
-    fn query(&self, path: &str, data: &[u8]) -> Result<Vec<u8>> {
+    fn query(&self, path: &str, data: &[u8]) -> Result<hotmint_types::QueryResponse> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        match path {
+        let result = match path {
             "balance" if data.len() == 32 => {
                 let pubkey_hash: [u8; 32] = data.try_into().unwrap();
                 let bal = state.get_balance(&pubkey_hash);
@@ -289,8 +289,6 @@ impl Application for UtxoApplication {
                 let key: [u8; 36] = data.try_into().unwrap();
                 let outpoint = OutPoint::from_key(&key);
                 let proof = state.prove_utxo(&outpoint)?;
-                // SmtProof doesn't derive Serialize; encode manually:
-                // key_hash(32) || has_value(1) || [value_len(4) || value] || siblings(N*32)
                 let mut buf = Vec::new();
                 buf.extend_from_slice(&proof.key_hash);
                 match &proof.value {
@@ -307,7 +305,12 @@ impl Application for UtxoApplication {
                 Ok(buf)
             }
             _ => Ok(vec![]),
-        }
+        };
+        result.map(|data| hotmint_types::QueryResponse {
+            data,
+            proof: None,
+            height: 0,
+        })
     }
 }
 

@@ -52,7 +52,7 @@ impl Application for DemoEvmApp {
         self.inner.on_commit(block, ctx)
     }
 
-    fn query(&self, path: &str, data: &[u8]) -> Result<Vec<u8>> {
+    fn query(&self, path: &str, data: &[u8]) -> Result<hotmint_types::QueryResponse> {
         self.inner.query(path, data)
     }
 }

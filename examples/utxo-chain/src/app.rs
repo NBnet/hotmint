@@ -50,7 +50,7 @@ impl DemoUtxoApp {
         let alice_pkh = hash_pubkey(&alice_pk);
 
         // Find an Alice UTXO with enough value
-        let utxo_list = self.inner.query("balance", &alice_pkh).ok()?;
+        let utxo_list = self.inner.query("balance", &alice_pkh).ok()?.data;
         if utxo_list.len() < 8 {
             return None;
         }
@@ -118,7 +118,7 @@ impl Application for DemoUtxoApp {
         self.inner.on_commit(block, ctx)
     }
 
-    fn query(&self, path: &str, data: &[u8]) -> Result<Vec<u8>> {
+    fn query(&self, path: &str, data: &[u8]) -> Result<hotmint_types::QueryResponse> {
         self.inner.query(path, data)
     }
 }

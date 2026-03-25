@@ -48,7 +48,7 @@ pub enum Response {
     ExecuteBlock(Result<EndBlockResponse, String>),
     OnCommit(Result<(), String>),
     OnEvidence(Result<(), String>),
-    Query(Result<Vec<u8>, String>),
+    Query(Result<hotmint_types::QueryResponse, String>),
 }
 
 // ---- Protobuf encode/decode for Request ----
@@ -193,8 +193,14 @@ pub fn encode_response(resp: &Response) -> Vec<u8> {
         },
         Response::Query(result) => pb::Response {
             response: Some(pb::response::Response::Query(pb::QueryResponse {
-                data: result.as_ref().ok().cloned().unwrap_or_default(),
+                data: result.as_ref().ok().map(|r| r.data.clone()).unwrap_or_default(),
                 error: result.as_ref().err().cloned().unwrap_or_default(),
+                proof: result
+                    .as_ref()
+                    .ok()
+                    .and_then(|r| r.proof.clone())
+                    .unwrap_or_default(),
+                height: result.as_ref().ok().map(|r| r.height).unwrap_or(0),
             })),
         },
     };
@@ -238,7 +244,15 @@ pub fn decode_response(buf: &[u8]) -> Result<Response, prost::DecodeError> {
         }
         pb::response::Response::Query(r) => {
             if r.error.is_empty() {
-                Response::Query(Ok(r.data))
+                Response::Query(Ok(hotmint_types::QueryResponse {
+                    data: r.data,
+                    proof: if r.proof.is_empty() {
+                        None
+                    } else {
+                        Some(r.proof)
+                    },
+                    height: r.height,
+                }))
             } else {
                 Response::Query(Err(r.error))
             }

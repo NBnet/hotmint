@@ -47,9 +47,9 @@ pub trait ApplicationHandler: Send + Sync {
         Ok(())
     }
 
-    fn query(&self, path: String, data: Vec<u8>) -> Result<Vec<u8>, String> {
+    fn query(&self, path: String, data: Vec<u8>) -> Result<hotmint_types::QueryResponse, String> {
         let _ = (path, data);
-        Ok(vec![])
+        Ok(hotmint_types::QueryResponse::default())
     }
 }
 
@@ -150,7 +150,9 @@ impl<H: ApplicationHandler + 'static> IpcApplicationServer<H> {
                 Response::OnCommit(self.handler.on_commit(block, ctx))
             }
             Request::OnEvidence(proof) => Response::OnEvidence(self.handler.on_evidence(proof)),
-            Request::Query { path, data } => Response::Query(self.handler.query(path, data)),
+            Request::Query { path, data } => {
+                Response::Query(self.handler.query(path, data).map_err(|e| e.to_string()))
+            }
         }
     }
 }

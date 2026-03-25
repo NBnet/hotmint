@@ -114,7 +114,22 @@ pub struct TxInfo {
     pub data: String,
 }
 
-/// Response for the `get_block_results` RPC method.
+/// Response for the `query` RPC method.
+#[derive(Serialize)]
+pub struct QueryResponseInfo {
+    /// Hex-encoded result data.
+    pub data: String,
+    /// Hex-encoded Merkle proof (if provided by the application).
+    pub proof: Option<String>,
+    pub height: u64,
+}
+
+/// Response for the `verify_header` RPC method.
+#[derive(Serialize)]
+pub struct VerifyHeaderResult {
+    pub valid: bool,
+    pub error: Option<String>,
+}
 #[derive(Serialize)]
 pub struct BlockResultsInfo {
     pub height: u64,

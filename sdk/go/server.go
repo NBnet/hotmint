@@ -167,12 +167,14 @@ func (s *Server) dispatch(req *pb.Request) *pb.Response {
 		}
 
 	case *pb.Request_Query:
-		data, err := s.app.Query(r.Query.Path, r.Query.Data)
+		result, err := s.app.Query(r.Query.Path, r.Query.Data)
 		resp := &pb.QueryResponse{}
 		if err != nil {
 			resp.Error = err.Error()
-		} else {
-			resp.Data = data
+		} else if result != nil {
+			resp.Data = result.Data
+			resp.Proof = result.Proof
+			resp.Height = result.Height
 		}
 		return &pb.Response{
 			Response: &pb.Response_Query{Query: resp},

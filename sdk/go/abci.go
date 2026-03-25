@@ -32,7 +32,15 @@ type Application interface {
 	OnEvidence(proof *pb.EquivocationProof) error
 
 	// Query queries application state.
-	Query(path string, data []byte) ([]byte, error)
+	// Returns a QueryResult containing the data, optional Merkle proof, and height.
+	Query(path string, data []byte) (*QueryResult, error)
+}
+
+// QueryResult holds the response from an Application.Query call.
+type QueryResult struct {
+	Data   []byte
+	Proof  []byte // optional Merkle proof
+	Height uint64
 }
 
 // BaseApplication provides default no-op implementations of all Application methods.
@@ -49,4 +57,6 @@ func (BaseApplication) ExecuteBlock(_ [][]byte, _ *pb.BlockContext) (*pb.EndBloc
 }
 func (BaseApplication) OnCommit(_ *pb.Block, _ *pb.BlockContext) error { return nil }
 func (BaseApplication) OnEvidence(_ *pb.EquivocationProof) error      { return nil }
-func (BaseApplication) Query(_ string, _ []byte) ([]byte, error)      { return nil, nil }
+func (BaseApplication) Query(_ string, _ []byte) (*QueryResult, error) {
+	return &QueryResult{}, nil
+}

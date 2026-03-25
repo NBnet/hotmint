@@ -155,4 +155,6 @@ message OnEvidenceResponse {
 message QueryResponse {
   bytes data = 1;
   string error = 2;
+  bytes proof = 3;
+  uint64 height = 4;
 }

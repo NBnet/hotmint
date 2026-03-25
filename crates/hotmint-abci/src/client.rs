@@ -221,7 +221,7 @@ impl Application for IpcApplicationClient {
         }
     }
 
-    fn query(&self, path: &str, data: &[u8]) -> Result<Vec<u8>> {
+    fn query(&self, path: &str, data: &[u8]) -> Result<hotmint_types::QueryResponse> {
         let req = Request::Query {
             path: path.to_string(),
             data: data.to_vec(),

@@ -132,9 +132,13 @@ pub trait Application: Send + Sync {
         true
     }
 
-    /// Query application state (returns opaque bytes).
-    fn query(&self, _path: &str, _data: &[u8]) -> Result<Vec<u8>> {
-        Ok(vec![])
+    /// Query application state.
+    ///
+    /// Returns a [`QueryResponse`] containing the result data and an optional
+    /// Merkle proof that allows light clients to verify the result against the
+    /// block's `app_hash` without trusting the full node.
+    fn query(&self, _path: &str, _data: &[u8]) -> Result<hotmint_types::QueryResponse> {
+        Ok(hotmint_types::QueryResponse::default())
     }
 
     /// List available state snapshots for state sync.
