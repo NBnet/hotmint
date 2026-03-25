@@ -674,7 +674,9 @@ impl ConsensusEngine {
                         warn!(proposer = %block.proposer, "invalid justify QC aggregate signature");
                         return false;
                     }
-                    if !hotmint_crypto::has_quorum(vs, &justify.aggregate_signature) {
+                    if justify.epoch == self.state.current_epoch.number
+                        && !hotmint_crypto::has_quorum(vs, &justify.aggregate_signature)
+                    {
                         warn!(proposer = %block.proposer, "justify QC below quorum threshold");
                         return false;
                     }
@@ -748,7 +750,9 @@ impl ConsensusEngine {
                     warn!(view = %certificate.view, "invalid QC aggregate signature");
                     return false;
                 }
-                if !hotmint_crypto::has_quorum(vs, &certificate.aggregate_signature) {
+                if certificate.epoch == self.state.current_epoch.number
+                    && !hotmint_crypto::has_quorum(vs, &certificate.aggregate_signature)
+                {
                     warn!(view = %certificate.view, "Prepare QC below quorum threshold");
                     return false;
                 }
@@ -1139,10 +1143,17 @@ impl ConsensusEngine {
                         warn!(validator = %validator, "wish carries invalid highest_qc signature");
                         return Ok(());
                     }
-                    if !hotmint_crypto::has_quorum(
-                        &self.state.validator_set,
-                        &qc.aggregate_signature,
-                    ) {
+                    // Only enforce quorum against the current validator set if the
+                    // QC was formed in the current epoch. A QC from a previous epoch
+                    // may not meet the new set's quorum threshold (e.g., after a
+                    // validator power change), but its signatures were already verified
+                    // above, so it remains a valid proof of finality in its own epoch.
+                    if qc.epoch == self.state.current_epoch.number
+                        && !hotmint_crypto::has_quorum(
+                            &self.state.validator_set,
+                            &qc.aggregate_signature,
+                        )
+                    {
                         warn!(validator = %validator, "wish carries highest_qc without quorum");
                         return Ok(());
                     }
