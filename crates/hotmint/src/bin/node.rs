@@ -721,7 +721,9 @@ async fn run_node(
             verifier: Box::new(Ed25519Verifier),
             pacemaker: Some(pacemaker_config),
             persistence: Some(Box::new(pcs)),
-            evidence_store: None,
+            evidence_store: Some(Box::new(
+                hotmint_storage::evidence_store::MemoryEvidenceStore::new(),
+            )),
         },
     );
 
