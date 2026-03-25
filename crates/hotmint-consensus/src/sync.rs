@@ -268,7 +268,19 @@ pub fn replay_blocks(
     blocks: &[(Block, Option<hotmint_types::QuorumCertificate>)],
     state: &mut SyncState<'_>,
 ) -> Result<()> {
+    // H-7: Track pending epoch separately, matching the runtime's deferred
+    // activation semantics. The new epoch only takes effect when we reach
+    // its start_view, preventing validator set mismatches during replay.
+    let mut pending_epoch: Option<Epoch> = None;
+
     for (i, (block, qc)) in blocks.iter().enumerate() {
+        // H-7: Apply pending epoch transition at exactly start_view, matching
+        // the engine's advance_view_to behavior.
+        if let Some(ref ep) = pending_epoch {
+            if block.view >= ep.start_view {
+                *state.current_epoch = pending_epoch.take().unwrap();
+            }
+        }
         // Validate chain continuity
         if i > 0 && block.parent_hash != blocks[i - 1].0.hash {
             return Err(eg!(
@@ -414,19 +426,24 @@ pub fn replay_blocks(
             block.app_hash
         };
 
-        // Handle epoch transitions
+        // Handle epoch transitions — defer to start_view (H-7)
         if !response.validator_updates.is_empty() {
             let new_vs = state
                 .current_epoch
                 .validator_set
                 .apply_updates(&response.validator_updates);
-            // Epoch starts 2 views after the committing block (same as commit.rs)
             let epoch_start = ViewNumber(block.view.as_u64() + 2);
-            *state.current_epoch =
-                Epoch::new(state.current_epoch.number.next(), epoch_start, new_vs);
+            pending_epoch =
+                Some(Epoch::new(state.current_epoch.number.next(), epoch_start, new_vs));
         }
 
         *state.last_committed_height = block.height;
+    }
+
+    // Apply any pending epoch that was never reached during replay
+    // (the remaining blocks in the batch ended before start_view).
+    if let Some(ep) = pending_epoch {
+        *state.current_epoch = ep;
     }
 
     Ok(())
