@@ -1099,10 +1099,46 @@ impl ConsensusEngine {
             }
 
             ConsensusMessage::Evidence(proof) => {
+                // C-6: Cryptographically verify evidence before accepting.
+                // Both signatures must be valid from the alleged validator for
+                // different block hashes at the same (view, vote_type).
+                let vs = &self.state.validator_set;
+                let vi = match vs.get(proof.validator) {
+                    Some(vi) => vi,
+                    None => {
+                        warn!(validator = %proof.validator, "evidence for unknown validator");
+                        return Ok(());
+                    }
+                };
+                if proof.block_hash_a == proof.block_hash_b {
+                    warn!(validator = %proof.validator, "evidence has identical block hashes");
+                    return Ok(());
+                }
+                let bytes_a = Vote::signing_bytes(
+                    &self.state.chain_id_hash,
+                    self.state.current_epoch.number,
+                    proof.view,
+                    &proof.block_hash_a,
+                    proof.vote_type,
+                );
+                let bytes_b = Vote::signing_bytes(
+                    &self.state.chain_id_hash,
+                    self.state.current_epoch.number,
+                    proof.view,
+                    &proof.block_hash_b,
+                    proof.vote_type,
+                );
+                if !self.verifier.verify(&vi.public_key, &bytes_a, &proof.signature_a)
+                    || !self.verifier.verify(&vi.public_key, &bytes_b, &proof.signature_b)
+                {
+                    warn!(validator = %proof.validator, "evidence has invalid signatures");
+                    return Ok(());
+                }
+
                 info!(
                     validator = %proof.validator,
                     view = %proof.view,
-                    "received evidence gossip"
+                    "received valid evidence gossip"
                 );
                 if let Err(e) = self.app.on_evidence(&proof) {
                     warn!(error = %e, "on_evidence callback failed for gossiped proof");
