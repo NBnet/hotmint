@@ -257,6 +257,17 @@ pub fn on_proposal(
         ));
     }
 
+    // C-4: Verify block extends the chain certified by the justify QC.
+    // The genesis QC certifies BlockHash::GENESIS, and the first block's
+    // parent is also GENESIS, so this check is correct for height 1 as well.
+    if block.parent_hash != justify.block_hash {
+        return Err(eg!(
+            "block parent_hash {} does not match justify block_hash {}",
+            block.parent_hash,
+            justify.block_hash
+        ));
+    }
+
     let ctx = BlockContext {
         height: block.height,
         view: block.view,
