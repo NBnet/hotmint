@@ -78,22 +78,25 @@ pub async fn sync_to_tip(
         "starting block sync"
     );
 
-    // Batch sync loop
+    // Pipelined sync: prefetch the next batch while replaying the current one.
+    // This overlaps network latency with CPU-bound block execution.
+
+    // Request first batch
+    let first_from = Height(state.last_committed_height.as_u64() + 1);
+    let first_to = Height(cmp::min(
+        first_from.as_u64() + MAX_SYNC_BATCH - 1,
+        peer_status.as_u64(),
+    ));
+    request_tx
+        .send(SyncRequest::GetBlocks {
+            from_height: first_from,
+            to_height: first_to,
+        })
+        .await
+        .map_err(|_| eg!("sync channel closed"))?;
+
     loop {
-        let from = Height(state.last_committed_height.as_u64() + 1);
-        let to = Height(cmp::min(
-            from.as_u64() + MAX_SYNC_BATCH - 1,
-            peer_status.as_u64(),
-        ));
-
-        request_tx
-            .send(SyncRequest::GetBlocks {
-                from_height: from,
-                to_height: to,
-            })
-            .await
-            .map_err(|_| eg!("sync channel closed"))?;
-
+        // Wait for current batch
         let blocks = match timeout(SYNC_TIMEOUT, response_rx.recv()).await {
             Ok(Some(SyncResponse::Blocks(blocks))) => blocks,
             Ok(Some(SyncResponse::Error(e))) => return Err(eg!("peer error: {}", e)),
@@ -112,11 +115,29 @@ pub async fn sync_to_tip(
             break;
         }
 
-        // Validate chain continuity and replay.
-        // Ignore the pending epoch return — across multiple sync batches,
-        // the next batch's replay will apply it when start_view is reached.
-        // After sync_to_tip finishes, the engine's regular epoch logic handles
-        // any remaining pending epoch via its PersistentConsensusState.
+        // Prefetch next batch BEFORE replaying current one (pipeline overlap).
+        let synced_through = state.last_committed_height.as_u64() + blocks.len() as u64;
+        let needs_more = synced_through < peer_status.as_u64();
+        if needs_more {
+            let next_from = Height(
+                blocks
+                    .last()
+                    .map(|(b, _)| b.height.as_u64() + 1)
+                    .unwrap_or(first_from.as_u64()),
+            );
+            let next_to = Height(cmp::min(
+                next_from.as_u64() + MAX_SYNC_BATCH - 1,
+                peer_status.as_u64(),
+            ));
+            let _ = request_tx
+                .send(SyncRequest::GetBlocks {
+                    from_height: next_from,
+                    to_height: next_to,
+                })
+                .await;
+        }
+
+        // Replay current batch while the next one is being fetched.
         let _pending = replay_blocks(&blocks, state)?;
 
         info!(
@@ -125,7 +146,7 @@ pub async fn sync_to_tip(
             "sync progress"
         );
 
-        if *state.last_committed_height >= peer_status {
+        if *state.last_committed_height >= peer_status || !needs_more {
             break;
         }
     }
@@ -136,6 +157,21 @@ pub async fn sync_to_tip(
         "block sync complete"
     );
     Ok(())
+}
+
+/// Query a peer's status via the sync channel. Returns `None` on timeout/error.
+pub async fn query_peer_status(
+    request_tx: &mpsc::Sender<SyncRequest>,
+    response_rx: &mut mpsc::Receiver<SyncResponse>,
+) -> Option<Height> {
+    request_tx.send(SyncRequest::GetStatus).await.ok()?;
+    match timeout(SYNC_TIMEOUT, response_rx.recv()).await {
+        Ok(Some(SyncResponse::Status {
+            last_committed_height,
+            ..
+        })) => Some(last_committed_height),
+        _ => None,
+    }
 }
 
 /// Attempt state sync via snapshots. Returns `Ok(true)` if successful,
