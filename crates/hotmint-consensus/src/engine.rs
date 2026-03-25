@@ -279,6 +279,18 @@ impl ConsensusEngine {
     /// Bootstrap and start the event loop.
     /// If persisted state was restored (current_view > 1), skip genesis bootstrap.
     pub async fn run(mut self) {
+        // Check application info against consensus state for divergence detection.
+        let app_info = self.app.info();
+        if app_info.last_block_height.as_u64() > 0
+            && app_info.last_block_height != self.state.last_committed_height
+        {
+            warn!(
+                app_height = app_info.last_block_height.as_u64(),
+                consensus_height = self.state.last_committed_height.as_u64(),
+                "application height differs from consensus state — possible state divergence"
+            );
+        }
+
         if self.state.current_view.as_u64() <= 1 {
             self.enter_genesis_view().await;
         } else {

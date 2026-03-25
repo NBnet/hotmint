@@ -6,6 +6,7 @@ use hotmint_types::context::{BlockContext, TxContext};
 use hotmint_types::evidence::EquivocationProof;
 use hotmint_types::validator::ValidatorId;
 use hotmint_types::validator_update::EndBlockResponse;
+use hotmint_types::Height;
 
 /// Result of transaction validation, including priority and gas for mempool ordering.
 #[derive(Debug, Clone)]
@@ -46,6 +47,18 @@ impl TxValidationResult {
     }
 }
 
+/// Application info returned by [`Application::info`].
+///
+/// Used on startup to reconcile the application's last committed state with
+/// the consensus engine's persisted state.
+#[derive(Debug, Clone, Default)]
+pub struct AppInfo {
+    /// The height of the last block the application has committed.
+    pub last_block_height: Height,
+    /// The app_hash after the last committed block.
+    pub last_block_app_hash: BlockHash,
+}
+
 /// Application interface for the consensus engine.
 ///
 /// The lifecycle for each committed block:
@@ -65,6 +78,26 @@ impl TxValidationResult {
 ///
 /// All methods have default no-op implementations.
 pub trait Application: Send + Sync {
+    /// Return the application's last committed height and app_hash.
+    ///
+    /// Called on startup so the consensus engine can detect state divergence
+    /// between its persisted state and the application. Equivalent to
+    /// CometBFT's `Info` RPC.
+    fn info(&self) -> AppInfo {
+        AppInfo::default()
+    }
+
+    /// Initialize the application with genesis state.
+    ///
+    /// Called once before the first block when the chain starts from height 0.
+    /// The application should use this to set its initial state (e.g. genesis
+    /// accounts, initial parameters). Returns the initial app_hash.
+    ///
+    /// Equivalent to CometBFT's `InitChain`.
+    fn init_chain(&self, _app_state: &[u8]) -> Result<BlockHash> {
+        Ok(BlockHash::GENESIS)
+    }
+
     /// Create a payload for a new block proposal.
     /// Typically pulls transactions from the mempool.
     ///
