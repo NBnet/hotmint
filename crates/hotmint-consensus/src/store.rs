@@ -37,6 +37,27 @@ pub trait BlockStore: Send + Sync {
     fn tip_height(&self) -> Height {
         Height::GENESIS
     }
+
+    /// Store a tx hash → (height, index) mapping.
+    fn put_tx_index(&mut self, _tx_hash: [u8; 32], _height: Height, _index: u32) {}
+
+    /// Look up a tx hash → (height, index_in_block).
+    fn get_tx_location(&self, _tx_hash: &[u8; 32]) -> Option<(Height, u32)> {
+        None
+    }
+
+    /// Store the EndBlockResponse for a given height.
+    fn put_block_results(
+        &mut self,
+        _height: Height,
+        _results: hotmint_types::EndBlockResponse,
+    ) {
+    }
+
+    /// Retrieve the EndBlockResponse for a given height.
+    fn get_block_results(&self, _height: Height) -> Option<hotmint_types::EndBlockResponse> {
+        None
+    }
 }
 
 /// Adapter that implements `BlockStore` over a shared `Arc<RwLock<Box<dyn BlockStore>>>`,
@@ -76,6 +97,18 @@ impl BlockStore for SharedStoreAdapter {
     }
     fn flush(&self) {
         self.0.blocking_read().flush();
+    }
+    fn put_tx_index(&mut self, tx_hash: [u8; 32], height: Height, index: u32) {
+        self.0.blocking_write().put_tx_index(tx_hash, height, index);
+    }
+    fn get_tx_location(&self, tx_hash: &[u8; 32]) -> Option<(Height, u32)> {
+        self.0.blocking_read().get_tx_location(tx_hash)
+    }
+    fn put_block_results(&mut self, height: Height, results: hotmint_types::EndBlockResponse) {
+        self.0.blocking_write().put_block_results(height, results);
+    }
+    fn get_block_results(&self, height: Height) -> Option<hotmint_types::EndBlockResponse> {
+        self.0.blocking_read().get_block_results(height)
     }
 }
 

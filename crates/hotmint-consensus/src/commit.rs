@@ -4,7 +4,9 @@ use crate::application::Application;
 use crate::store::BlockStore;
 use hotmint_types::context::BlockContext;
 use hotmint_types::epoch::Epoch;
-use hotmint_types::{Block, BlockHash, DoubleCertificate, Height, ViewNumber};
+use hotmint_types::{
+    Block, BlockHash, DoubleCertificate, EndBlockResponse, Height, ViewNumber,
+};
 use tracing::info;
 
 /// Result of a commit operation
@@ -16,6 +18,8 @@ pub struct CommitResult {
     pub pending_epoch: Option<Epoch>,
     /// Application state root after executing the last committed block.
     pub last_app_hash: BlockHash,
+    /// EndBlockResponse for each committed block (same order as committed_blocks).
+    pub block_responses: Vec<EndBlockResponse>,
 }
 
 /// Decode length-prefixed transactions from a block payload.
@@ -62,6 +66,7 @@ pub fn try_commit(
             commit_qc: double_cert.inner_qc.clone(),
             pending_epoch: None,
             last_app_hash: BlockHash::GENESIS,
+            block_responses: vec![],
         });
     }
 
@@ -101,6 +106,7 @@ pub fn try_commit(
 
     let mut pending_epoch = None;
     let mut last_app_hash = BlockHash::GENESIS;
+    let mut block_responses = Vec::with_capacity(to_commit.len());
 
     for block in &to_commit {
         let ctx = BlockContext {
@@ -164,6 +170,7 @@ pub fn try_commit(
             pending_epoch = Some(Epoch::new(current_epoch.number.next(), epoch_start, new_vs));
         }
 
+        block_responses.push(response);
         *last_committed_height = block.height;
     }
 
@@ -172,6 +179,7 @@ pub fn try_commit(
         commit_qc: double_cert.inner_qc.clone(),
         pending_epoch,
         last_app_hash,
+        block_responses,
     })
 }
 

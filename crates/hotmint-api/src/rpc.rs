@@ -8,10 +8,11 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::types::{
-    BlockInfo, CommitQcInfo, EpochInfo, HeaderInfo, RpcRequest, RpcResponse, StatusInfo, TxResult,
-    ValidatorInfoResponse,
+    BlockInfo, BlockResultsInfo, CommitQcInfo, EpochInfo, EventAttributeInfo, EventInfo, HeaderInfo,
+    RpcRequest, RpcResponse, StatusInfo, TxInfo, TxResult, ValidatorInfoResponse,
 };
 use hotmint_consensus::application::Application;
+use hotmint_consensus::commit::decode_payload;
 use hotmint_consensus::store::BlockStore;
 use hotmint_mempool::Mempool;
 use hotmint_network::service::PeerStatus;
@@ -415,6 +416,119 @@ pub(crate) async fn handle_request(
                     req.id,
                     -32602,
                     format!("commit QC at height {height} not found"),
+                ),
+            }
+        }
+
+        "get_tx" => {
+            let hash_hex = match req.params.as_str() {
+                Some(h) if !h.is_empty() => h,
+                _ => {
+                    return RpcResponse::err(
+                        req.id,
+                        -32602,
+                        "params must be a hex-encoded tx hash".to_string(),
+                    );
+                }
+            };
+            let hash_bytes = match hex_decode(hash_hex) {
+                Some(b) if b.len() == 32 => {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&b);
+                    arr
+                }
+                _ => {
+                    return RpcResponse::err(
+                        req.id,
+                        -32602,
+                        "invalid tx hash (expected 32-byte hex)".to_string(),
+                    );
+                }
+            };
+            let store = state.store.read().await;
+            match store.get_tx_location(&hash_bytes) {
+                Some((height, index)) => match store.get_block_by_height(height) {
+                    Some(block) => {
+                        let txs = decode_payload(&block.payload);
+                        match txs.get(index as usize) {
+                            Some(tx_bytes) => {
+                                let info = TxInfo {
+                                    tx_hash: hash_hex.to_string(),
+                                    height: height.as_u64(),
+                                    index,
+                                    data: hex_encode(tx_bytes),
+                                };
+                                json_ok(req.id, &info)
+                            }
+                            None => RpcResponse::err(
+                                req.id,
+                                -32602,
+                                "tx index out of range in block".to_string(),
+                            ),
+                        }
+                    }
+                    None => RpcResponse::err(
+                        req.id,
+                        -32602,
+                        format!("block at height {} not found", height.as_u64()),
+                    ),
+                },
+                None => {
+                    RpcResponse::err(req.id, -32602, "transaction not found".to_string())
+                }
+            }
+        }
+
+        "get_block_results" => {
+            let height = match req.params.get("height").and_then(|v| v.as_u64()) {
+                Some(h) => h,
+                None => {
+                    return RpcResponse::err(
+                        req.id,
+                        -32602,
+                        "missing or invalid 'height' parameter".to_string(),
+                    );
+                }
+            };
+            let store = state.store.read().await;
+            match store.get_block_results(Height(height)) {
+                Some(results) => {
+                    // Also compute tx hashes from the block payload.
+                    let tx_hashes = if let Some(block) = store.get_block_by_height(Height(height))
+                    {
+                        decode_payload(&block.payload)
+                            .iter()
+                            .map(|tx| hex_encode(blake3::hash(tx).as_bytes()))
+                            .collect()
+                    } else {
+                        vec![]
+                    };
+                    let info = BlockResultsInfo {
+                        height,
+                        tx_hashes,
+                        events: results
+                            .events
+                            .iter()
+                            .map(|e| EventInfo {
+                                r#type: e.r#type.clone(),
+                                attributes: e
+                                    .attributes
+                                    .iter()
+                                    .map(|a| EventAttributeInfo {
+                                        key: a.key.clone(),
+                                        value: a.value.clone(),
+                                    })
+                                    .collect(),
+                            })
+                            .collect(),
+                        app_hash: hex_encode(&results.app_hash.0),
+                    };
+                    json_ok(req.id, &info)
+                }
+                None => RpcResponse::err(
+                    req.id,
+                    -32602,
+                    format!("block results at height {height} not found"),
                 ),
             }
         }

@@ -1409,14 +1409,20 @@ impl ConsensusEngine {
                 drop(store);
                 {
                     let mut s = self.store.write().await;
-                    for block in &result.committed_blocks {
+                    for (i, block) in result.committed_blocks.iter().enumerate() {
                         // R-28: only write the commit QC for the block it actually certifies.
-                        // Ancestor blocks committed via the chain rule may get their QC stored
-                        // by the justify-QC persistence in handle_message (Propose path).
-                        // Writing the wrong QC (mismatched block_hash) here would cause sync
-                        // verification failures for those ancestor blocks.
                         if result.commit_qc.block_hash == block.hash {
                             s.put_commit_qc(block.height, result.commit_qc.clone());
+                        }
+                        // Index individual transactions by their blake3 hash.
+                        let txs = crate::commit::decode_payload(&block.payload);
+                        for (tx_idx, tx) in txs.iter().enumerate() {
+                            let tx_hash = *blake3::hash(tx).as_bytes();
+                            s.put_tx_index(tx_hash, block.height, tx_idx as u32);
+                        }
+                        // Store the EndBlockResponse for get_block_results RPC.
+                        if let Some(resp) = result.block_responses.get(i) {
+                            s.put_block_results(block.height, resp.clone());
                         }
                     }
                     s.flush();

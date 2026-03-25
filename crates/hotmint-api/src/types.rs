@@ -103,3 +103,35 @@ pub struct CommitQcInfo {
     pub signer_count: usize,
     pub epoch: u64,
 }
+
+/// Response for the `get_tx` RPC method.
+#[derive(Serialize)]
+pub struct TxInfo {
+    pub tx_hash: String,
+    pub height: u64,
+    pub index: u32,
+    /// Hex-encoded transaction bytes.
+    pub data: String,
+}
+
+/// Response for the `get_block_results` RPC method.
+#[derive(Serialize)]
+pub struct BlockResultsInfo {
+    pub height: u64,
+    pub tx_hashes: Vec<String>,
+    pub events: Vec<EventInfo>,
+    pub app_hash: String,
+}
+
+/// A single application event in the block results response.
+#[derive(Serialize)]
+pub struct EventInfo {
+    pub r#type: String,
+    pub attributes: Vec<EventAttributeInfo>,
+}
+
+#[derive(Serialize)]
+pub struct EventAttributeInfo {
+    pub key: String,
+    pub value: String,
+}

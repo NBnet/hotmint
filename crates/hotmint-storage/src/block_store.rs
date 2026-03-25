@@ -1,5 +1,5 @@
 use hotmint_consensus::store::BlockStore;
-use hotmint_types::{Block, BlockHash, Height, QuorumCertificate};
+use hotmint_types::{Block, BlockHash, EndBlockResponse, Height, QuorumCertificate};
 use ruc::*;
 use std::path::Path;
 use tracing::debug;
@@ -13,53 +13,96 @@ pub struct VsdbBlockStore {
     by_hash: MapxOrd<[u8; 32], Block>,
     by_height: MapxOrd<u64, [u8; 32]>,
     commit_qcs: MapxOrd<u64, QuorumCertificate>,
+    /// tx_hash → (height, tx_index_in_block)
+    tx_index: MapxOrd<[u8; 32], (u64, u32)>,
+    /// height → EndBlockResponse (block execution results)
+    block_results: MapxOrd<u64, EndBlockResponse>,
 }
 
 impl VsdbBlockStore {
     /// Opens an existing block store or creates a fresh one.
     ///
     /// Must be called after [`vsdb::vsdb_set_base_dir`].
-    /// The instance IDs of the three internal collections are stored in
-    /// `data_dir/block_store.meta` (24 bytes: three little-endian u64s).
-    /// On first run the file is created; on subsequent runs the collections
-    /// are recovered from their saved IDs via [`MapxOrd::from_meta`].
+    /// The instance IDs of the internal collections are stored in
+    /// `data_dir/block_store.meta`. On first run the file is created;
+    /// on subsequent runs the collections are recovered from saved IDs.
+    ///
+    /// Backward-compatible: 24-byte meta (v1, 3 collections) is auto-migrated
+    /// to 40 bytes (v2, 5 collections) on first open.
     pub fn open(data_dir: &Path) -> Result<Self> {
         let meta_path = data_dir.join(META_FILE);
         if meta_path.exists() {
             let bytes = std::fs::read(&meta_path).c(d!("read block_store.meta"))?;
-            if bytes.len() != 24 {
-                return Err(eg!(
-                    "corrupt block_store.meta: expected 24 bytes, got {}",
+            if bytes.len() == 24 {
+                // v1 meta: migrate by creating two new collections.
+                let by_hash_id = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+                let by_height_id = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+                let commit_qcs_id = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
+                let tx_index: MapxOrd<[u8; 32], (u64, u32)> = MapxOrd::new();
+                let block_results: MapxOrd<u64, EndBlockResponse> = MapxOrd::new();
+                let tx_index_id = tx_index.save_meta().c(d!())?;
+                let block_results_id = block_results.save_meta().c(d!())?;
+                let mut meta = [0u8; 40];
+                meta[0..8].copy_from_slice(&by_hash_id.to_le_bytes());
+                meta[8..16].copy_from_slice(&by_height_id.to_le_bytes());
+                meta[16..24].copy_from_slice(&commit_qcs_id.to_le_bytes());
+                meta[24..32].copy_from_slice(&tx_index_id.to_le_bytes());
+                meta[32..40].copy_from_slice(&block_results_id.to_le_bytes());
+                std::fs::write(&meta_path, meta).c(d!("write block_store.meta v2"))?;
+                Ok(Self {
+                    by_hash: MapxOrd::from_meta(by_hash_id).c(d!("restore by_hash"))?,
+                    by_height: MapxOrd::from_meta(by_height_id).c(d!("restore by_height"))?,
+                    commit_qcs: MapxOrd::from_meta(commit_qcs_id).c(d!("restore commit_qcs"))?,
+                    tx_index,
+                    block_results,
+                })
+            } else if bytes.len() == 40 {
+                let by_hash_id = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+                let by_height_id = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+                let commit_qcs_id = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
+                let tx_index_id = u64::from_le_bytes(bytes[24..32].try_into().unwrap());
+                let block_results_id = u64::from_le_bytes(bytes[32..40].try_into().unwrap());
+                Ok(Self {
+                    by_hash: MapxOrd::from_meta(by_hash_id).c(d!("restore by_hash"))?,
+                    by_height: MapxOrd::from_meta(by_height_id).c(d!("restore by_height"))?,
+                    commit_qcs: MapxOrd::from_meta(commit_qcs_id).c(d!("restore commit_qcs"))?,
+                    tx_index: MapxOrd::from_meta(tx_index_id).c(d!("restore tx_index"))?,
+                    block_results: MapxOrd::from_meta(block_results_id)
+                        .c(d!("restore block_results"))?,
+                })
+            } else {
+                Err(eg!(
+                    "corrupt block_store.meta: expected 24 or 40 bytes, got {}",
                     bytes.len()
-                ));
+                ))
             }
-            let by_hash_id = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
-            let by_height_id = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
-            let commit_qcs_id = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
-            Ok(Self {
-                by_hash: MapxOrd::from_meta(by_hash_id).c(d!("restore by_hash"))?,
-                by_height: MapxOrd::from_meta(by_height_id).c(d!("restore by_height"))?,
-                commit_qcs: MapxOrd::from_meta(commit_qcs_id).c(d!("restore commit_qcs"))?,
-            })
         } else {
             let by_hash: MapxOrd<[u8; 32], Block> = MapxOrd::new();
             let by_height: MapxOrd<u64, [u8; 32]> = MapxOrd::new();
             let commit_qcs: MapxOrd<u64, QuorumCertificate> = MapxOrd::new();
+            let tx_index: MapxOrd<[u8; 32], (u64, u32)> = MapxOrd::new();
+            let block_results: MapxOrd<u64, EndBlockResponse> = MapxOrd::new();
 
             let by_hash_id = by_hash.save_meta().c(d!())?;
             let by_height_id = by_height.save_meta().c(d!())?;
             let commit_qcs_id = commit_qcs.save_meta().c(d!())?;
+            let tx_index_id = tx_index.save_meta().c(d!())?;
+            let block_results_id = block_results.save_meta().c(d!())?;
 
-            let mut meta = [0u8; 24];
+            let mut meta = [0u8; 40];
             meta[0..8].copy_from_slice(&by_hash_id.to_le_bytes());
             meta[8..16].copy_from_slice(&by_height_id.to_le_bytes());
             meta[16..24].copy_from_slice(&commit_qcs_id.to_le_bytes());
+            meta[24..32].copy_from_slice(&tx_index_id.to_le_bytes());
+            meta[32..40].copy_from_slice(&block_results_id.to_le_bytes());
             std::fs::write(&meta_path, meta).c(d!("write block_store.meta"))?;
 
             let mut store = Self {
                 by_hash,
                 by_height,
                 commit_qcs,
+                tx_index,
+                block_results,
             };
             store.put_block(Block::genesis());
             Ok(store)
@@ -73,6 +116,8 @@ impl VsdbBlockStore {
             by_hash: MapxOrd::new(),
             by_height: MapxOrd::new(),
             commit_qcs: MapxOrd::new(),
+            tx_index: MapxOrd::new(),
+            block_results: MapxOrd::new(),
         };
         store.put_block(Block::genesis());
         store
@@ -134,5 +179,23 @@ impl BlockStore for VsdbBlockStore {
 
     fn flush(&self) {
         vsdb::vsdb_flush();
+    }
+
+    fn put_tx_index(&mut self, tx_hash: [u8; 32], height: Height, index: u32) {
+        self.tx_index.insert(&tx_hash, &(height.as_u64(), index));
+    }
+
+    fn get_tx_location(&self, tx_hash: &[u8; 32]) -> Option<(Height, u32)> {
+        self.tx_index
+            .get(tx_hash)
+            .map(|(h, idx)| (Height(h), idx))
+    }
+
+    fn put_block_results(&mut self, height: Height, results: EndBlockResponse) {
+        self.block_results.insert(&height.as_u64(), &results);
+    }
+
+    fn get_block_results(&self, height: Height) -> Option<EndBlockResponse> {
+        self.block_results.get(&height.as_u64())
     }
 }
