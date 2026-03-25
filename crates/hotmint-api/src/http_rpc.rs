@@ -188,15 +188,15 @@ impl SubscribeFilter {
             _ => None,
         };
         if let Some(h) = height {
-            if let Some(min) = self.min_height {
-                if h < min {
-                    return false;
-                }
+            if let Some(min) = self.min_height
+                && h < min
+            {
+                return false;
             }
-            if let Some(max) = self.max_height {
-                if h > max {
-                    return false;
-                }
+            if let Some(max) = self.max_height
+                && h > max
+            {
+                return false;
             }
         }
         // Check tx hash filter. When set, only TxCommitted events matching

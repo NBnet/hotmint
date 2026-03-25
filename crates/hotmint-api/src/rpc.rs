@@ -8,8 +8,8 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 
 use crate::types::{
-    BlockInfo, BlockResultsInfo, CommitQcInfo, EpochInfo, EventAttributeInfo, EventInfo, HeaderInfo,
-    QueryResponseInfo, RpcRequest, RpcResponse, StatusInfo, TxInfo, TxResult,
+    BlockInfo, BlockResultsInfo, CommitQcInfo, EpochInfo, EventAttributeInfo, EventInfo,
+    HeaderInfo, QueryResponseInfo, RpcRequest, RpcResponse, StatusInfo, TxInfo, TxResult,
     ValidatorInfoResponse, VerifyHeaderResult,
 };
 use hotmint_consensus::application::Application;
@@ -199,6 +199,12 @@ pub struct PerIpRateLimiter {
     last_prune: Instant,
 }
 
+impl Default for PerIpRateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerIpRateLimiter {
     pub fn new() -> Self {
         Self {
@@ -304,10 +310,8 @@ pub(crate) async fn handle_request(
                 .add_tx_with_gas(tx_bytes.clone(), priority, gas_wanted)
                 .await;
             // Gossip accepted transactions to peers.
-            if accepted {
-                if let Some(ref gossip) = state.tx_gossip {
-                    let _ = gossip.try_send(tx_bytes);
-                }
+            if accepted && let Some(ref gossip) = state.tx_gossip {
+                let _ = gossip.try_send(tx_bytes);
             }
             json_ok(req.id, &TxResult { accepted })
         }
@@ -483,9 +487,7 @@ pub(crate) async fn handle_request(
                         format!("block at height {} not found", height.as_u64()),
                     ),
                 },
-                None => {
-                    RpcResponse::err(req.id, -32602, "transaction not found".to_string())
-                }
+                None => RpcResponse::err(req.id, -32602, "transaction not found".to_string()),
             }
         }
 
@@ -504,8 +506,7 @@ pub(crate) async fn handle_request(
             match store.get_block_results(Height(height)) {
                 Some(results) => {
                     // Also compute tx hashes from the block payload.
-                    let tx_hashes = if let Some(block) = store.get_block_by_height(Height(height))
-                    {
+                    let tx_hashes = if let Some(block) = store.get_block_by_height(Height(height)) {
                         decode_payload(&block.payload)
                             .iter()
                             .map(|tx| hex_encode(blake3::hash(tx).as_bytes()))
@@ -554,7 +555,11 @@ pub(crate) async fn handle_request(
                     );
                 }
             };
-            let data_hex = req.params.get("data").and_then(|v| v.as_str()).unwrap_or("");
+            let data_hex = req
+                .params
+                .get("data")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let data = hex_decode(data_hex).unwrap_or_default();
             match &state.app {
                 Some(app) => match app.query(path, &data) {
@@ -592,35 +597,23 @@ pub(crate) async fn handle_request(
             let qc_val = match req.params.get("qc") {
                 Some(v) => v,
                 None => {
-                    return RpcResponse::err(
-                        req.id,
-                        -32602,
-                        "missing 'qc' parameter".to_string(),
-                    );
+                    return RpcResponse::err(req.id, -32602, "missing 'qc' parameter".to_string());
                 }
             };
-            let header: hotmint_light::BlockHeader = match serde_json::from_value(header_val.clone())
-            {
-                Ok(h) => h,
-                Err(e) => {
-                    return RpcResponse::err(
-                        req.id,
-                        -32602,
-                        format!("invalid header: {e}"),
-                    );
-                }
-            };
-            let qc: hotmint_types::QuorumCertificate =
-                match serde_json::from_value(qc_val.clone()) {
-                    Ok(q) => q,
+            let header: hotmint_light::BlockHeader =
+                match serde_json::from_value(header_val.clone()) {
+                    Ok(h) => h,
                     Err(e) => {
-                        return RpcResponse::err(
-                            req.id,
-                            -32602,
-                            format!("invalid qc: {e}"),
-                        );
+                        return RpcResponse::err(req.id, -32602, format!("invalid header: {e}"));
                     }
                 };
+            let qc: hotmint_types::QuorumCertificate = match serde_json::from_value(qc_val.clone())
+            {
+                Ok(q) => q,
+                Err(e) => {
+                    return RpcResponse::err(req.id, -32602, format!("invalid qc: {e}"));
+                }
+            };
             // Build a LightClient from the current validator set.
             let validators_info = state.validator_set_rx.borrow().clone();
             let validators: Vec<hotmint_types::ValidatorInfo> = validators_info
@@ -691,7 +684,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len())

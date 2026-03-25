@@ -88,11 +88,7 @@ impl VoteCollector {
             // Collect extensions from Vote2 messages.
             let exts: Vec<(hotmint_types::ValidatorId, Vec<u8>)> = votes
                 .iter()
-                .filter_map(|v| {
-                    v.extension
-                        .as_ref()
-                        .map(|ext| (v.validator, ext.clone()))
-                })
+                .filter_map(|v| v.extension.as_ref().map(|ext| (v.validator, ext.clone())))
                 .collect();
             (
                 Some(QuorumCertificate {

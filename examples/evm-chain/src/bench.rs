@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use std::time::Instant;
 use parking_lot::RwLock;
+use std::time::Instant;
 
 use ruc::*;
 

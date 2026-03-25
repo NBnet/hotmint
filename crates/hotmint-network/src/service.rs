@@ -869,18 +869,19 @@ impl NetworkService {
 
                 // C-1: Proactive eviction — if a validator needs a slot and we're at
                 // the limit, evict the oldest non-validator connection to make room.
-                if is_validator && self.connected_peers.len() >= self.pex_config.max_peers {
-                    if let Some(evict_peer) = self.pick_non_validator_to_evict() {
-                        warn!(
-                            evict = %evict_peer,
-                            new_validator = %peer,
-                            "evicting non-validator peer to make room for validator"
-                        );
-                        self.connected_peers.remove(&evict_peer);
-                        self.notif_connected_peers.remove(&evict_peer);
-                        // litep2p doesn't expose disconnect — closing the notification
-                        // substream will cause the peer to be cleaned up eventually.
-                    }
+                if is_validator
+                    && self.connected_peers.len() >= self.pex_config.max_peers
+                    && let Some(evict_peer) = self.pick_non_validator_to_evict()
+                {
+                    warn!(
+                        evict = %evict_peer,
+                        new_validator = %peer,
+                        "evicting non-validator peer to make room for validator"
+                    );
+                    self.connected_peers.remove(&evict_peer);
+                    self.notif_connected_peers.remove(&evict_peer);
+                    // litep2p doesn't expose disconnect — closing the notification
+                    // substream will cause the peer to be cleaned up eventually.
                 }
 
                 info!(peer = %peer, endpoint = ?endpoint, "connection established");
@@ -1016,10 +1017,7 @@ impl NetworkService {
                 // Two-set rotation: swap active→backup when full, preserving
                 // recent history (same approach as relay dedup).
                 if self.mempool_seen_active.len() > 100_000 {
-                    std::mem::swap(
-                        &mut self.mempool_seen_active,
-                        &mut self.mempool_seen_backup,
-                    );
+                    std::mem::swap(&mut self.mempool_seen_active, &mut self.mempool_seen_backup);
                     self.mempool_seen_active.clear();
                 }
                 let _ = self.mempool_tx_tx.try_send(notification.freeze().to_vec());

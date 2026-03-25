@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use hotmint_types::validator::{ValidatorId, ValidatorSet};
 use hotmint_types::Height;
+use hotmint_types::validator::{ValidatorId, ValidatorSet};
 
 /// Tracks validator liveness within an epoch by counting missed commit-QC
 /// signatures.
@@ -18,6 +18,12 @@ pub struct LivenessTracker {
     /// offline if `missed / total_commits > threshold_num / threshold_den`.
     threshold_num: u64,
     threshold_den: u64,
+}
+
+impl Default for LivenessTracker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LivenessTracker {

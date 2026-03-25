@@ -186,9 +186,7 @@ impl BlockStore for VsdbBlockStore {
     }
 
     fn get_tx_location(&self, tx_hash: &[u8; 32]) -> Option<(Height, u32)> {
-        self.tx_index
-            .get(tx_hash)
-            .map(|(h, idx)| (Height(h), idx))
+        self.tx_index.get(tx_hash).map(|(h, idx)| (Height(h), idx))
     }
 
     fn put_block_results(&mut self, height: Height, results: EndBlockResponse) {

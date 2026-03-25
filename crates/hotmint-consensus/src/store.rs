@@ -47,12 +47,7 @@ pub trait BlockStore: Send + Sync {
     }
 
     /// Store the EndBlockResponse for a given height.
-    fn put_block_results(
-        &mut self,
-        _height: Height,
-        _results: hotmint_types::EndBlockResponse,
-    ) {
-    }
+    fn put_block_results(&mut self, _height: Height, _results: hotmint_types::EndBlockResponse) {}
 
     /// Retrieve the EndBlockResponse for a given height.
     fn get_block_results(&self, _height: Height) -> Option<hotmint_types::EndBlockResponse> {

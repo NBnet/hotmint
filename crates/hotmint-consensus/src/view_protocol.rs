@@ -307,14 +307,14 @@ pub fn on_proposal(
             return Err(eg!("non-genesis block has timestamp 0"));
         }
         // Check monotonicity against parent block (if available).
-        if let Some(parent) = store.get_block(&block.parent_hash) {
-            if block.timestamp < parent.timestamp {
-                return Err(eg!(
-                    "block timestamp {} < parent timestamp {}",
-                    block.timestamp,
-                    parent.timestamp
-                ));
-            }
+        if let Some(parent) = store.get_block(&block.parent_hash)
+            && block.timestamp < parent.timestamp
+        {
+            return Err(eg!(
+                "block timestamp {} < parent timestamp {}",
+                block.timestamp,
+                parent.timestamp
+            ));
         }
         // Allow up to 15 seconds of clock drift into the future.
         let now_ms = std::time::SystemTime::now()

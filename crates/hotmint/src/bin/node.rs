@@ -274,9 +274,9 @@ async fn run_node(
     fs::create_dir_all(&data_dir).c(d!("create data dir"))?;
     vsdb::vsdb_set_base_dir(&data_dir).c(d!("set vsdb base dir"))?;
 
-    let store: Arc<parking_lot::RwLock<Box<dyn BlockStore>>> = Arc::new(parking_lot::RwLock::new(Box::new(
-        VsdbBlockStore::open(&data_dir).c(d!("open block store"))?,
-    )));
+    let store: Arc<parking_lot::RwLock<Box<dyn BlockStore>>> = Arc::new(parking_lot::RwLock::new(
+        Box::new(VsdbBlockStore::open(&data_dir).c(d!("open block store"))?),
+    ));
 
     // 6. Restore consensus state
     let pcs = PersistentConsensusState::open(&data_dir).c(d!("open consensus state"))?;

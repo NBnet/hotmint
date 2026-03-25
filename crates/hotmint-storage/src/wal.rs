@@ -16,9 +16,7 @@ enum WalEntry {
         target_height: Height,
     },
     /// Logged after commit + persist_state succeeds.
-    CommitDone {
-        target_height: Height,
-    },
+    CommitDone { target_height: Height },
 }
 
 const WAL_FILE: &str = "consensus.wal";
@@ -52,6 +50,7 @@ impl ConsensusWal {
         let path = data_dir.join(WAL_FILE);
         let mut file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .write(true)
             .read(true)
             .open(&path)?;
@@ -123,8 +122,7 @@ impl ConsensusWal {
     }
 
     fn write_entry(&mut self, entry: &WalEntry) -> io::Result<()> {
-        let payload =
-            postcard::to_allocvec(entry).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let payload = postcard::to_allocvec(entry).map_err(io::Error::other)?;
         let len = payload.len() as u32;
         self.file.write_all(&ENTRY_MAGIC)?;
         self.file.write_all(&len.to_le_bytes())?;
@@ -202,9 +200,12 @@ mod tests {
         drop(wal);
 
         let recovery = ConsensusWal::check_recovery(dir.path()).unwrap();
-        assert_eq!(recovery, WalRecovery::NeedsReplay {
-            target_height: Height(10),
-        });
+        assert_eq!(
+            recovery,
+            WalRecovery::NeedsReplay {
+                target_height: Height(10),
+            }
+        );
     }
 
     #[test]

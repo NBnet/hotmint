@@ -1,12 +1,12 @@
 use ruc::*;
 
 use hotmint_types::Block;
+use hotmint_types::Height;
 use hotmint_types::block::BlockHash;
 use hotmint_types::context::{BlockContext, TxContext};
 use hotmint_types::evidence::EquivocationProof;
 use hotmint_types::validator::ValidatorId;
 use hotmint_types::validator_update::EndBlockResponse;
-use hotmint_types::Height;
 
 /// Result of transaction validation, including priority and gas for mempool ordering.
 #[derive(Debug, Clone)]
@@ -151,10 +151,7 @@ pub trait Application: Send + Sync {
     ///
     /// The application can use this to apply downtime slashing.
     /// Each entry contains `(validator_id, missed_commits, total_commits)`.
-    fn on_offline_validators(
-        &self,
-        _offline: &[crate::liveness::OfflineEvidence],
-    ) -> Result<()> {
+    fn on_offline_validators(&self, _offline: &[crate::liveness::OfflineEvidence]) -> Result<()> {
         Ok(())
     }
 
@@ -179,7 +176,7 @@ pub trait Application: Send + Sync {
 
     /// Query application state.
     ///
-    /// Returns a [`QueryResponse`] containing the result data and an optional
+    /// Returns a [`hotmint_types::QueryResponse`] containing the result data and an optional
     /// Merkle proof that allows light clients to verify the result against the
     /// block's `app_hash` without trusting the full node.
     fn query(&self, _path: &str, _data: &[u8]) -> Result<hotmint_types::QueryResponse> {

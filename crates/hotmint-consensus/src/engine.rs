@@ -964,14 +964,12 @@ impl ConsensusEngine {
                 }
 
                 // WAL: log commit intent before fast-forward commit in on_proposal.
-                if let Some(ref dc) = double_cert {
-                    if let Some(ref mut wal) = self.wal {
-                        if let Some(target_block) = store.get_block(&dc.inner_qc.block_hash) {
-                            if let Err(e) = wal.log_commit_intent(target_block.height) {
-                                warn!(error = %e, "WAL: failed to log commit intent for fast-forward");
-                            }
-                        }
-                    }
+                if let Some(ref dc) = double_cert
+                    && let Some(ref mut wal) = self.wal
+                    && let Some(target_block) = store.get_block(&dc.inner_qc.block_hash)
+                    && let Err(e) = wal.log_commit_intent(target_block.height)
+                {
+                    warn!(error = %e, "WAL: failed to log commit intent for fast-forward");
                 }
 
                 let proposal_result = view_protocol::on_proposal(
@@ -1493,10 +1491,10 @@ impl ConsensusEngine {
             &result.commit_qc.aggregate_signature.signers,
         );
         self.persist_state();
-        if let Some(ref mut wal) = self.wal {
-            if let Err(e) = wal.log_commit_done(self.state.last_committed_height) {
-                warn!(error = %e, "WAL: failed to log commit done");
-            }
+        if let Some(ref mut wal) = self.wal
+            && let Err(e) = wal.log_commit_done(self.state.last_committed_height)
+        {
+            warn!(error = %e, "WAL: failed to log commit done");
         }
     }
 
@@ -1507,14 +1505,12 @@ impl ConsensusEngine {
         if let Some(ref mut wal) = self.wal {
             let target_height = {
                 let store = self.store.read();
-                store
-                    .get_block(&dc.inner_qc.block_hash)
-                    .map(|b| b.height)
+                store.get_block(&dc.inner_qc.block_hash).map(|b| b.height)
             };
-            if let Some(h) = target_height {
-                if let Err(e) = wal.log_commit_intent(h) {
-                    warn!(error = %e, "WAL: failed to log commit intent");
-                }
+            if let Some(h) = target_height
+                && let Err(e) = wal.log_commit_intent(h)
+            {
+                warn!(error = %e, "WAL: failed to log commit intent");
             }
         }
 

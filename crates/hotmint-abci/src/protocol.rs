@@ -193,7 +193,11 @@ pub fn encode_response(resp: &Response) -> Vec<u8> {
         },
         Response::Query(result) => pb::Response {
             response: Some(pb::response::Response::Query(pb::QueryResponse {
-                data: result.as_ref().ok().map(|r| r.data.clone()).unwrap_or_default(),
+                data: result
+                    .as_ref()
+                    .ok()
+                    .map(|r| r.data.clone())
+                    .unwrap_or_default(),
                 error: result.as_ref().err().cloned().unwrap_or_default(),
                 proof: result
                     .as_ref()

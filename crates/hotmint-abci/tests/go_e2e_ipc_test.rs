@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 
-use std::time::Duration;
 use parking_lot::RwLock;
+use std::time::Duration;
 
 use hotmint_abci::client::IpcApplicationClient;
 use hotmint_consensus::application::Application;
