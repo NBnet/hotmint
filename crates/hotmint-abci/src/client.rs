@@ -170,6 +170,7 @@ impl Application for IpcApplicationClient {
             Ok(Response::ValidateTx { ok, priority }) => TxValidationResult {
                 valid: ok,
                 priority,
+                gas_wanted: 0,
             },
             Ok(other) => {
                 tracing::error!(?other, "IPC_FAULT: unexpected response for validate_tx");

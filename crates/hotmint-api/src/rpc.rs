@@ -223,7 +223,7 @@ pub(crate) async fn handle_request(
                 }
             };
             // Validate via Application if available
-            let priority = if let Some(ref app) = state.app {
+            let (priority, gas_wanted) = if let Some(ref app) = state.app {
                 let result = app.validate_tx(&tx_bytes, None);
                 if !result.valid {
                     return RpcResponse::err(
@@ -232,11 +232,14 @@ pub(crate) async fn handle_request(
                         "transaction validation failed".to_string(),
                     );
                 }
-                result.priority
+                (result.priority, result.gas_wanted)
             } else {
-                0
+                (0, 0)
             };
-            let accepted = state.mempool.add_tx(tx_bytes, priority).await;
+            let accepted = state
+                .mempool
+                .add_tx_with_gas(tx_bytes, priority, gas_wanted)
+                .await;
             json_ok(req.id, &TxResult { accepted })
         }
 

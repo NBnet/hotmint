@@ -7,7 +7,7 @@ use hotmint_types::evidence::EquivocationProof;
 use hotmint_types::validator::ValidatorId;
 use hotmint_types::validator_update::EndBlockResponse;
 
-/// Result of transaction validation, including priority for mempool ordering.
+/// Result of transaction validation, including priority and gas for mempool ordering.
 #[derive(Debug, Clone)]
 pub struct TxValidationResult {
     /// Whether the transaction is valid.
@@ -15,6 +15,9 @@ pub struct TxValidationResult {
     /// Priority for mempool ordering (higher = included first).
     /// Applications typically derive this from gas price / fee.
     pub priority: u64,
+    /// Gas units this transaction will consume. Used by `collect_payload`
+    /// to enforce `max_gas_per_block` limits.  Default: 0 (no gas accounting).
+    pub gas_wanted: u64,
 }
 
 impl TxValidationResult {
@@ -22,6 +25,15 @@ impl TxValidationResult {
         Self {
             valid: true,
             priority,
+            gas_wanted: 0,
+        }
+    }
+
+    pub fn accept_with_gas(priority: u64, gas_wanted: u64) -> Self {
+        Self {
+            valid: true,
+            priority,
+            gas_wanted,
         }
     }
 
@@ -29,6 +41,7 @@ impl TxValidationResult {
         Self {
             valid: false,
             priority: 0,
+            gas_wanted: 0,
         }
     }
 }

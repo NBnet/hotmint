@@ -12,6 +12,7 @@ pub type TxHash = [u8; 32];
 struct TxEntry {
     tx: Vec<u8>,
     priority: u64,
+    gas_wanted: u64,
     hash: TxHash,
 }
 
@@ -77,6 +78,11 @@ impl Mempool {
     /// with a *lower* priority, the existing entry is replaced with the
     /// new higher-priority one. This lets wallets bump stuck transactions.
     pub async fn add_tx(&self, tx: Vec<u8>, priority: u64) -> bool {
+        self.add_tx_with_gas(tx, priority, 0).await
+    }
+
+    /// Add a transaction with priority and gas_wanted.
+    pub async fn add_tx_with_gas(&self, tx: Vec<u8>, priority: u64, gas_wanted: u64) -> bool {
         if tx.len() > self.max_tx_bytes {
             debug!(size = tx.len(), max = self.max_tx_bytes, "tx too large");
             return false;
@@ -97,11 +103,17 @@ impl Mempool {
             let old = TxEntry {
                 tx: tx.clone(),
                 priority: existing_priority,
+                gas_wanted: 0,
                 hash,
             };
             entries.remove(&old);
             seen.insert(hash, priority);
-            entries.insert(TxEntry { tx, priority, hash });
+            entries.insert(TxEntry {
+                tx,
+                priority,
+                gas_wanted,
+                hash,
+            });
             debug!(
                 old = existing_priority,
                 new = priority,
@@ -133,26 +145,48 @@ impl Mempool {
         }
 
         seen.insert(hash, priority);
-        entries.insert(TxEntry { tx, priority, hash });
+        entries.insert(TxEntry {
+            tx,
+            priority,
+            gas_wanted,
+            hash,
+        });
         true
     }
 
-    /// Collect transactions for a block proposal (up to max_bytes total).
+    /// Collect transactions for a block proposal (up to max_bytes and max_gas total).
     /// Collected transactions are removed from the pool and the seen set.
     /// Transactions are collected in priority order (highest first).
     /// The payload is length-prefixed: `[u32_le len][bytes]...`
+    ///
+    /// `max_gas` of 0 disables gas accounting (byte limit only).
     pub async fn collect_payload(&self, max_bytes: usize) -> Vec<u8> {
+        self.collect_payload_with_gas(max_bytes, 0).await
+    }
+
+    /// Collect with both byte and gas limits.
+    pub async fn collect_payload_with_gas(
+        &self,
+        max_bytes: usize,
+        max_gas: u64,
+    ) -> Vec<u8> {
         let mut entries = self.entries.lock().await;
         let mut seen = self.seen.lock().await;
         let mut payload = Vec::new();
+        let mut total_gas = 0u64;
 
         while let Some(entry) = entries.last() {
             // 4 bytes length prefix + tx bytes
             if payload.len() + 4 + entry.tx.len() > max_bytes {
                 break;
             }
+            // Gas limit check (when max_gas > 0)
+            if max_gas > 0 && total_gas + entry.gas_wanted > max_gas {
+                break;
+            }
             let entry = entries.pop_last().expect("just checked non-empty");
             seen.remove(&entry.hash);
+            total_gas += entry.gas_wanted;
             let len = entry.tx.len() as u32;
             payload.extend_from_slice(&len.to_le_bytes());
             payload.extend_from_slice(&entry.tx);
