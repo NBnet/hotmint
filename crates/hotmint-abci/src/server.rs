@@ -26,9 +26,9 @@ pub trait ApplicationHandler: Send + Sync {
         true
     }
 
-    fn validate_tx(&self, tx: Vec<u8>, ctx: Option<TxContext>) -> (bool, u64) {
+    fn validate_tx(&self, tx: Vec<u8>, ctx: Option<TxContext>) -> (bool, u64, u64) {
         let _ = (tx, ctx);
-        (true, 0)
+        (true, 0, 0)
     }
 
     fn execute_block(
@@ -136,8 +136,12 @@ impl<H: ApplicationHandler + 'static> IpcApplicationServer<H> {
                 Response::ValidateBlock(self.handler.validate_block(block, ctx))
             }
             Request::ValidateTx { tx, ctx } => {
-                let (ok, priority) = self.handler.validate_tx(tx, ctx);
-                Response::ValidateTx { ok, priority }
+                let (ok, priority, gas_wanted) = self.handler.validate_tx(tx, ctx);
+                Response::ValidateTx {
+                    ok,
+                    priority,
+                    gas_wanted,
+                }
             }
             Request::ExecuteBlock { txs, ctx } => {
                 Response::ExecuteBlock(self.handler.execute_block(txs, ctx))

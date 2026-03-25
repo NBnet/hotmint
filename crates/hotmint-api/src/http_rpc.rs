@@ -2,8 +2,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::connect_info::ConnectInfo;
 use axum::extract::State;
+use axum::extract::connect_info::ConnectInfo;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -89,8 +89,11 @@ impl HttpRpcServer {
         let local_addr = listener.local_addr().expect("listener has local addr");
         info!(addr = %local_addr, "HTTP RPC server listening");
 
-        if let Err(e) =
-            axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await
+        if let Err(e) = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
         {
             warn!(error = %e, "HTTP RPC server exited with error");
         }

@@ -40,7 +40,11 @@ pub enum Request {
 pub enum Response {
     CreatePayload(Vec<u8>),
     ValidateBlock(bool),
-    ValidateTx { ok: bool, priority: u64 },
+    ValidateTx {
+        ok: bool,
+        priority: u64,
+        gas_wanted: u64,
+    },
     ExecuteBlock(Result<EndBlockResponse, String>),
     OnCommit(Result<(), String>),
     OnEvidence(Result<(), String>),
@@ -158,10 +162,15 @@ pub fn encode_response(resp: &Response) -> Vec<u8> {
                 pb::ValidateBlockResponse { ok: *ok },
             )),
         },
-        Response::ValidateTx { ok, priority } => pb::Response {
+        Response::ValidateTx {
+            ok,
+            priority,
+            gas_wanted,
+        } => pb::Response {
             response: Some(pb::response::Response::ValidateTx(pb::ValidateTxResponse {
                 ok: *ok,
                 priority: *priority,
+                gas_wanted: *gas_wanted,
             })),
         },
         Response::ExecuteBlock(result) => pb::Response {
@@ -203,6 +212,7 @@ pub fn decode_response(buf: &[u8]) -> Result<Response, prost::DecodeError> {
         pb::response::Response::ValidateTx(r) => Response::ValidateTx {
             ok: r.ok,
             priority: r.priority,
+            gas_wanted: r.gas_wanted,
         },
         pb::response::Response::ExecuteBlock(r) => {
             if r.error.is_empty() {

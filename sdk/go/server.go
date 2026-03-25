@@ -127,10 +127,10 @@ func (s *Server) dispatch(req *pb.Request) *pb.Response {
 		}
 
 	case *pb.Request_ValidateTx:
-		ok, priority := s.app.ValidateTx(r.ValidateTx.Tx, r.ValidateTx.Ctx)
+		ok, priority, gasWanted := s.app.ValidateTx(r.ValidateTx.Tx, r.ValidateTx.Ctx)
 		return &pb.Response{
 			Response: &pb.Response_ValidateTx{
-				ValidateTx: &pb.ValidateTxResponse{Ok: ok, Priority: priority},
+				ValidateTx: &pb.ValidateTxResponse{Ok: ok, Priority: priority, GasWanted: gasWanted},
 			},
 		}
 

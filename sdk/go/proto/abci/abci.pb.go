@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.34.1
-// source: abci.proto
+// source: proto/abci.proto
 
 package abci
 
@@ -36,7 +36,7 @@ type Block struct {
 
 func (x *Block) Reset() {
 	*x = Block{}
-	mi := &file_abci_proto_msgTypes[0]
+	mi := &file_proto_abci_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -48,7 +48,7 @@ func (x *Block) String() string {
 func (*Block) ProtoMessage() {}
 
 func (x *Block) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[0]
+	mi := &file_proto_abci_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -61,7 +61,7 @@ func (x *Block) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Block.ProtoReflect.Descriptor instead.
 func (*Block) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{0}
+	return file_proto_abci_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Block) GetHeight() uint64 {
@@ -123,7 +123,7 @@ type TxContext struct {
 
 func (x *TxContext) Reset() {
 	*x = TxContext{}
-	mi := &file_abci_proto_msgTypes[1]
+	mi := &file_proto_abci_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -135,7 +135,7 @@ func (x *TxContext) String() string {
 func (*TxContext) ProtoMessage() {}
 
 func (x *TxContext) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[1]
+	mi := &file_proto_abci_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -148,7 +148,7 @@ func (x *TxContext) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxContext.ProtoReflect.Descriptor instead.
 func (*TxContext) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{1}
+	return file_proto_abci_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *TxContext) GetHeight() uint64 {
@@ -176,7 +176,7 @@ type ValidatorInfo struct {
 
 func (x *ValidatorInfo) Reset() {
 	*x = ValidatorInfo{}
-	mi := &file_abci_proto_msgTypes[2]
+	mi := &file_proto_abci_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -188,7 +188,7 @@ func (x *ValidatorInfo) String() string {
 func (*ValidatorInfo) ProtoMessage() {}
 
 func (x *ValidatorInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[2]
+	mi := &file_proto_abci_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -201,7 +201,7 @@ func (x *ValidatorInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidatorInfo.ProtoReflect.Descriptor instead.
 func (*ValidatorInfo) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{2}
+	return file_proto_abci_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *ValidatorInfo) GetId() uint64 {
@@ -235,7 +235,7 @@ type ValidatorSet struct {
 
 func (x *ValidatorSet) Reset() {
 	*x = ValidatorSet{}
-	mi := &file_abci_proto_msgTypes[3]
+	mi := &file_proto_abci_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -247,7 +247,7 @@ func (x *ValidatorSet) String() string {
 func (*ValidatorSet) ProtoMessage() {}
 
 func (x *ValidatorSet) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[3]
+	mi := &file_proto_abci_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -260,7 +260,7 @@ func (x *ValidatorSet) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidatorSet.ProtoReflect.Descriptor instead.
 func (*ValidatorSet) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{3}
+	return file_proto_abci_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ValidatorSet) GetValidators() []*ValidatorInfo {
@@ -291,7 +291,7 @@ type BlockContext struct {
 
 func (x *BlockContext) Reset() {
 	*x = BlockContext{}
-	mi := &file_abci_proto_msgTypes[4]
+	mi := &file_proto_abci_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -303,7 +303,7 @@ func (x *BlockContext) String() string {
 func (*BlockContext) ProtoMessage() {}
 
 func (x *BlockContext) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[4]
+	mi := &file_proto_abci_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -316,7 +316,7 @@ func (x *BlockContext) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockContext.ProtoReflect.Descriptor instead.
 func (*BlockContext) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{4}
+	return file_proto_abci_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *BlockContext) GetHeight() uint64 {
@@ -370,14 +370,13 @@ type EquivocationProof struct {
 	SignatureA    []byte                 `protobuf:"bytes,5,opt,name=signature_a,json=signatureA,proto3" json:"signature_a,omitempty"`
 	BlockHashB    []byte                 `protobuf:"bytes,6,opt,name=block_hash_b,json=blockHashB,proto3" json:"block_hash_b,omitempty"`
 	SignatureB    []byte                 `protobuf:"bytes,7,opt,name=signature_b,json=signatureB,proto3" json:"signature_b,omitempty"`
-	Epoch         uint64                 `protobuf:"varint,8,opt,name=epoch,proto3" json:"epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EquivocationProof) Reset() {
 	*x = EquivocationProof{}
-	mi := &file_abci_proto_msgTypes[5]
+	mi := &file_proto_abci_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -389,7 +388,7 @@ func (x *EquivocationProof) String() string {
 func (*EquivocationProof) ProtoMessage() {}
 
 func (x *EquivocationProof) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[5]
+	mi := &file_proto_abci_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -402,7 +401,7 @@ func (x *EquivocationProof) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EquivocationProof.ProtoReflect.Descriptor instead.
 func (*EquivocationProof) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{5}
+	return file_proto_abci_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *EquivocationProof) GetValidator() uint64 {
@@ -454,13 +453,6 @@ func (x *EquivocationProof) GetSignatureB() []byte {
 	return nil
 }
 
-func (x *EquivocationProof) GetEpoch() uint64 {
-	if x != nil {
-		return x.Epoch
-	}
-	return 0
-}
-
 type ValidatorUpdate struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -472,7 +464,7 @@ type ValidatorUpdate struct {
 
 func (x *ValidatorUpdate) Reset() {
 	*x = ValidatorUpdate{}
-	mi := &file_abci_proto_msgTypes[6]
+	mi := &file_proto_abci_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -484,7 +476,7 @@ func (x *ValidatorUpdate) String() string {
 func (*ValidatorUpdate) ProtoMessage() {}
 
 func (x *ValidatorUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[6]
+	mi := &file_proto_abci_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -497,7 +489,7 @@ func (x *ValidatorUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidatorUpdate.ProtoReflect.Descriptor instead.
 func (*ValidatorUpdate) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{6}
+	return file_proto_abci_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ValidatorUpdate) GetId() uint64 {
@@ -531,7 +523,7 @@ type EventAttribute struct {
 
 func (x *EventAttribute) Reset() {
 	*x = EventAttribute{}
-	mi := &file_abci_proto_msgTypes[7]
+	mi := &file_proto_abci_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -543,7 +535,7 @@ func (x *EventAttribute) String() string {
 func (*EventAttribute) ProtoMessage() {}
 
 func (x *EventAttribute) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[7]
+	mi := &file_proto_abci_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -556,7 +548,7 @@ func (x *EventAttribute) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventAttribute.ProtoReflect.Descriptor instead.
 func (*EventAttribute) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{7}
+	return file_proto_abci_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *EventAttribute) GetKey() string {
@@ -583,7 +575,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_abci_proto_msgTypes[8]
+	mi := &file_proto_abci_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -595,7 +587,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[8]
+	mi := &file_proto_abci_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -608,7 +600,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{8}
+	return file_proto_abci_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Event) GetType() string {
@@ -636,7 +628,7 @@ type EndBlockResponse struct {
 
 func (x *EndBlockResponse) Reset() {
 	*x = EndBlockResponse{}
-	mi := &file_abci_proto_msgTypes[9]
+	mi := &file_proto_abci_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -648,7 +640,7 @@ func (x *EndBlockResponse) String() string {
 func (*EndBlockResponse) ProtoMessage() {}
 
 func (x *EndBlockResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[9]
+	mi := &file_proto_abci_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -661,7 +653,7 @@ func (x *EndBlockResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EndBlockResponse.ProtoReflect.Descriptor instead.
 func (*EndBlockResponse) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{9}
+	return file_proto_abci_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *EndBlockResponse) GetValidatorUpdates() []*ValidatorUpdate {
@@ -703,7 +695,7 @@ type Request struct {
 
 func (x *Request) Reset() {
 	*x = Request{}
-	mi := &file_abci_proto_msgTypes[10]
+	mi := &file_proto_abci_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -715,7 +707,7 @@ func (x *Request) String() string {
 func (*Request) ProtoMessage() {}
 
 func (x *Request) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[10]
+	mi := &file_proto_abci_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -728,7 +720,7 @@ func (x *Request) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Request.ProtoReflect.Descriptor instead.
 func (*Request) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{10}
+	return file_proto_abci_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Request) GetRequest() isRequest_Request {
@@ -857,7 +849,7 @@ type ValidateBlockRequest struct {
 
 func (x *ValidateBlockRequest) Reset() {
 	*x = ValidateBlockRequest{}
-	mi := &file_abci_proto_msgTypes[11]
+	mi := &file_proto_abci_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -869,7 +861,7 @@ func (x *ValidateBlockRequest) String() string {
 func (*ValidateBlockRequest) ProtoMessage() {}
 
 func (x *ValidateBlockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[11]
+	mi := &file_proto_abci_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -882,7 +874,7 @@ func (x *ValidateBlockRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateBlockRequest.ProtoReflect.Descriptor instead.
 func (*ValidateBlockRequest) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{11}
+	return file_proto_abci_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ValidateBlockRequest) GetBlock() *Block {
@@ -909,7 +901,7 @@ type ValidateTxRequest struct {
 
 func (x *ValidateTxRequest) Reset() {
 	*x = ValidateTxRequest{}
-	mi := &file_abci_proto_msgTypes[12]
+	mi := &file_proto_abci_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -921,7 +913,7 @@ func (x *ValidateTxRequest) String() string {
 func (*ValidateTxRequest) ProtoMessage() {}
 
 func (x *ValidateTxRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[12]
+	mi := &file_proto_abci_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -934,7 +926,7 @@ func (x *ValidateTxRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateTxRequest.ProtoReflect.Descriptor instead.
 func (*ValidateTxRequest) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{12}
+	return file_proto_abci_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ValidateTxRequest) GetTx() []byte {
@@ -961,7 +953,7 @@ type ExecuteBlockRequest struct {
 
 func (x *ExecuteBlockRequest) Reset() {
 	*x = ExecuteBlockRequest{}
-	mi := &file_abci_proto_msgTypes[13]
+	mi := &file_proto_abci_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -973,7 +965,7 @@ func (x *ExecuteBlockRequest) String() string {
 func (*ExecuteBlockRequest) ProtoMessage() {}
 
 func (x *ExecuteBlockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[13]
+	mi := &file_proto_abci_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -986,7 +978,7 @@ func (x *ExecuteBlockRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteBlockRequest.ProtoReflect.Descriptor instead.
 func (*ExecuteBlockRequest) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{13}
+	return file_proto_abci_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ExecuteBlockRequest) GetTxs() [][]byte {
@@ -1013,7 +1005,7 @@ type OnCommitRequest struct {
 
 func (x *OnCommitRequest) Reset() {
 	*x = OnCommitRequest{}
-	mi := &file_abci_proto_msgTypes[14]
+	mi := &file_proto_abci_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1025,7 +1017,7 @@ func (x *OnCommitRequest) String() string {
 func (*OnCommitRequest) ProtoMessage() {}
 
 func (x *OnCommitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[14]
+	mi := &file_proto_abci_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1038,7 +1030,7 @@ func (x *OnCommitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OnCommitRequest.ProtoReflect.Descriptor instead.
 func (*OnCommitRequest) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{14}
+	return file_proto_abci_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *OnCommitRequest) GetBlock() *Block {
@@ -1065,7 +1057,7 @@ type QueryRequest struct {
 
 func (x *QueryRequest) Reset() {
 	*x = QueryRequest{}
-	mi := &file_abci_proto_msgTypes[15]
+	mi := &file_proto_abci_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1077,7 +1069,7 @@ func (x *QueryRequest) String() string {
 func (*QueryRequest) ProtoMessage() {}
 
 func (x *QueryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[15]
+	mi := &file_proto_abci_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1090,7 +1082,7 @@ func (x *QueryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest.ProtoReflect.Descriptor instead.
 func (*QueryRequest) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{15}
+	return file_proto_abci_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *QueryRequest) GetPath() string {
@@ -1125,7 +1117,7 @@ type Response struct {
 
 func (x *Response) Reset() {
 	*x = Response{}
-	mi := &file_abci_proto_msgTypes[16]
+	mi := &file_proto_abci_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1137,7 +1129,7 @@ func (x *Response) String() string {
 func (*Response) ProtoMessage() {}
 
 func (x *Response) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[16]
+	mi := &file_proto_abci_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1150,7 +1142,7 @@ func (x *Response) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Response.ProtoReflect.Descriptor instead.
 func (*Response) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{16}
+	return file_proto_abci_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Response) GetResponse() isResponse_Response {
@@ -1278,7 +1270,7 @@ type CreatePayloadResponse struct {
 
 func (x *CreatePayloadResponse) Reset() {
 	*x = CreatePayloadResponse{}
-	mi := &file_abci_proto_msgTypes[17]
+	mi := &file_proto_abci_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1290,7 +1282,7 @@ func (x *CreatePayloadResponse) String() string {
 func (*CreatePayloadResponse) ProtoMessage() {}
 
 func (x *CreatePayloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[17]
+	mi := &file_proto_abci_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1303,7 +1295,7 @@ func (x *CreatePayloadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreatePayloadResponse.ProtoReflect.Descriptor instead.
 func (*CreatePayloadResponse) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{17}
+	return file_proto_abci_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *CreatePayloadResponse) GetPayload() []byte {
@@ -1322,7 +1314,7 @@ type ValidateBlockResponse struct {
 
 func (x *ValidateBlockResponse) Reset() {
 	*x = ValidateBlockResponse{}
-	mi := &file_abci_proto_msgTypes[18]
+	mi := &file_proto_abci_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1334,7 +1326,7 @@ func (x *ValidateBlockResponse) String() string {
 func (*ValidateBlockResponse) ProtoMessage() {}
 
 func (x *ValidateBlockResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[18]
+	mi := &file_proto_abci_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1347,7 +1339,7 @@ func (x *ValidateBlockResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateBlockResponse.ProtoReflect.Descriptor instead.
 func (*ValidateBlockResponse) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{18}
+	return file_proto_abci_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ValidateBlockResponse) GetOk() bool {
@@ -1361,13 +1353,14 @@ type ValidateTxResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
 	Priority      uint64                 `protobuf:"varint,2,opt,name=priority,proto3" json:"priority,omitempty"`
+	GasWanted     uint64                 `protobuf:"varint,3,opt,name=gas_wanted,json=gasWanted,proto3" json:"gas_wanted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ValidateTxResponse) Reset() {
 	*x = ValidateTxResponse{}
-	mi := &file_abci_proto_msgTypes[19]
+	mi := &file_proto_abci_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1379,7 +1372,7 @@ func (x *ValidateTxResponse) String() string {
 func (*ValidateTxResponse) ProtoMessage() {}
 
 func (x *ValidateTxResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[19]
+	mi := &file_proto_abci_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1392,7 +1385,7 @@ func (x *ValidateTxResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateTxResponse.ProtoReflect.Descriptor instead.
 func (*ValidateTxResponse) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{19}
+	return file_proto_abci_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ValidateTxResponse) GetOk() bool {
@@ -1409,6 +1402,13 @@ func (x *ValidateTxResponse) GetPriority() uint64 {
 	return 0
 }
 
+func (x *ValidateTxResponse) GetGasWanted() uint64 {
+	if x != nil {
+		return x.GasWanted
+	}
+	return 0
+}
+
 type ExecuteBlockResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Result        *EndBlockResponse      `protobuf:"bytes,1,opt,name=result,proto3" json:"result,omitempty"`
@@ -1419,7 +1419,7 @@ type ExecuteBlockResponse struct {
 
 func (x *ExecuteBlockResponse) Reset() {
 	*x = ExecuteBlockResponse{}
-	mi := &file_abci_proto_msgTypes[20]
+	mi := &file_proto_abci_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1431,7 +1431,7 @@ func (x *ExecuteBlockResponse) String() string {
 func (*ExecuteBlockResponse) ProtoMessage() {}
 
 func (x *ExecuteBlockResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[20]
+	mi := &file_proto_abci_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1444,7 +1444,7 @@ func (x *ExecuteBlockResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteBlockResponse.ProtoReflect.Descriptor instead.
 func (*ExecuteBlockResponse) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{20}
+	return file_proto_abci_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ExecuteBlockResponse) GetResult() *EndBlockResponse {
@@ -1470,7 +1470,7 @@ type OnCommitResponse struct {
 
 func (x *OnCommitResponse) Reset() {
 	*x = OnCommitResponse{}
-	mi := &file_abci_proto_msgTypes[21]
+	mi := &file_proto_abci_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1482,7 +1482,7 @@ func (x *OnCommitResponse) String() string {
 func (*OnCommitResponse) ProtoMessage() {}
 
 func (x *OnCommitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[21]
+	mi := &file_proto_abci_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1495,7 +1495,7 @@ func (x *OnCommitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OnCommitResponse.ProtoReflect.Descriptor instead.
 func (*OnCommitResponse) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{21}
+	return file_proto_abci_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *OnCommitResponse) GetError() string {
@@ -1514,7 +1514,7 @@ type OnEvidenceResponse struct {
 
 func (x *OnEvidenceResponse) Reset() {
 	*x = OnEvidenceResponse{}
-	mi := &file_abci_proto_msgTypes[22]
+	mi := &file_proto_abci_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1526,7 +1526,7 @@ func (x *OnEvidenceResponse) String() string {
 func (*OnEvidenceResponse) ProtoMessage() {}
 
 func (x *OnEvidenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[22]
+	mi := &file_proto_abci_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1539,7 +1539,7 @@ func (x *OnEvidenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OnEvidenceResponse.ProtoReflect.Descriptor instead.
 func (*OnEvidenceResponse) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{22}
+	return file_proto_abci_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *OnEvidenceResponse) GetError() string {
@@ -1559,7 +1559,7 @@ type QueryResponse struct {
 
 func (x *QueryResponse) Reset() {
 	*x = QueryResponse{}
-	mi := &file_abci_proto_msgTypes[23]
+	mi := &file_proto_abci_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1571,7 +1571,7 @@ func (x *QueryResponse) String() string {
 func (*QueryResponse) ProtoMessage() {}
 
 func (x *QueryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_abci_proto_msgTypes[23]
+	mi := &file_proto_abci_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1584,7 +1584,7 @@ func (x *QueryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryResponse.ProtoReflect.Descriptor instead.
 func (*QueryResponse) Descriptor() ([]byte, []int) {
-	return file_abci_proto_rawDescGZIP(), []int{23}
+	return file_proto_abci_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *QueryResponse) GetData() []byte {
@@ -1601,12 +1601,11 @@ func (x *QueryResponse) GetError() string {
 	return ""
 }
 
-var File_abci_proto protoreflect.FileDescriptor
+var File_proto_abci_proto protoreflect.FileDescriptor
 
-const file_abci_proto_rawDesc = "" +
+const file_proto_abci_proto_rawDesc = "" +
 	"\n" +
-	"\n" +
-	"abci.proto\x12\fhotmint.abci\"\xb9\x01\n" +
+	"\x10proto/abci.proto\x12\fhotmint.abci\"\xb9\x01\n" +
 	"\x05Block\x12\x16\n" +
 	"\x06height\x18\x01 \x01(\x04R\x06height\x12\x1f\n" +
 	"\vparent_hash\x18\x02 \x01(\fR\n" +
@@ -1636,7 +1635,7 @@ const file_abci_proto_rawDesc = "" +
 	"\bproposer\x18\x03 \x01(\x04R\bproposer\x12\x14\n" +
 	"\x05epoch\x18\x04 \x01(\x04R\x05epoch\x12(\n" +
 	"\x10epoch_start_view\x18\x05 \x01(\x04R\x0eepochStartView\x12?\n" +
-	"\rvalidator_set\x18\x06 \x01(\v2\x1a.hotmint.abci.ValidatorSetR\fvalidatorSet\"\xfe\x01\n" +
+	"\rvalidator_set\x18\x06 \x01(\v2\x1a.hotmint.abci.ValidatorSetR\fvalidatorSet\"\xe8\x01\n" +
 	"\x11EquivocationProof\x12\x1c\n" +
 	"\tvalidator\x18\x01 \x01(\x04R\tvalidator\x12\x12\n" +
 	"\x04view\x18\x02 \x01(\x04R\x04view\x12\x1b\n" +
@@ -1648,8 +1647,7 @@ const file_abci_proto_rawDesc = "" +
 	"\fblock_hash_b\x18\x06 \x01(\fR\n" +
 	"blockHashB\x12\x1f\n" +
 	"\vsignature_b\x18\a \x01(\fR\n" +
-	"signatureB\x12\x14\n" +
-	"\x05epoch\x18\b \x01(\x04R\x05epoch\"V\n" +
+	"signatureB\"V\n" +
 	"\x0fValidatorUpdate\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x1d\n" +
 	"\n" +
@@ -1708,10 +1706,12 @@ const file_abci_proto_rawDesc = "" +
 	"\x15CreatePayloadResponse\x12\x18\n" +
 	"\apayload\x18\x01 \x01(\fR\apayload\"'\n" +
 	"\x15ValidateBlockResponse\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok\"@\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"_\n" +
 	"\x12ValidateTxResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x1a\n" +
-	"\bpriority\x18\x02 \x01(\x04R\bpriority\"d\n" +
+	"\bpriority\x18\x02 \x01(\x04R\bpriority\x12\x1d\n" +
+	"\n" +
+	"gas_wanted\x18\x03 \x01(\x04R\tgasWanted\"d\n" +
 	"\x14ExecuteBlockResponse\x126\n" +
 	"\x06result\x18\x01 \x01(\v2\x1e.hotmint.abci.EndBlockResponseR\x06result\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"(\n" +
@@ -1724,19 +1724,19 @@ const file_abci_proto_rawDesc = "" +
 	"\x05error\x18\x02 \x01(\tR\x05errorB<Z:github.com/rust-util-collections/hotmint/sdk/go/proto/abcib\x06proto3"
 
 var (
-	file_abci_proto_rawDescOnce sync.Once
-	file_abci_proto_rawDescData []byte
+	file_proto_abci_proto_rawDescOnce sync.Once
+	file_proto_abci_proto_rawDescData []byte
 )
 
-func file_abci_proto_rawDescGZIP() []byte {
-	file_abci_proto_rawDescOnce.Do(func() {
-		file_abci_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_abci_proto_rawDesc), len(file_abci_proto_rawDesc)))
+func file_proto_abci_proto_rawDescGZIP() []byte {
+	file_proto_abci_proto_rawDescOnce.Do(func() {
+		file_proto_abci_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_abci_proto_rawDesc), len(file_proto_abci_proto_rawDesc)))
 	})
-	return file_abci_proto_rawDescData
+	return file_proto_abci_proto_rawDescData
 }
 
-var file_abci_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
-var file_abci_proto_goTypes = []any{
+var file_proto_abci_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_proto_abci_proto_goTypes = []any{
 	(*Block)(nil),                 // 0: hotmint.abci.Block
 	(*TxContext)(nil),             // 1: hotmint.abci.TxContext
 	(*ValidatorInfo)(nil),         // 2: hotmint.abci.ValidatorInfo
@@ -1762,7 +1762,7 @@ var file_abci_proto_goTypes = []any{
 	(*OnEvidenceResponse)(nil),    // 22: hotmint.abci.OnEvidenceResponse
 	(*QueryResponse)(nil),         // 23: hotmint.abci.QueryResponse
 }
-var file_abci_proto_depIdxs = []int32{
+var file_proto_abci_proto_depIdxs = []int32{
 	2,  // 0: hotmint.abci.ValidatorSet.validators:type_name -> hotmint.abci.ValidatorInfo
 	3,  // 1: hotmint.abci.BlockContext.validator_set:type_name -> hotmint.abci.ValidatorSet
 	7,  // 2: hotmint.abci.Event.attributes:type_name -> hotmint.abci.EventAttribute
@@ -1796,12 +1796,12 @@ var file_abci_proto_depIdxs = []int32{
 	0,  // [0:26] is the sub-list for field type_name
 }
 
-func init() { file_abci_proto_init() }
-func file_abci_proto_init() {
-	if File_abci_proto != nil {
+func init() { file_proto_abci_proto_init() }
+func file_proto_abci_proto_init() {
+	if File_proto_abci_proto != nil {
 		return
 	}
-	file_abci_proto_msgTypes[10].OneofWrappers = []any{
+	file_proto_abci_proto_msgTypes[10].OneofWrappers = []any{
 		(*Request_CreatePayload)(nil),
 		(*Request_ValidateBlock)(nil),
 		(*Request_ValidateTx)(nil),
@@ -1810,7 +1810,7 @@ func file_abci_proto_init() {
 		(*Request_OnEvidence)(nil),
 		(*Request_Query)(nil),
 	}
-	file_abci_proto_msgTypes[16].OneofWrappers = []any{
+	file_proto_abci_proto_msgTypes[16].OneofWrappers = []any{
 		(*Response_CreatePayload)(nil),
 		(*Response_ValidateBlock)(nil),
 		(*Response_ValidateTx)(nil),
@@ -1823,17 +1823,17 @@ func file_abci_proto_init() {
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_abci_proto_rawDesc), len(file_abci_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_abci_proto_rawDesc), len(file_proto_abci_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_abci_proto_goTypes,
-		DependencyIndexes: file_abci_proto_depIdxs,
-		MessageInfos:      file_abci_proto_msgTypes,
+		GoTypes:           file_proto_abci_proto_goTypes,
+		DependencyIndexes: file_proto_abci_proto_depIdxs,
+		MessageInfos:      file_proto_abci_proto_msgTypes,
 	}.Build()
-	File_abci_proto = out.File
-	file_abci_proto_goTypes = nil
-	file_abci_proto_depIdxs = nil
+	File_proto_abci_proto = out.File
+	file_proto_abci_proto_goTypes = nil
+	file_proto_abci_proto_depIdxs = nil
 }

@@ -134,6 +134,8 @@ message ValidateBlockResponse {
 
 message ValidateTxResponse {
   bool ok = 1;
+  uint64 priority = 2;
+  uint64 gas_wanted = 3;
 }
 
 message ExecuteBlockResponse {
