@@ -29,6 +29,8 @@ pub struct EvmExecutor {
     pub txpool: Arc<EvmTxPool>,
     /// Accumulated receipts per block (for RPC queries).
     receipts: Mutex<Vec<Vec<EvmReceipt>>>,
+    /// Current committed block height.
+    block_height: std::sync::atomic::AtomicU64,
 }
 
 impl EvmExecutor {
@@ -52,6 +54,7 @@ impl EvmExecutor {
             state: Mutex::new(state),
             txpool,
             receipts: Mutex::new(Vec::new()),
+            block_height: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -71,6 +74,12 @@ impl EvmExecutor {
             .unwrap_or_else(|e| e.into_inner())
             .get(block_index)
             .cloned()
+    }
+
+    /// Get the current committed block height.
+    pub fn block_height(&self) -> u64 {
+        self.block_height
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Submit a raw signed Ethereum transaction to the pool.
@@ -304,6 +313,9 @@ impl Application for EvmExecutor {
     }
 
     fn on_commit(&self, _block: &Block, ctx: &BlockContext) -> Result<()> {
+        // Update block height.
+        self.block_height
+            .store(ctx.height.as_u64(), std::sync::atomic::Ordering::Relaxed);
         // Remove committed transactions from pool and promote queued ones.
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         self.txpool.on_commit(&|addr| state.get_nonce(addr));
@@ -328,13 +340,59 @@ impl Application for EvmExecutor {
                 let nonce = state.get_nonce(&addr);
                 nonce.to_be_bytes().to_vec()
             }
+            "eth_getCode" if data.len() == 20 => {
+                let addr = Address::from_slice(data);
+                state.get_code(&addr)
+            }
+            // eth_getStorageAt: data = address(20) || slot(32) = 52 bytes
+            "eth_getStorageAt" if data.len() == 52 => {
+                let addr = Address::from_slice(&data[..20]);
+                let slot = U256::from_be_slice(&data[20..52]);
+                let val = state.get_storage(&addr, &slot);
+                val.to_be_bytes::<32>().to_vec()
+            }
+            "eth_blockNumber" => {
+                self.block_height().to_be_bytes().to_vec()
+            }
             _ => vec![],
         };
         Ok(hotmint_types::QueryResponse {
             data: result,
             proof: None,
-            height: 0,
+            height: self.block_height(),
         })
+    }
+}
+
+// Implement Application for SharedExecutor (newtype around Arc<EvmExecutor>)
+// so the executor can be shared between the consensus engine and the RPC server.
+
+/// A shared executor wrapper implementing `Application` via delegation.
+pub struct SharedExecutor(pub Arc<EvmExecutor>);
+
+impl Application for SharedExecutor {
+    fn validate_tx(&self, raw: &[u8], ctx: Option<&TxContext>) -> TxValidationResult {
+        Application::validate_tx(self.0.as_ref(), raw, ctx)
+    }
+
+    fn execute_block(&self, txs: &[&[u8]], ctx: &BlockContext) -> Result<EndBlockResponse> {
+        Application::execute_block(self.0.as_ref(), txs, ctx)
+    }
+
+    fn create_payload(&self, ctx: &BlockContext) -> Vec<u8> {
+        Application::create_payload(self.0.as_ref(), ctx)
+    }
+
+    fn on_commit(&self, block: &Block, ctx: &BlockContext) -> Result<()> {
+        Application::on_commit(self.0.as_ref(), block, ctx)
+    }
+
+    fn query(
+        &self,
+        path: &str,
+        data: &[u8],
+    ) -> Result<hotmint_types::QueryResponse> {
+        Application::query(self.0.as_ref(), path, data)
     }
 }
 

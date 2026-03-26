@@ -126,6 +126,28 @@ impl VsdbStateDb {
             .unwrap_or(0)
     }
 
+    /// Get account code bytes.
+    pub fn get_code(&self, addr: &Address) -> Vec<u8> {
+        if let Some(stored) = self.accounts.get(addr.as_slice()) as Option<StoredAccount> {
+            let code_hash = B256::from(stored.code_hash);
+            if code_hash != revm::primitives::KECCAK_EMPTY {
+                if let Some(bytes) = self.contracts.get(code_hash.as_slice()) {
+                    return bytes;
+                }
+            }
+        }
+        vec![]
+    }
+
+    /// Get storage value at (address, slot).
+    pub fn get_storage(&self, addr: &Address, slot: &U256) -> U256 {
+        let key = storage_key(addr, slot);
+        match self.storage.get(key.as_slice()) {
+            Some(be_bytes) => U256::from_be_bytes(be_bytes),
+            None => U256::ZERO,
+        }
+    }
+
     /// Set account balance.
     pub fn set_balance(&mut self, addr: &Address, balance: U256) {
         let mut stored = self
@@ -335,6 +357,26 @@ impl EvmState {
             return acc.info.nonce;
         }
         self.db.db.get_nonce(addr)
+    }
+
+    /// Get account code bytes (reads from cache first, then vsdb).
+    pub fn get_code(&self, addr: &Address) -> Vec<u8> {
+        if let Some(acc) = self.db.cache.accounts.get(addr) {
+            if let Some(ref code) = acc.info.code {
+                return code.bytes_slice().to_vec();
+            }
+        }
+        self.db.db.get_code(addr)
+    }
+
+    /// Get storage value at (address, slot).
+    pub fn get_storage(&self, addr: &Address, slot: &U256) -> U256 {
+        if let Some(acc) = self.db.cache.accounts.get(addr) {
+            if let Some(val) = acc.storage.get(slot) {
+                return *val;
+            }
+        }
+        self.db.db.get_storage(addr, slot)
     }
 
     /// Set account nonce and update both cache and trie.

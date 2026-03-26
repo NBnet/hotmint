@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::sync::Arc;
 use tracing::{Level, info};
 
 use hotmint_consensus::engine::ConsensusEngineBuilder;
@@ -6,7 +7,8 @@ use hotmint_consensus::network::ChannelNetwork;
 use hotmint_consensus::state::ConsensusState;
 use hotmint_consensus::store::MemoryBlockStore;
 use hotmint::crypto::{Ed25519Signer, Ed25519Verifier};
-use hotmint_evm_execution::EvmExecutor;
+use hotmint_evm_execution::{EvmExecutor, SharedExecutor};
+use hotmint_evm_rpc::{EvmRpcState, start_rpc_server};
 use hotmint_evm_types::genesis::EvmGenesis;
 use hotmint_types::*;
 
@@ -23,6 +25,10 @@ struct Cli {
     /// Run duration in seconds (0 = run forever).
     #[arg(long, default_value = "30")]
     duration: u64,
+
+    /// RPC listen address (host:port).
+    #[arg(long, default_value = "127.0.0.1:8545")]
+    rpc_addr: String,
 }
 
 #[tokio::main]
@@ -68,18 +74,26 @@ async fn main() {
     let mesh = ChannelNetwork::create_mesh(NUM_VALIDATORS);
     let mut handles = Vec::new();
 
+    // Create a shared executor for validator 0 (which also serves the RPC).
+    let shared_executor = Arc::new(EvmExecutor::from_genesis(&genesis));
+
     for (i, ((network, rx), signer)) in mesh.into_iter().zip(signers.into_iter()).enumerate() {
         let vid = ValidatorId(i as u64);
         let store = MemoryBlockStore::new_shared();
         let state = ConsensusState::new(vid, validator_set.clone());
 
-        let executor = EvmExecutor::from_genesis(&genesis);
+        let app: Box<dyn hotmint_consensus::application::Application> = if i == 0 {
+            // Validator 0: use the shared executor (Arc clone) for RPC access.
+            Box::new(SharedExecutor(Arc::clone(&shared_executor)))
+        } else {
+            Box::new(EvmExecutor::from_genesis(&genesis))
+        };
 
         let engine = ConsensusEngineBuilder::new()
             .state(state)
             .store(store)
             .network(Box::new(network))
-            .app(Box::new(executor))
+            .app(app)
             .signer(Box::new(signer))
             .messages(rx)
             .verifier(Box::new(Ed25519Verifier))
@@ -89,7 +103,15 @@ async fn main() {
         handles.push(tokio::spawn(async move { engine.run().await }));
     }
 
-    info!("All validators spawned, EVM chain running...\n");
+    // Start the JSON-RPC server on validator 0's executor.
+    let rpc_addr: std::net::SocketAddr = cli.rpc_addr.parse().expect("invalid RPC address");
+    let rpc_state = Arc::new(EvmRpcState {
+        executor: Arc::clone(&shared_executor),
+        chain_id: genesis.chain_id,
+    });
+    tokio::spawn(start_rpc_server(rpc_addr, rpc_state));
+
+    info!(rpc = %cli.rpc_addr, "All validators spawned, EVM chain running with RPC...\n");
 
     if cli.duration > 0 {
         tokio::time::sleep(tokio::time::Duration::from_secs(cli.duration)).await;
