@@ -198,11 +198,32 @@ pub fn propose(
         "proposing block"
     );
 
+    // Include uncommitted ancestor blocks so replicas who missed them
+    // (e.g., joined late or skipped a view via TC) can walk the commit chain.
+    // Walk from the parent block (justified by the QC) back to last committed.
+    let mut ancestor_blocks = Vec::new();
+    {
+        let mut hash = parent_hash;
+        while hash != BlockHash::GENESIS {
+            match store.get_block(&hash) {
+                Some(b) => {
+                    if b.height <= state.last_committed_height {
+                        break;
+                    }
+                    hash = b.parent_hash;
+                    ancestor_blocks.push(b);
+                }
+                None => break,
+            }
+        }
+    }
+
     network.broadcast(ConsensusMessage::Propose {
         block: Box::new(block.clone()),
         justify: Box::new(justify),
         double_cert: state.highest_double_cert.clone().map(Box::new),
         signature,
+        ancestor_blocks,
     });
 
     state.step = ViewStep::CollectingVotes;

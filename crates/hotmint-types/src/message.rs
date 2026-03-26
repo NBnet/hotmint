@@ -16,6 +16,12 @@ pub enum ConsensusMessage {
         justify: Box<QuorumCertificate>,
         double_cert: Option<Box<DoubleCertificate>>,
         signature: Signature,
+        /// Ancestor blocks needed for fast-forward commit via the double cert.
+        /// When a proposal carries a DC, replicas who missed the DC's target
+        /// block(s) need them to walk the commit chain. The leader includes
+        /// all uncommitted ancestors referenced by the DC.
+        #[serde(default)]
+        ancestor_blocks: Vec<Block>,
     },
 
     /// First-phase vote → current leader

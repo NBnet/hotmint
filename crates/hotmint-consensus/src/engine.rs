@@ -953,10 +953,28 @@ impl ConsensusEngine {
                 justify,
                 double_cert,
                 signature: _,
+                ancestor_blocks,
             } => {
                 let block = *block;
                 let justify = *justify;
                 let double_cert = double_cert.map(|dc| *dc);
+
+                // Store ancestor blocks from the proposal. These are blocks
+                // referenced by the double cert that we may have missed.
+                // Stored early so they're available for all commit paths.
+                if !ancestor_blocks.is_empty() {
+                    let mut s = self.store.write();
+                    for ancestor in ancestor_blocks {
+                        if ancestor.height > self.state.last_committed_height
+                            && s.get_block(&ancestor.hash).is_none()
+                        {
+                            let expected = hotmint_crypto::compute_block_hash(&ancestor);
+                            if ancestor.hash == expected {
+                                s.put_block(ancestor);
+                            }
+                        }
+                    }
+                }
 
                 // If proposal is from a future view, advance to it first
                 if block.view > self.state.current_view {
@@ -1919,6 +1937,7 @@ mod tests {
             justify: Box::new(sub_quorum_qc),
             double_cert: None,
             signature,
+            ancestor_blocks: vec![],
         };
 
         assert!(
@@ -1974,6 +1993,7 @@ mod tests {
             justify: Box::new(full_quorum_qc),
             double_cert: None,
             signature,
+            ancestor_blocks: vec![],
         };
 
         assert!(

@@ -13,13 +13,13 @@ fn query_height(host: &str, port: u16) -> Option<u64> {
 
     let addr = format!("{host}:{port}");
     let mut stream =
-        TcpStream::connect_timeout(&addr.parse().ok()?, Duration::from_secs(1)).ok()?;
-    stream.set_read_timeout(Some(Duration::from_secs(1))).ok()?;
+        TcpStream::connect_timeout(&addr.parse().ok()?, Duration::from_secs(2)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"status","params":[]}"#;
     stream.write_all(req.as_bytes()).ok()?;
     stream.write_all(b"\n").ok()?;
 
-    let mut buf = vec![0u8; 4096];
+    let mut buf = vec![0u8; 8192];
     let n = stream.read(&mut buf).ok()?;
     let text = std::str::from_utf8(&buf[..n]).ok()?;
     let val: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
@@ -43,10 +43,13 @@ fn setup_cluster() -> (Vec<Child>, cluster::ClusterState, std::path::PathBuf) {
     let p2p_base = ports[0];
     let rpc_base = ports[NUM_VALIDATORS as usize];
 
+    // Use unique chain_id per test to prevent PEX cross-cluster discovery
+    // when multiple tests run in parallel on the same machine.
+    let chain_id = format!("test-four-node-{}-{id}", std::process::id());
     cluster::init_cluster(
         &base_dir,
         NUM_VALIDATORS,
-        "test-four-node",
+        &chain_id,
         p2p_base,
         rpc_base,
         "127.0.0.1",
@@ -63,13 +66,14 @@ fn setup_cluster() -> (Vec<Child>, cluster::ClusterState, std::path::PathBuf) {
 #[test]
 fn test_four_node_consensus_commits_blocks() {
     let (mut children, state, base_dir) = setup_cluster();
-    let rpc_port = state.validators[0].rpc_port;
-
-    // Wait for cluster to start.
-    assert!(
-        hotmint_mgmt::wait_for_rpc("127.0.0.1", rpc_port, 20),
-        "cluster did not start within 20s"
-    );
+    // Wait for ALL nodes to be ready before measuring.
+    for v in &state.validators {
+        assert!(
+            hotmint_mgmt::wait_for_rpc("127.0.0.1", v.rpc_port, 20),
+            "V{} did not start within 20s",
+            v.id
+        );
+    }
 
     // Wait for blocks to accumulate.
     std::thread::sleep(Duration::from_secs(8));
