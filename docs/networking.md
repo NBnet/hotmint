@@ -136,7 +136,7 @@ tokio::spawn(async move { net_service.run().await });
 
 // build the consensus engine with the P2P network sink
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 use hotmint::consensus::engine::{ConsensusEngineBuilder, SharedBlockStore};
 use hotmint::crypto::Ed25519Verifier;
 
@@ -172,7 +172,7 @@ The notification protocol is fire-and-forget. The request-response protocol send
 
 ```rust
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 use hotmint::prelude::*;
 use hotmint::consensus::engine::{ConsensusEngineBuilder, SharedBlockStore};
 use hotmint::consensus::state::ConsensusState;

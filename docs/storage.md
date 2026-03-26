@@ -166,7 +166,7 @@ The store auto-migrates from v1 (3 collections) to v2 (5 collections) on first o
 
 ```rust
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 use hotmint::consensus::engine::{ConsensusEngineBuilder, SharedBlockStore};
 use hotmint::crypto::Ed25519Verifier;
 

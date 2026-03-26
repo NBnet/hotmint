@@ -43,15 +43,17 @@ pub struct BlockHash(pub [u8; 32]);
 pub struct Block {
     pub height: Height,
     pub parent_hash: BlockHash,
-    pub hash: BlockHash,
     pub view: ViewNumber,
     pub proposer: ValidatorId,
-    pub payload: Vec<u8>,
-    /// Application state root after executing the parent block.
-    pub app_hash: BlockHash,
     /// Unix timestamp in milliseconds, set by the proposer.
     /// Validators verify monotonicity and future drift.
     pub timestamp: u64,
+    pub payload: Vec<u8>,
+    /// Application state root after executing the parent block.
+    pub app_hash: BlockHash,
+    /// Equivocation evidence collected by the proposer.
+    pub evidence: Vec<EquivocationProof>,
+    pub hash: BlockHash,
 }
 ```
 
@@ -74,6 +76,9 @@ pub struct QuorumCertificate {
     pub block_hash: BlockHash,
     pub view: ViewNumber,
     pub aggregate_signature: AggregateSignature,
+    /// Epoch in which this QC was formed. Included in signing bytes to prevent
+    /// cross-epoch QC reuse.
+    pub epoch: EpochNumber,
 }
 ```
 
@@ -86,6 +91,8 @@ Corresponds to `C_v(B_k)` — an aggregate signature from 2f+1 validators on a b
 pub struct DoubleCertificate {
     pub inner_qc: QuorumCertificate,
     pub outer_qc: QuorumCertificate,
+    /// Aggregated vote extensions from the Vote2 round.
+    pub vote_extensions: Vec<(ValidatorId, Vec<u8>)>,
 }
 ```
 
@@ -302,6 +309,9 @@ pub enum ConsensusMessage {
         validator: ValidatorId,
         signature: Signature,
     },
+
+    // Any -> All: equivocation proof (gossip)
+    Evidence(EquivocationProof),
 }
 ```
 

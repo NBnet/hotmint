@@ -32,9 +32,9 @@ hotmint (library facade — re-exports everything)
   ├── hotmint-network   ──> hotmint-consensus, litep2p
   ├── hotmint-abci      ──> hotmint-consensus, hotmint-types
   ├── hotmint-staking   ──> hotmint-types
-  ├── hotmint-light     ──> hotmint-types
+  ├── hotmint-light     ──> hotmint-types, hotmint-crypto
   ├── hotmint-mempool   (standalone, no consensus/network/storage deps)
-  └── hotmint-api       ──> hotmint-mempool
+  └── hotmint-api       ──> hotmint-mempool, hotmint-consensus, hotmint-network, hotmint-light
 ```
 
 Key design rule: **the consensus engine has no dependency on any concrete networking or storage crate**. It communicates with the outside world exclusively through trait objects (`Box<dyn BlockStore>`, `Box<dyn NetworkSink>`, `Box<dyn Application>`, `Box<dyn Signer>`), connected via `tokio::mpsc` channels.

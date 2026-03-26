@@ -1,7 +1,7 @@
 # Hotmint Security Audit & Evolution Roadmap
 
 > **Report Version:** Based on Hotmint v0.8 / CometBFT v0.38
-> **Generated:** 2026-03-24 | **Last Audit:** 2026-03-25 | **Last Document Sync:** 2026-03-25
+> **Generated:** 2026-03-24 | **Last Audit:** 2026-03-25 | **Last Document Sync:** 2026-03-26
 > **Sources:** CometBFT feature gap analysis + two rounds of code security audit
 > **Purpose:** Serves as a reference baseline for the long-term evolution roadmap. Update completion status after each iteration (change `[ ]` to `[x]`, partially complete marked `[~]`).
 
@@ -17,9 +17,8 @@
 | Core Strengths | Complete ecosystem, rich toolchain, mature protocol | Lower latency, more modular architecture, memory safety |
 | Main Weaknesses | Three-phase voting latency, Go GC tail-latency jitter | Missing IBC cross-chain protocol; ecosystem tooling still maturing |
 
-Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential to surpass CometBFT in core consensus algorithm and architectural modernization. All original security vulnerabilities (C-1..C-7) and engineering defects (H-1..H-12, R-1) have been resolved. Core feature parity with CometBFT has been largely achieved — the remaining gaps are concentrated in:
+Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential to surpass CometBFT in core consensus algorithm and architectural modernization. All security vulnerabilities and engineering defects from all three audit rounds have been resolved (C-1..C-7, H-1..H-12, R-1, A-1..A-8, B-1..B-3, second-round C-1..C-5). All feature roadmap items are complete. Core feature parity with CometBFT has been achieved — the only remaining gap is:
 - **Ecosystem Expansion Layer:** IBC cross-chain protocol (infrastructure ready, protocol not implemented)
-- **Production Hardening:** Operations CLI completeness
 
 ---
 
@@ -200,51 +199,25 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 
 ---
 
-## 13. Resolved & Pending Items
+## 13. Feature Evolution Items
 
-All security vulnerabilities and engineering defects from the original audit have been resolved (C-1 through C-7, H-1 through H-12, R-1). The remaining items below are **feature work** for ongoing CometBFT parity and ecosystem expansion.
+All security vulnerabilities and engineering defects from all three audit rounds have been resolved. The items below document the completed feature roadmap.
 
 ---
 
 ### 🟢 P0 — Feature Evolution: Production Chain Essentials
 
-#### [~] P0-1. Standard HTTP/WebSocket RPC + Event Subscription `[Missing Feature]`
+#### [x] P0-1. Standard HTTP/WebSocket RPC + Event Subscription ✅
 
-**Current Gap:** The raw TCP newline-delimited JSON protocol is not dApp-frontend-friendly; the lack of WebSocket event subscription prevents dApps from monitoring on-chain state in real time.
-
-**Recommended Implementation:**
-- Replace the `hotmint-api` transport with `axum` or `jsonrpsee`, providing standard HTTP + WebSocket
-- Introduce an event bus (`tokio::sync::broadcast`), publishing `BlockEvent` / `TxEvent` on `on_commit`
-- Implement a `subscribe` RPC supporting filtering by `tx.hash`, `block.height`, custom tags
-- Add commonly used methods: `get_tx` (query status by hash), `get_block_results`, etc.
-
-**Key Files:** `crates/hotmint-api/src/rpc.rs`, `crates/hotmint-api/src/types.rs`
-
-> **Implementation Status: ⚠️ Partially complete.** `HttpRpcServer` is implemented in `crates/hotmint-api/src/http_rpc.rs` with axum HTTP `POST /` + WS `GET /ws`, event bus, `SubscribeFilter`, and all the listed RPC methods. **However, the node binary (`crates/hotmint/src/bin/node.rs:460`) only starts the TCP `RpcServer` — `HttpRpcServer` is never instantiated in the main path.** The HTTP/WS server is built but not reachable. Remaining work: wire `HttpRpcServer` into the node startup.
+`HttpRpcServer` (`crates/hotmint-api/src/http_rpc.rs`) provides axum HTTP `POST /` + WS `GET /ws` with event bus, `SubscribeFilter`, and all standard RPC methods. The node binary starts it conditionally on `config.rpc.http_laddr` (`crates/hotmint/src/bin/node.rs:478-494`). The legacy TCP `RpcServer` remains for CLI tooling compatibility.
 
 ---
 
 ### 🟢 P1 — Feature Evolution: Network Robustness
 
-#### [~] P1-1. Snapshot State Sync (State Sync via Snapshots) `[Missing Feature]`
+#### [x] P1-1. Snapshot State Sync (State Sync via Snapshots) ✅
 
-**Current Gap:** New nodes must replay from height 0, making join times unacceptable after months of chain operation and creating a barrier to recruiting new validators.
-
-**Recommended Implementation:**
-```rust
-// New additions to Application trait
-fn list_snapshots(&self) -> Vec<Snapshot>;
-fn load_snapshot_chunk(&self, height: u64, chunk_index: u32) -> Vec<u8>;
-fn offer_snapshot(&self, snapshot: &Snapshot, app_hash: &[u8]) -> OfferSnapshotResult;
-fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
-```
-- Use `vsdb`'s built-in SMT root hash as the snapshot trust anchor
-- Add `GetSnapshotMeta` / `GetSnapshotChunk` message types to the P2P sync protocol
-- When a node starts with `state_sync = true`, prioritize the snapshot channel
-
-**Key Files:** `crates/hotmint-consensus/src/application.rs`, `crates/hotmint-consensus/src/sync.rs`
-
-> **Implementation Status: ⚠️ Protocol skeleton only — not production-ready.** All 4 Application trait methods and the P2P message types (`GetSnapshots` / `GetSnapshotChunk`) are defined, and `sync_via_snapshot()` has an implementation. **However, two critical gaps remain: (1) the node binary only serves snapshot requests (`crates/hotmint/src/bin/node.rs:542`) but never calls `sync_via_snapshot()` in the sync-client path — a syncing node always falls through to full block replay; (2) `sync_via_snapshot()` trusts the peer's `snapshot.hash` directly as the new `last_app_hash` (`crates/hotmint-consensus/src/sync.rs:295`) without binding it to any signed header or QC, making it trivially exploitable by a malicious peer.** See also new item A-3 below.
+All 4 `Application` trait methods (`list_snapshots`, `load_snapshot_chunk`, `offer_snapshot`, `apply_snapshot_chunk`) are implemented. `sync_to_tip()` calls `sync_via_snapshot()` automatically when the catch-up gap exceeds `MAX_SYNC_BATCH` (`crates/hotmint-consensus/src/sync.rs:83-103`). The snapshot trust anchor is verified by fetching the signed anchor block and performing full QC aggregate-signature + quorum checks before adopting any snapshot state (`sync.rs:333-391`). The node binary serves snapshot chunks to peers and the sync client path is fully wired.
 
 ---
 
@@ -295,259 +268,21 @@ fn apply_snapshot_chunk(&self, chunk: Vec<u8>, index: u32) -> ApplyChunkResult;
 
 **Key Files:** `crates/hotmint-types/src/message.rs`, `crates/hotmint-consensus/src/view_protocol.rs`
 
-> **Implementation Status: ✅ Largely complete.** Completed: `Vote.extension: Option<Vec<u8>>` field, `extend_vote()` / `verify_vote_extension()` application callbacks (with default no-op), engine calls `extend_vote` before Vote2 creation, `verify_vote_extension` called on received Vote2. Not yet implemented: explicit aggregation of all extensions in DoubleCert, next-round `create_payload` directly reading previous round's extension set (application layer must track this itself).
+> **Implementation Status: ✅ Complete.** `Vote.extension: Option<Vec<u8>>` field, `extend_vote()` / `verify_vote_extension()` callbacks, engine calls `extend_vote` before Vote2, `verify_vote_extension` called on receipt. Extensions are aggregated in `VoteCollector.add_vote` when Vote2 quorum is reached (`vote_collector.rs:88-91`), stored in `DoubleCertificate.vote_extensions` (`engine.rs:1429`), and forwarded to the next round's `create_payload` via `BlockContext.vote_extensions` (`engine.rs:1682`, `view_protocol.rs:157`).
 
 ---
 
 ## 14. Feature Status Summary
 
-All security vulnerabilities (C-1..C-7) and engineering defects (H-1..H-12, R-1) have been resolved. The table below tracks **feature parity** with CometBFT.
-
-| ID | Priority | Feature | Status | Remaining |
-|----|----------|---------|:------:|-----------|
-| P0-1 | 🟢 P0 | Standard HTTP/WS RPC + event subscription | ✅ | Wire `HttpRpcServer` into node startup |
-| P1-1 | 🟢 P1 | Snapshot State Sync | ⚠️ | Call `sync_via_snapshot()` in client path; add QC-anchored trust verification |
-| P1-2 | 🟢 P1 | Weighted proposer selection | ✅ | — |
-| P2-1 | 🟢 P2 | Light client verification protocol | ✅ | — |
-| P2-2 | 🟢 P2 | ABCI++ Vote Extensions | ✅ | — |
-| A-1 | 🔴 P0 | Epoch transition crash-safety | ✅ | Persist `pending_epoch`; propagate from `sync_to_tip` |
-| A-2 | 🔴 P0 | App state divergence: fail fast on app_hash mismatch | ✅ | Check `last_block_app_hash` at startup; halt on divergence |
-| A-3 | 🔴 P0 | Snapshot sync trusted anchor verification | ✅ | Bind snapshot hash to signed QC before trusting |
-| A-4 | 🟡 P1 | `PersistentEvidenceStore` next_id not persisted on writes | ✅ | Write `next_id` back to meta in `put_evidence()` |
-| A-5 | 🟡 P1 | `recheck()` blocks commit path; packer skips on first oversized tx | ✅ | Run recheck async/background; use skip-and-continue packing |
-| A-6 | 🟡 P1 | Light client `verify_header` lacks height monotonicity | ✅ | Enforce `header.height > trusted_height` in `verify_header` |
-| A-7 | 🔵 P2 | `submit_tx` API doc/behavior mismatch; `query` silent hex degradation | ✅ | Fix README example; return error on bad hex in `query` |
-| A-8 | 🟡 P1 | EVM block timestamp hardcoded to 0 | ✅ | Pass real block timestamp into revm block context |
-| B-1 | 🔴 P0 | BFT Time: proposer can inflate chain time up to drift limit, breaking honest successors | ✅ | Proposer must use `max(SystemTime::now(), parent.timestamp)` |
-| B-2 | 🟡 P1 | Mempool payload collection: O(N log N) pop-skip-reinsert loop holds async lock | ✅ | Replace pop/reinsert with iterator; cap max skipped per round |
-| B-3 | 🟡 P1 | No inbound message rate limit before `block_in_place` crypto verification | ✅ | Add per-sender rate limit; bound concurrent verifications |
-| C-1 | 🔴 P0 | `on_prepare` missing step guard — node can send Vote2 without having sent Vote1 | ✅ | Add `if state.step != ViewStep::Voted { return; }` at entry of `on_prepare` |
-| C-2 | 🟡 P1 | Mempool tx gossip: no per-peer rate limit, unlimited unique txs accepted | ✅ | Add per-peer token bucket in `handle_mempool_notification_event` |
-| C-3 | 🟡 P1 | HTTP RPC body has no size limit (Axum default is 2 GB) | ✅ | Add `DefaultBodyLimit::max(1 MB)` layer to the Axum router |
-| C-4 | 🔵 P2 | WebSocket connection counter not decremented on task panic | ✅ | Wrap counter in RAII guard; or decrement via `defer`-equivalent |
-| C-5 | 🔵 P2 | `PersistentEvidenceStore` has no pruning — committed evidence kept forever | ✅ | Delete evidence from vsdb after `mark_committed` |
-
----
-
-## 14.1 New Audit Findings (Second Round) — Pending
-
-The items below were identified in a second-round code audit. All findings have been verified against the actual source. They are categorized by severity and must be resolved before production deployment.
-
----
-
-### 🔴 A-1. Epoch Transition Is Not Crash-Safe or Sync-Safe `[High]`
-
-**Finding:** `pending_epoch` lives only in memory. After a block is committed that triggers a validator set change, `apply_commit()` sets `self.pending_epoch` (`engine.rs:1540`), but `persist_state()` (`engine.rs:1609`) only saves `current_epoch` — `pending_epoch` is never written to persistent storage. On restart, the node loses any in-flight epoch transition.
-
-The same gap exists in the sync path: `replay_blocks()` correctly returns a `pending_epoch` for transitions that have not yet reached their `start_view` (`sync.rs:308`, `sync.rs:518`), but `sync_to_tip()` discards this return value with `let _pending = replay_blocks(...)` (`sync.rs:141`). The node main path then only writes back `current_epoch` (`node.rs:638`, `node.rs:738`).
-
-**Consequence:** In the window between "validator update committed" and "epoch `start_view` reached", a node that restarts or completes initial sync will continue using the old validator set — a consensus correctness risk.
-
-**Fix:** Persist `pending_epoch` alongside `current_epoch` in `StatePersistence`. Propagate the return value of `replay_blocks()` through `sync_to_tip()` back to the caller so the node main path can restore it into engine state.
-
-**Key Files:** `crates/hotmint-consensus/src/engine.rs`, `crates/hotmint-consensus/src/sync.rs`, `crates/hotmint/src/bin/node.rs`
-
----
-
-### 🔴 A-2. App State Divergence Detection Is Fail-Open `[High]`
-
-**Finding:** `Application::info()` returns both `last_block_height` and `last_block_app_hash` (`application.rs:55`). At engine startup, the divergence check only compares heights and only emits a warning before continuing (`engine.rs:282`). The `last_block_app_hash` field is never checked against the consensus state's `last_app_hash`.
-
-**Consequence:** A validator can participate in voting and block proposals even when its ABCI application state has already diverged — including cases where the height matches but the app hash differs. This makes the divergence boundary too permissive for a production node.
-
-**Fix:** At startup, also compare `app_info.last_block_app_hash` against `state.last_app_hash`. On any mismatch (height or app hash), halt the node with a fatal error rather than continuing with a warning.
-
-**Key Files:** `crates/hotmint-consensus/src/engine.rs:282`
-
----
-
-### 🔴 A-3. Snapshot State Sync Lacks Trusted Anchor Verification `[High]`
-
-**Finding:** `sync_via_snapshot()` selects the peer's newest snapshot by height and blindly sets `*state.last_app_hash = BlockHash(snapshot.hash)` (`sync.rs:295`) — the hash comes directly from the peer's `SnapshotInfo` struct with no binding to any signed header or QC. There is no framework-level chunk integrity check. A malicious peer can supply an arbitrary `snapshot.hash` and cause the node to adopt a forged app state.
-
-Additionally, `sync_via_snapshot()` is never called in the node's sync-client path (`node.rs:542` only serves snapshot requests to others). Nodes always fall back to full block replay, making the snapshot feature unreachable for joining nodes.
-
-**Fix:** (1) Before accepting a snapshot, fetch and verify the corresponding signed header and QC from peers; bind `snapshot.hash` to the QC's `block_hash` → `app_hash` chain. (2) Wire `sync_via_snapshot()` into the `sync_to_tip()` call path when `state_sync = true` is configured.
-
-**Key Files:** `crates/hotmint-consensus/src/sync.rs`, `crates/hotmint/src/bin/node.rs`
-
----
-
-### 🟡 A-4. `PersistentEvidenceStore` Loses `next_id` on Restart `[Medium]`
-
-**Finding:** `PersistentEvidenceStore::open()` reads `next_id` from the `meta` file at startup and writes it once on first creation (`evidence_store.rs:79`, `evidence_store.rs:104`). However, `put_evidence()` increments `self.next_id` only in memory and never writes the updated value back to `meta` (`evidence_store.rs:134`). After a restart, `next_id` resets to the stale persisted value, causing new evidence entries to overwrite existing ones.
-
-**Consequence:** Evidence that survives a restart can be silently overwritten, contradicting the documented guarantee that "evidence survives restarts."
-
-**Fix:** Write `next_id` back to `meta` (or derive it from the stored map's max key) in `put_evidence()`, or recover it by scanning the existing `proofs` map at `open()` time.
-
-**Key Files:** `crates/hotmint-storage/src/evidence_store.rs`
-
----
-
-### 🟡 A-5. `recheck()` Blocks the Commit Path; Packer Skips on First Oversized Tx `[Medium]`
-
-**Finding (recheck):** `AppWithStatus::on_commit()` (`node.rs:938`) calls `mempool.recheck()` synchronously via `block_in_place` on every committed block. `recheck()` holds both `entries` and `seen` locks for the duration and calls `validate_tx` once per pending transaction (`mempool/src/lib.rs:231`). This serializes every block commit with `O(mempool_size × validation_cost)` work on the consensus main thread.
-
-**Finding (packing):** `collect_payload_with_gas()` breaks out of the iteration on the first transaction that exceeds the remaining byte budget (`mempool/src/lib.rs:178`), skipping all smaller subsequent transactions. This reduces block fill rate when a high-priority large transaction sits ahead of many small ones.
-
-**Fix:** Run `recheck()` in a background task, decoupled from the commit callback. Change the packing loop to skip oversized transactions and continue rather than break.
-
-**Key Files:** `crates/hotmint/src/bin/node.rs:938`, `crates/hotmint-mempool/src/lib.rs:178,231`
-
----
-
-### 🟡 A-6. Light Client `verify_header` Lacks Height Monotonicity `[Medium]`
-
-**Finding:** `LightClient::verify_header()` checks only that the QC's `block_hash` matches the header and that the aggregate signature reaches quorum under the trusted validator set (`hotmint-light/src/lib.rs:71`). It does not verify that `header.height > trusted_height`, meaning a replayed or historically older header passes verification. The RPC `verify_header` endpoint constructs the light client using the node's current live validator set (`rpc.rs:617`), which is unreliable for verifying headers from past epochs.
-
-**Fix:** Enforce `header.height > self.trusted_height` inside `verify_header()`. For the RPC path, require the caller to supply the validator set at the header's epoch, not the current one.
-
-**Key Files:** `crates/hotmint-light/src/lib.rs`, `crates/hotmint-api/src/rpc.rs:617`
-
----
-
-### 🟡 A-8. EVM Block Timestamp Hardcoded to Zero `[Medium]`
-
-**Finding:** The revm block context in the EVM executor sets `block.timestamp = U256::ZERO` unconditionally (`crates/evm/execution/src/executor.rs:208`), with a `// TODO` comment. Any Solidity contract that reads `block.timestamp` will always see `0`, causing incorrect behavior for time-based logic (locks, vesting, auctions, etc.).
-
-**Fix:** Pass the actual block timestamp from `BlockContext` into the revm block environment.
-
-**Key Files:** `crates/evm/execution/src/executor.rs:208`
-
----
-
-### 🔵 A-7. `submit_tx` API Contract Mismatch; `query` Silent Hex Degradation `[Low]`
-
-**Finding:** `submit_tx` requires `params` to be a bare hex string (`rpc.rs:282`), but the API README documents it as a JSON object `{"tx": "deadbeef"}` (`hotmint-api/README.md:80`). The `query` handler calls `hex_decode(...).unwrap_or_default()`, silently converting invalid hex into an empty byte slice instead of returning a parameter error (`rpc.rs:558`).
-
-**Fix:** Correct the README example to use a bare hex string. Return a `-32602 Invalid params` error from `query` when the hex input is malformed.
-
-**Key Files:** `crates/hotmint-api/src/rpc.rs:282,558`, `crates/hotmint-api/README.md:80`
-
----
-
-## 14.2 New Audit Findings (Third Round) — Pending
-
-The items below were verified in a third-round architectural audit. Findings 2A (axum hallucinated) and 3B (integer overflow in `decode_payload`) were **refuted**: axum is a real dependency used by `HttpRpcServer`, and the `decode_payload` bounds check is performed before indexing with no exploitable overflow. The remaining three findings are confirmed and documented below.
-
----
-
-### 🔴 B-1. BFT Time: Proposer Can Inflate Chain Time Up to the Drift Limit, Breaking Honest Successors `[High]`
-
-**Finding:** A block proposer sets its timestamp with a plain `SystemTime::now()` (`view_protocol.rs:163`) — there is no `max(now, parent.timestamp)` enforcement on the proposer side. Replica validation only checks two rules: (1) `block.timestamp >= parent.timestamp` and (2) `block.timestamp <= local_now + MAX_FUTURE_DRIFT_MS` (15 000 ms). A Byzantine proposer can legally set its block's timestamp to `now + 14 999 ms` — just under the drift ceiling — and the network will accept it because both rules pass.
-
-When the next honest leader builds its block, its true local clock will almost certainly be below the inflated parent timestamp. Its block will be rejected by every validator because it fails the monotonicity check (`timestamp < parent.timestamp`). The attacker can repeat this on every view it leads, causing repeated timeouts and degrading chain liveness.
-
-**Fix:** Enforce `timestamp = max(SystemTime::now(), parent.timestamp + 1)` in the proposer path (`view_protocol.rs::propose`), preventing any honest leader from ever producing a timestamp behind the chain tip.
-
-**Key Files:** `crates/hotmint-consensus/src/view_protocol.rs` (proposal construction ~line 163, validation ~lines 302–332)
-
----
-
-### 🟡 B-2. Mempool Payload Collection: O(N log N) Pop-Skip-Reinsert Loop Holds Async Lock `[Medium]`
-
-**Finding:** `collect_payload_with_gas()` (`hotmint-mempool/src/lib.rs`) repeatedly calls `entries.pop_last()`, accumulates gas-over-limit transactions in a `skipped: Vec`, and then re-inserts all of them back into the `BTreeSet` after the loop. The entire operation holds both `entries` and `seen` async `Mutex` guards throughout:
-
-```rust
-while let Some(entry) = entries.pop_last() {
-    if max_gas > 0 && total_gas + entry.gas_wanted > max_gas {
-        skipped.push(entry);
-        continue;
-    }
-    ...
-}
-for entry in skipped {
-    entries.insert(entry); // O(log N) per re-insert
-}
-```
-
-An attacker who submits a large number of low-gas transactions behind a single high-gas high-priority entry forces the leader to pop every transaction, push it to `skipped`, and re-insert it — all while blocking the async executor. With thousands of pending transactions this stalls the Tokio runtime during block production, causing the node to miss its proposal window and degrade liveness.
-
-**Fix:** Replace the pop/reinsert pattern with a forward iterator that never removes entries from the set during collection. Alternatively, cap the maximum number of skipped transactions per collection round (e.g., `max_skipped = 200`) so the loop terminates in bounded time.
-
-**Key Files:** `crates/hotmint-mempool/src/lib.rs` (`collect_payload_with_gas`, lines ~171–203)
-
----
-
-### 🟡 B-3. No Inbound Message Rate Limit Before `block_in_place` Crypto Verification `[Medium]`
-
-**Finding:** Every inbound consensus message is passed through `block_in_place` for signature verification before any rate or validity pre-screening (`engine.rs:895`):
-
-```rust
-let verified = tokio::task::block_in_place(|| self.verify_message(&msg));
-```
-
-`block_in_place` parks the current Tokio worker thread and spawns a new one to keep the runtime alive. A peer that floods the node with syntactically valid but cryptographically invalid `VoteMsg`, `Propose`, or `TimeoutCert` messages causes a surge of `block_in_place` calls. Each call blocks a worker thread for the duration of Ed25519 aggregate verification, forcing the runtime to continuously spawn replacement threads. The result is thread-count explosion, cache thrash, and increased scheduling latency for all other async tasks — a targeted DoS against any validator.
-
-**Fix:** Apply a per-sender (or global) inbound message rate limiter in the network receive loop before messages reach `handle_message`. Move CPU-bound verification work into a bounded `rayon` thread pool with a fixed worker count; use `tokio::sync::oneshot` to await the result asynchronously, keeping the Tokio worker thread free during verification.
-
-**Key Files:** `crates/hotmint-consensus/src/engine.rs` (`handle_message` ~line 888, `verify_message` ~line 895)
-
----
-
-## 14.3 New Audit Findings (Independent Review Round) — Pending
-
-The following items were found during an independent full-codebase review covering consensus correctness, network security, API safety, and storage. All findings are verified against actual source code.
-
----
-
-### 🔴 C-1. `on_prepare` Missing Step Guard — Node Can Send Vote2 Without Having Voted `[High]`
-
-**Finding:** `view_protocol::on_prepare()` updates `state.locked_qc` and broadcasts a `Vote2` message unconditionally, without checking that the node is currently in `ViewStep::Voted`. By contrast, `on_proposal` correctly guards with `if state.step != ViewStep::WaitingForProposal { return; }`. The `on_prepare` function has no equivalent guard.
-
-**Consequence:** A Byzantine leader can send a `Prepare` message to a replica that has not yet received (or voted on) the corresponding proposal. The replica will lock the QC embedded in the Prepare and emit a `Vote2` — completing the second phase of the two-chain commit without having completed the first phase. This breaks the protocol invariant that `Vote2` may only be cast after `Vote` for the same block, potentially allowing a valid `DoubleCertificate` to be formed for a block the replica never validated.
-
-**Fix:** Add `if state.step != ViewStep::Voted { return; }` at the top of `on_prepare()` (before any state mutation).
-
-**Key Files:** `crates/hotmint-consensus/src/view_protocol.rs` (`on_prepare`), `crates/hotmint-consensus/src/engine.rs` (Prepare handler ~line 1036)
-
----
-
-### 🟡 C-2. Mempool Tx Gossip: No Per-Peer Rate Limit — Unlimited Unique Transactions Accepted `[Medium]`
-
-**Finding:** The mempool notification handler (`handle_mempool_notification_event` in `service.rs`) applies only a content-based deduplication check (via a two-set bloom-like cache of 100 000 hashes). There is no per-peer rate limit. A single peer can continuously broadcast distinct transactions — each unique so dedup does not trigger — and force the node to: (1) hash every message, (2) forward it to the mempool channel, (3) run `validate_tx` on it, and (4) propagate it to other peers. This is qualitatively different from the `block_in_place` concern (B-3): it does not require crypto verification — the cost is the mempool processing pipeline itself.
-
-With `MAX_MEMPOOL_NOTIF_SIZE = 512 KB` and no rate limit, a single malicious peer can push ~40 MB/s of valid-looking transactions, saturating the mempool recheck channel (buffer 4096) and stalling `on_commit` callbacks.
-
-**Fix:** Track a per-peer message counter in a sliding window (e.g., max 100 tx/second per peer). Connections that exceed the limit should have their substream silently dropped or the peer temporarily banned from mempool gossip.
-
-**Key Files:** `crates/hotmint-network/src/service.rs` (`handle_mempool_notification_event` ~line 990)
-
----
-
-### 🟡 C-3. HTTP RPC Has No Body Size Limit — 2 GB Default Allows Memory-Based DoS `[Medium]`
-
-**Finding:** The Axum router for `HttpRpcServer` (`http_rpc.rs`) does not include a `DefaultBodyLimit` layer. The HTTP handler accepts the body as a plain `String` extracted by Axum, which uses a 2 GB default limit. The TCP RPC server enforces `MAX_LINE_BYTES = 1 MB` via a line-length limiter. An attacker sending a 100 MB POST body to `POST /` causes Axum to buffer the entire payload before the handler function runs — before any per-IP rate limiting or method dispatch.
-
-**Fix:** Add `.layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))` (1 MB) to the Axum router, matching the TCP RPC server's limit.
-
-**Key Files:** `crates/hotmint-api/src/http_rpc.rs` (router construction)
-
----
-
-### 🔵 C-4. WebSocket Connection Counter Not Decremented on Task Panic `[Low]`
-
-**Finding:** `handle_ws()` increments `ws_connection_count` at the start and decrements it at the end of the function. The decrement is a plain statement with no RAII guard. If the function panics (e.g., due to an unexpected error in the event loop or the send path), the counter is permanently inflated. Once `MAX_WS_CONNECTIONS` is reached, all future WebSocket upgrade requests return `503 Too many connections` — effectively a permanent denial of service requiring a node restart.
-
-**Fix:** Wrap the counter in a newtype drop guard:
-```rust
-struct WsGuard(Arc<AtomicUsize>);
-impl Drop for WsGuard { fn drop(&mut self) { self.0.fetch_sub(1, Relaxed); } }
-```
-Instantiate it after the increment so that any subsequent panic triggers the decrement automatically.
-
-**Key Files:** `crates/hotmint-api/src/http_rpc.rs` (`handle_ws` ~line 219)
-
----
-
-### 🔵 C-5. `PersistentEvidenceStore` Has No Pruning — Committed Evidence Retained Forever `[Low]`
-
-**Finding:** `PersistentEvidenceStore` stores `EquivocationProof` entries in a vsdb `MapxOrd`. The `mark_committed()` method flags entries as committed (filtering them from `get_pending()`), but does not delete them from storage. There is no pruning at any time — not on `mark_committed`, not on epoch boundaries, not on a configurable TTL. On a long-running chain where validators equivocate repeatedly, the evidence store grows without bound and eventually exhausts disk space.
-
-**Fix:** After a configurable retention period (e.g., `keep_evidence_for_blocks = 100000`), delete committed evidence entries from the `MapxOrd` in `mark_committed()` or in a periodic cleanup task.
-
-**Key Files:** `crates/hotmint-storage/src/evidence_store.rs`
+All security vulnerabilities, engineering defects, and feature roadmap items are complete. No open items remain.
+
+| ID | Priority | Feature | Status |
+|----|----------|---------|:------:|
+| P0-1 | 🟢 P0 | Standard HTTP/WS RPC + event subscription | ✅ |
+| P1-1 | 🟢 P1 | Snapshot State Sync | ✅ |
+| P1-2 | 🟢 P1 | Weighted proposer selection | ✅ |
+| P2-1 | 🟢 P2 | Light client verification protocol | ✅ |
+| P2-2 | 🟢 P2 | ABCI++ Vote Extensions | ✅ |
 
 ---
 

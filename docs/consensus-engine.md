@@ -5,6 +5,7 @@ The `ConsensusEngine` is the heart of hotmint — an async event loop that drive
 ## Overview
 
 ```rust
+// SharedBlockStore = Arc<parking_lot::RwLock<Box<dyn BlockStore>>>
 pub struct ConsensusEngine {
     state: ConsensusState,
     store: SharedBlockStore,
@@ -23,6 +24,7 @@ pub struct ConsensusEngine {
     evidence_store: Option<Box<dyn EvidenceStore>>,
     liveness_tracker: LivenessTracker,
     wal: Option<Box<dyn Wal>>,
+    msg_rate_limiter: HashMap<ValidatorId, (Instant, u32)>,
 }
 ```
 
@@ -31,26 +33,24 @@ The engine takes ownership of all its dependencies and runs as an infinite async
 ## Construction
 
 ```rust
-use std::sync::{Arc, RwLock};
-use hotmint::consensus::engine::{ConsensusEngine, EngineConfig, SharedBlockStore};
+use std::sync::Arc;
+use parking_lot::RwLock;
+use hotmint::consensus::engine::{ConsensusEngineBuilder, EngineConfig, SharedBlockStore};
 use hotmint::crypto::Ed25519Verifier;
 use hotmint::consensus::state::ConsensusState;
 
 let store: SharedBlockStore = Arc::new(RwLock::new(Box::new(block_store)));
 
-let engine = ConsensusEngine::new(
-    state,                    // ConsensusState
-    store,                    // SharedBlockStore = Arc<RwLock<Box<dyn BlockStore>>>
-    Box::new(network_sink),   // impl NetworkSink
-    Box::new(application),    // impl Application
-    Box::new(signer),         // impl Signer
-    msg_rx,                   // Receiver<(Option<ValidatorId>, ConsensusMessage)>
-    EngineConfig {
-        verifier: Box::new(Ed25519Verifier),
-        pacemaker: None,
-        persistence: None,
-    },
-);
+let engine = ConsensusEngineBuilder::new()
+    .state(state)
+    .store(store)
+    .network(Box::new(network_sink))
+    .app(Box::new(application))
+    .signer(Box::new(signer))
+    .messages(msg_rx)
+    .verifier(Box::new(Ed25519Verifier))
+    .build()
+    .expect("all required fields must be set");
 ```
 
 The `msg_rx` channel is the engine's sole input. All consensus messages — whether from the network or from loopback — arrive through this channel as `(Option<sender_id>, message)` tuples. The sender is `Some(ValidatorId)` for authenticated validators and `None` for unknown/unauthenticated peers.

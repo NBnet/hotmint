@@ -474,22 +474,20 @@ Usage:
 ```rust
 use hotmint::consensus::application::NoopApplication;
 
-use std::sync::{Arc, RwLock};
-use hotmint::consensus::engine::{EngineConfig, SharedBlockStore};
+use std::sync::Arc;
+use parking_lot::RwLock;
+use hotmint::consensus::engine::{ConsensusEngineBuilder, SharedBlockStore};
 use hotmint::crypto::Ed25519Verifier;
 
 let shared_store: SharedBlockStore = Arc::new(RwLock::new(Box::new(store)));
-let engine = ConsensusEngine::new(
-    state,
-    shared_store,
-    Box::new(network),
-    Box::new(NoopApplication),
-    Box::new(signer),
-    msg_rx,
-    EngineConfig {
-        verifier: Box::new(Ed25519Verifier),
-        pacemaker: None,
-        persistence: None,
-    },
-);
+let engine = ConsensusEngineBuilder::new()
+    .state(state)
+    .store(shared_store)
+    .network(Box::new(network))
+    .app(Box::new(NoopApplication))
+    .signer(Box::new(signer))
+    .messages(msg_rx)
+    .verifier(Box::new(Ed25519Verifier))
+    .build()
+    .expect("all required fields must be set");
 ```
