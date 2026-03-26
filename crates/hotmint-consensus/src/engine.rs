@@ -71,6 +71,9 @@ pub struct ConsensusEngine {
     wal: Option<Box<dyn Wal>>,
     /// B-3: Per-sender inbound message rate limiter.
     msg_rate_limiter: HashMap<ValidatorId, (std::time::Instant, u32)>,
+    /// Previous epoch's validator set, retained for verifying in-flight messages
+    /// (especially TCs) that were formed before the epoch transition.
+    previous_validator_set: Option<ValidatorSet>,
 }
 
 /// Configuration for ConsensusEngine.
@@ -281,6 +284,7 @@ impl ConsensusEngine {
             liveness_tracker: LivenessTracker::new(),
             wal: config.wal,
             msg_rate_limiter: HashMap::new(),
+            previous_validator_set: None,
         }
     }
 
@@ -607,6 +611,56 @@ pub fn verify_relay_sender(
 }
 
 impl ConsensusEngine {
+    /// Verify a TimeoutCert against a specific validator set.
+    /// Returns true if the TC has valid signatures and sufficient quorum.
+    fn verify_tc(&self, tc: &hotmint_types::TimeoutCertificate, vs: &ValidatorSet) -> bool {
+        let target_view = ViewNumber(tc.view.as_u64() + 1);
+        let n = vs.validator_count();
+        if tc.aggregate_signature.signers.len() != n {
+            return false;
+        }
+        let mut sig_idx = 0usize;
+        let mut power = 0u64;
+        for (i, &signed) in tc.aggregate_signature.signers.iter().enumerate() {
+            if !signed {
+                continue;
+            }
+            let Some(vi) = vs.validators().get(i) else {
+                return false;
+            };
+            let hqc = tc.highest_qcs.get(i).and_then(|h| h.as_ref());
+            if sig_idx >= tc.aggregate_signature.signatures.len() {
+                return false;
+            }
+            let mut tc_sig_ok = false;
+            for epoch in self.verification_epochs() {
+                let bytes = crate::pacemaker::wish_signing_bytes(
+                    &self.state.chain_id_hash,
+                    epoch,
+                    target_view,
+                    hqc,
+                );
+                if self.verifier.verify(
+                    &vi.public_key,
+                    &bytes,
+                    &tc.aggregate_signature.signatures[sig_idx],
+                ) {
+                    tc_sig_ok = true;
+                    break;
+                }
+            }
+            if !tc_sig_ok {
+                return false;
+            }
+            power += vs.power_of(vi.id);
+            sig_idx += 1;
+        }
+        if sig_idx != tc.aggregate_signature.signatures.len() {
+            return false;
+        }
+        power >= vs.quorum_threshold()
+    }
+
     /// Epoch numbers to try when verifying signatures. During epoch transitions,
     /// some nodes may still be in the previous epoch. We try the current epoch
     /// first, then fall back to epoch - 1 to tolerate the transition window.
@@ -783,7 +837,12 @@ impl ConsensusEngine {
                 highest_qc,
                 signature,
             } => {
-                let Some(vi) = vs.get(*validator) else {
+                let vi = vs.get(*validator).or_else(|| {
+                    self.previous_validator_set
+                        .as_ref()
+                        .and_then(|prev| prev.get(*validator))
+                });
+                let Some(vi) = vi else {
                     warn!(validator = %validator, "wish from unknown validator");
                     return false;
                 };
@@ -808,65 +867,18 @@ impl ConsensusEngine {
                 true
             }
             ConsensusMessage::TimeoutCert(tc) => {
-                // The TC's aggregate signature is a collection of individual Ed25519 signatures,
-                // each signed over wish_signing_bytes(target_view, signer_highest_qc).
-                // Because each validator may have a different highest_qc, we verify per-signer
-                // using tc.highest_qcs[i] (indexed by validator slot).
-                // This also enforces quorum: we sum voting power of verified signers.
-                let target_view = ViewNumber(tc.view.as_u64() + 1);
-                let n = vs.validator_count();
-                if tc.aggregate_signature.signers.len() != n {
-                    warn!(view = %tc.view, "TC signers bitfield length mismatch");
-                    return false;
+                // Try current validator set first; if bitfield length mismatches
+                // (TC formed in previous epoch), fall back to previous validator set.
+                if self.verify_tc(tc, vs) {
+                    return true;
                 }
-                let mut sig_idx = 0usize;
-                let mut power = 0u64;
-                for (i, &signed) in tc.aggregate_signature.signers.iter().enumerate() {
-                    if !signed {
-                        continue;
+                if let Some(ref prev) = self.previous_validator_set {
+                    if self.verify_tc(tc, prev) {
+                        return true;
                     }
-                    let Some(vi) = vs.validators().get(i) else {
-                        warn!(view = %tc.view, validator_idx = i, "TC signer index out of validator set");
-                        return false;
-                    };
-                    let hqc = tc.highest_qcs.get(i).and_then(|h| h.as_ref());
-                    if sig_idx >= tc.aggregate_signature.signatures.len() {
-                        warn!(view = %tc.view, "TC aggregate_signature has fewer sigs than signers");
-                        return false;
-                    }
-                    let mut tc_sig_ok = false;
-                    for epoch in self.verification_epochs() {
-                        let bytes = crate::pacemaker::wish_signing_bytes(
-                            &self.state.chain_id_hash,
-                            epoch,
-                            target_view,
-                            hqc,
-                        );
-                        if self.verifier.verify(
-                            &vi.public_key,
-                            &bytes,
-                            &tc.aggregate_signature.signatures[sig_idx],
-                        ) {
-                            tc_sig_ok = true;
-                            break;
-                        }
-                    }
-                    if !tc_sig_ok {
-                        warn!(view = %tc.view, validator = %vi.id, "TC signer signature invalid");
-                        return false;
-                    }
-                    power += vs.power_of(vi.id);
-                    sig_idx += 1;
                 }
-                if sig_idx != tc.aggregate_signature.signatures.len() {
-                    warn!(view = %tc.view, "TC has extra signatures beyond bitfield");
-                    return false;
-                }
-                if power < vs.quorum_threshold() {
-                    warn!(view = %tc.view, power, threshold = vs.quorum_threshold(), "TC insufficient quorum");
-                    return false;
-                }
-                true
+                warn!(view = %tc.view, "TC verification failed (tried current and previous validator sets)");
+                false
             }
             ConsensusMessage::StatusCert {
                 locked_qc,
@@ -1734,6 +1746,7 @@ impl ConsensusEngine {
             }
             self.liveness_tracker.reset();
 
+            self.previous_validator_set = Some(self.state.validator_set.clone());
             self.state.validator_set = new_epoch.validator_set.clone();
             self.state.current_epoch = new_epoch;
             // Notify network layer of the new validator set and epoch

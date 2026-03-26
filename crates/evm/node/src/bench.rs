@@ -245,11 +245,12 @@ fn run_bench(label: &str, txs_to_submit: usize) {
         total_elapsed.as_secs_f64(),
     );
     println!("    Throughput: {tps:.1} tx/s (confirmed on-chain)");
-    println!(
-        "    Blocks:     {blocks_produced} (height {start_block}→{end_block})",
-    );
+    println!("    Blocks:     {blocks_produced} (height {start_block}→{end_block})",);
     if confirmed < submitted {
-        println!("    WARNING: {}/{submitted} txs NOT confirmed within timeout", submitted - confirmed);
+        println!(
+            "    WARNING: {}/{submitted} txs NOT confirmed within timeout",
+            submitted - confirmed
+        );
     }
     println!();
 
