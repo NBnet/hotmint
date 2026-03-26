@@ -383,10 +383,7 @@ pub async fn sync_via_snapshot(
             snapshot.height.as_u64()
         ));
     }
-    if !hotmint_crypto::has_quorum(
-        &state.current_epoch.validator_set,
-        &qc.aggregate_signature,
-    ) {
+    if !hotmint_crypto::has_quorum(&state.current_epoch.validator_set, &qc.aggregate_signature) {
         return Err(eg!(
             "snapshot anchor QC below quorum threshold at height {}",
             snapshot.height.as_u64()

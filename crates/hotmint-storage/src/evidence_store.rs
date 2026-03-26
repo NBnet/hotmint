@@ -137,12 +137,12 @@ impl PersistentEvidenceStore {
 
     /// A-4: Write the updated next_id back to the meta file so it survives restarts.
     fn persist_next_id(&self) {
-        if let Ok(bytes) = std::fs::read(&self.meta_path) {
-            if bytes.len() == 24 {
-                let mut meta = bytes;
-                meta[16..24].copy_from_slice(&self.next_id.to_le_bytes());
-                let _ = std::fs::write(&self.meta_path, &meta);
-            }
+        if let Ok(bytes) = std::fs::read(&self.meta_path)
+            && bytes.len() == 24
+        {
+            let mut meta = bytes;
+            meta[16..24].copy_from_slice(&self.next_id.to_le_bytes());
+            let _ = std::fs::write(&self.meta_path, &meta);
         }
     }
 }
