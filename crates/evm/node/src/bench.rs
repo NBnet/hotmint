@@ -7,8 +7,6 @@
 //! 5. Cleans up
 
 use std::collections::BTreeMap;
-use std::path::Path;
-use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 use alloy_consensus::{Signed, TxEip1559};
@@ -18,8 +16,8 @@ use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_signer_local::PrivateKeySigner;
 use serde_json::json;
 
+use hotmint_evm_node::cluster::{init_evm_cluster, start_evm_nodes};
 use hotmint_evm_types::genesis::{EvmGenesis, GenesisAlloc};
-use hotmint_mgmt::cluster;
 
 const NUM_VALIDATORS: u32 = 4;
 const DURATION_SECS: u64 = 10;
@@ -117,61 +115,6 @@ fn rpc_send_raw_tx(rpc_url: &str, raw_tx: &[u8]) -> bool {
     client.post(rpc_url).json(&body).send().is_ok()
 }
 
-fn setup_cluster(base_dir: &Path, evm_genesis: &EvmGenesis) -> ruc::Result<()> {
-    // Find free ports for p2p and rpc.
-    let ports = hotmint_mgmt::find_free_ports((NUM_VALIDATORS * 2) as usize);
-    let p2p_base = ports[0];
-    let rpc_base = ports[NUM_VALIDATORS as usize];
-
-    cluster::init_cluster(
-        base_dir,
-        NUM_VALIDATORS,
-        "evm-bench",
-        p2p_base,
-        rpc_base,
-        "127.0.0.1",
-    )?;
-
-    // Write EVM genesis to each validator's config dir.
-    let evm_genesis_json = serde_json::to_string_pretty(evm_genesis).map_err(|e| ruc::eg!(e))?;
-    for i in 0..NUM_VALIDATORS {
-        let config_dir = base_dir.join(format!("v{i}")).join("config");
-        std::fs::write(config_dir.join("evm-genesis.json"), &evm_genesis_json)
-            .map_err(|e| ruc::eg!(e))?;
-    }
-
-    Ok(())
-}
-
-fn start_evm_nodes(base_dir: &Path, binary: &Path, eth_rpc_ports: &[u16]) -> Vec<Child> {
-    let state = cluster::ClusterState::load(base_dir).unwrap();
-    let mut children = Vec::new();
-
-    for (i, v) in state.validators.iter().enumerate() {
-        let log_file = base_dir.join(format!("v{}.log", v.id));
-        let log = std::fs::File::create(&log_file).unwrap();
-        let log_err = log.try_clone().unwrap();
-
-        let child = Command::new(binary)
-            .arg("--home")
-            .arg(&v.home_dir)
-            .arg("--rpc-addr")
-            .arg(format!("127.0.0.1:{}", eth_rpc_ports[i]))
-            .stdout(log)
-            .stderr(log_err)
-            .spawn()
-            .unwrap_or_else(|e| panic!("spawn V{}: {e}", v.id));
-
-        children.push(child);
-        // Stagger startup to avoid Noise handshake collisions.
-        if i < state.validators.len() - 1 {
-            std::thread::sleep(Duration::from_millis(300));
-        }
-    }
-
-    children
-}
-
 fn wait_for_blocks(rpc_url: &str, min_blocks: u64, timeout_secs: u64) -> bool {
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     while Instant::now() < deadline {
@@ -199,18 +142,21 @@ fn run_bench(label: &str, txs_to_submit: usize) {
     let _ = std::fs::remove_dir_all(&base_dir);
 
     // Setup cluster.
-    setup_cluster(&base_dir, &evm_genesis).unwrap();
-    let _state = cluster::ClusterState::load(&base_dir).unwrap();
+    let (state, eth_rpc_ports) = init_evm_cluster(
+        &base_dir,
+        NUM_VALIDATORS,
+        "evm-bench",
+        &evm_genesis,
+        "127.0.0.1",
+    )
+    .unwrap();
 
     // Find or build the hotmint-evm binary.
     let binary = hotmint_mgmt::build_binary("hotmint-evm-node", Some("hotmint-evm"))
         .expect("failed to build hotmint-evm binary");
 
-    // Assign eth_* RPC ports (distinct from the hotmint RPC ports).
-    let eth_rpc_ports = hotmint_mgmt::find_free_ports(NUM_VALIDATORS as usize);
-
     // Start nodes.
-    let mut children = start_evm_nodes(&base_dir, &binary, &eth_rpc_ports);
+    let mut children = start_evm_nodes(&binary, &state, &base_dir, &eth_rpc_ports);
     let rpc_url = format!("http://127.0.0.1:{}", eth_rpc_ports[0]);
 
     // Wait for cluster to start producing blocks.

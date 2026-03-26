@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+name = "hotmint_evm_node"
+path = "src/lib.rs"
+
 [[bin]]
 name = "hotmint-evm"
 path = "src/main.rs"

@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::Child;
 
 use alloy_consensus::{Signed, TxEip1559, TxEnvelope};
 use alloy_eips::eip2718::Encodable2718;
@@ -13,8 +13,8 @@ use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 
+use hotmint_evm_node::cluster::{init_evm_cluster, start_evm_nodes};
 use hotmint_evm_types::genesis::{EvmGenesis, GenesisAlloc};
-use hotmint_mgmt::cluster;
 
 const NUM_VALIDATORS: u32 = 4;
 
@@ -46,54 +46,19 @@ fn setup_and_start(evm_genesis: &EvmGenesis) -> (Vec<Child>, u16, PathBuf) {
     let base_dir = std::env::temp_dir().join(format!("hotmint-evm-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base_dir);
 
-    // Find free ports.
-    let ports = hotmint_mgmt::find_free_ports((NUM_VALIDATORS * 3) as usize);
-    let p2p_base = ports[0];
-    let rpc_base = ports[NUM_VALIDATORS as usize];
-    let eth_rpc_ports: Vec<u16> = ports[(NUM_VALIDATORS * 2) as usize..].to_vec();
-
-    cluster::init_cluster(
+    let (state, eth_rpc_ports) = init_evm_cluster(
         &base_dir,
         NUM_VALIDATORS,
         "evm-e2e-test",
-        p2p_base,
-        rpc_base,
+        evm_genesis,
         "127.0.0.1",
     )
     .unwrap();
 
-    // Write EVM genesis.
-    let evm_genesis_json = serde_json::to_string_pretty(evm_genesis).unwrap();
-    for i in 0..NUM_VALIDATORS {
-        let config_dir = base_dir.join(format!("v{i}")).join("config");
-        std::fs::write(config_dir.join("evm-genesis.json"), &evm_genesis_json).unwrap();
-    }
-
-    // Build hotmint-evm binary.
     let binary = hotmint_mgmt::build_binary("hotmint-evm-node", Some("hotmint-evm"))
         .expect("failed to build hotmint-evm");
 
-    let state = cluster::ClusterState::load(&base_dir).unwrap();
-    let mut children = Vec::new();
-    for (i, v) in state.validators.iter().enumerate() {
-        let log = std::fs::File::create(base_dir.join(format!("v{}.log", v.id))).unwrap();
-        let log_err = log.try_clone().unwrap();
-        let child = Command::new(&binary)
-            .arg("--home")
-            .arg(&v.home_dir)
-            .arg("--rpc-addr")
-            .arg(format!("127.0.0.1:{}", eth_rpc_ports[i]))
-            .stdout(log)
-            .stderr(log_err)
-            .spawn()
-            .unwrap();
-        children.push(child);
-        // Stagger startup to avoid Noise handshake collisions.
-        if i < state.validators.len() - 1 {
-            std::thread::sleep(std::time::Duration::from_millis(300));
-        }
-    }
-
+    let children = start_evm_nodes(&binary, &state, &base_dir, &eth_rpc_ports);
     (children, eth_rpc_ports[0], base_dir)
 }
 

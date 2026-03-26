@@ -311,10 +311,8 @@ pub(crate) async fn handle_request(
                 .add_tx(tx_bytes.clone(), priority, gas_wanted)
                 .await;
             // Gossip accepted transactions to peers.
-            if accepted {
-                if let Some(ref sink) = state.network_sink {
-                    sink.broadcast_tx(tx_bytes);
-                }
+            if accepted && let Some(ref sink) = state.network_sink {
+                sink.broadcast_tx(tx_bytes);
             }
             json_ok(req.id, &TxResult { accepted })
         }
