@@ -134,6 +134,22 @@ pub fn wait_for_rpc(host: &str, port: u16, timeout_secs: u64) -> bool {
     false
 }
 
+/// Kill any stale node processes whose `--home` points into `base_dir`.
+///
+/// Uses `pkill -f` to find and kill processes matching the base_dir path.
+/// This cleans up orphaned nodes from previous test runs that crashed
+/// without proper cleanup. Best-effort: silently ignores errors.
+pub fn kill_stale_nodes(base_dir: &Path) {
+    let pattern = format!("--home {}", base_dir.display());
+    let _ = std::process::Command::new("pkill")
+        .args(["-9", "-f", &pattern])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    // Brief pause to let OS reclaim resources.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+}
+
 /// Start cluster node processes with staggered startup to avoid
 /// simultaneous Noise handshake collisions in litep2p.
 ///
@@ -146,6 +162,9 @@ pub fn start_cluster_nodes(
     extra_args: &[&str],
 ) -> Vec<std::process::Child> {
     use std::time::Duration;
+
+    // Clean up orphaned nodes from previous runs.
+    kill_stale_nodes(base_dir);
 
     let mut children = Vec::new();
     for (i, v) in state.validators.iter().enumerate() {

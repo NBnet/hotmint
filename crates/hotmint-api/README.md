@@ -5,91 +5,37 @@
 
 JSON-RPC API server for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
 
-Provides a TCP-based, newline-delimited JSON-RPC server for querying node status and submitting transactions to the mempool.
+Provides a TCP-based newline-delimited JSON-RPC server and an HTTP/WebSocket server for querying node status, submitting transactions, and subscribing to chain events.
 
 ## RPC Methods
 
 | Method | Description | Response |
 |:-------|:------------|:---------|
-| `status` | Query node status (view, height, mempool size) | `StatusInfo` |
-| `submit_tx` | Submit a hex-encoded transaction | `TxResult { accepted: bool }` |
+| `status` | Node status (view, height, epoch, mempool size) | `StatusInfo` |
+| `submit_tx` | Submit hex-encoded transaction to mempool + gossip to peers | `TxResult { accepted }` |
+| `get_block` | Query block by height | `BlockInfo` |
+| `get_validators` | Current validator set | `Vec<ValidatorInfoResponse>` |
+| `get_peers` | Connected peer status | `Vec<PeerStatus>` |
+| `get_epoch` | Current epoch info | `EpochInfo` |
 
-## Usage
+## Transaction Flow
 
-### Start the Server
+When `submit_tx` is called:
+1. Rate-limit check (per-IP, 100 tx/sec)
+2. `Application::validate_tx()` — application-level validation
+3. `MempoolAdapter::add_tx()` — add to the pluggable mempool
+4. `NetworkSink::broadcast_tx()` — gossip to all connected peers
 
-```rust
-use std::sync::Arc;
-use tokio::sync::watch;
-use hotmint_mempool::Mempool;
-use hotmint_api::rpc::{RpcServer, RpcState};
+The mempool and network sink are trait objects, allowing any chain to plug in its own transaction pool and gossip mechanism.
 
-let mempool = Arc::new(Mempool::default());
-let (status_tx, status_rx) = watch::channel((0u64, 0u64, 0u64, 4usize));
-
-use std::sync::{Arc as StdArc, RwLock};
-use hotmint_consensus::store::MemoryBlockStore;
-use hotmint_consensus::engine::SharedBlockStore;
-
-let store: SharedBlockStore =
-    StdArc::new(RwLock::new(Box::new(MemoryBlockStore::new())));
-let (_peer_tx, peer_info_rx) = watch::channel(vec![]);
-
-let rpc_state = RpcState {
-    validator_id: 0,
-    mempool: mempool.clone(),
-    status_rx,
-    store,
-    peer_info_rx,
-};
-
-let server = RpcServer::bind("127.0.0.1:26657", rpc_state).await.unwrap();
-println!("RPC listening on {}", server.local_addr());
-tokio::spawn(async move { server.run().await });
-```
-
-### Update Status from Application
-
-```rust
-use hotmint_consensus::application::Application;
-
-struct MyApp {
-    status_tx: watch::Sender<(u64, u64, u64, usize)>,
-}
-
-impl Application for MyApp {
-    fn on_commit(&self, block: &hotmint_types::Block, ctx: &hotmint_types::context::BlockContext) -> ruc::Result<()> {
-        let _ = self.status_tx.send((
-            block.view.as_u64(),
-            block.height.as_u64(),
-            ctx.epoch.as_u64(),
-            ctx.validator_set.validator_count(),
-        ));
-        Ok(())
-    }
-}
-```
-
-### Client Examples
+## Client Examples
 
 ```bash
 # query status
 echo '{"method":"status","params":{},"id":1}' | nc 127.0.0.1 26657
-# => {"result":{"validator_id":0,"current_view":42,"last_committed_height":15,"mempool_size":3},...}
 
-# submit transaction (hex-encoded, bare string in params)
+# submit transaction (hex-encoded)
 echo '{"method":"submit_tx","params":"deadbeef","id":2}' | nc 127.0.0.1 26657
-# => {"result":{"accepted":true},...}
-```
-
-## Types
-
-```rust
-pub struct RpcRequest  { pub method: String, pub params: Value, pub id: u64 }
-pub struct RpcResponse { pub result: Option<Value>, pub error: Option<RpcError>, pub id: u64 }
-pub struct RpcError    { pub code: i32, pub message: String }
-pub struct StatusInfo  { pub validator_id: u64, pub current_view: u64, pub last_committed_height: u64, pub mempool_size: usize }
-pub struct TxResult    { pub accepted: bool }
 ```
 
 ## License

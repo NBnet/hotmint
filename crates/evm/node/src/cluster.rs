@@ -58,6 +58,9 @@ pub fn start_evm_nodes(
     base_dir: &Path,
     eth_rpc_ports: &[u16],
 ) -> Vec<Child> {
+    // Clean up orphaned nodes from previous runs.
+    hotmint_mgmt::kill_stale_nodes(base_dir);
+
     let mut children = Vec::new();
     for (i, v) in state.validators.iter().enumerate() {
         let log = std::fs::File::create(base_dir.join(format!("v{}.log", v.id)))

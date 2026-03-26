@@ -5,14 +5,27 @@
 
 P2P networking layer for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
 
-Implements the `NetworkSink` trait from `hotmint-consensus` using [litep2p](https://crates.io/crates/litep2p) for real multi-process / multi-machine deployments. Messages are serialized with CBOR.
+Implements the `NetworkSink` trait from `hotmint-consensus` using [litep2p](https://crates.io/crates/litep2p) for real multi-process / multi-machine deployments. Messages are serialized with CBOR, with optional zstd compression for large frames.
 
 ## Sub-Protocols
 
 | Protocol | Path | Use |
 |:---------|:-----|:----|
-| Notification | `/hotmint/consensus/notif/1` | `broadcast()` — fire-and-forget to all peers |
-| Request-Response | `/hotmint/consensus/reqresp/1` | `send_to()` — directed message to a specific peer |
+| Consensus Notification | `/hotmint/consensus/notif/1` | `broadcast()` — fire-and-forget to all peers |
+| Consensus Request-Response | `/hotmint/consensus/reqresp/1` | `send_to()` — directed message to a specific peer |
+| Sync Request-Response | `/hotmint/sync/reqresp/1` | Block sync protocol |
+| Mempool Notification | `/hotmint/mempool/notif/1` | `broadcast_tx()` — transaction gossip |
+| PEX Notification | `/hotmint/pex/notif/1` | Peer exchange for discovery |
+
+## NetworkSink Trait Methods
+
+| Method | Description |
+|:-------|:------------|
+| `broadcast(msg)` | Broadcast consensus message to all peers |
+| `send_to(target, msg)` | Send directed message to specific validator |
+| `broadcast_tx(tx_bytes)` | Gossip raw transaction to all peers |
+| `broadcast_evidence(proof)` | Broadcast equivocation evidence |
+| `on_epoch_change(epoch, vs)` | Notify network of validator set change |
 
 ## Components
 
@@ -20,49 +33,8 @@ Implements the `NetworkSink` trait from `hotmint-consensus` using [litep2p](http
 |:----------|:------------|
 | `NetworkService` | Manages litep2p connections and event routing |
 | `Litep2pNetworkSink` | Implements `NetworkSink` for production use |
-| `PeerMap` | Bidirectional `ValidatorId ↔ PeerId` mapping |
-
-## Usage
-
-```rust
-use hotmint_network::service::{NetworkService, PeerMap};
-
-// map validator IDs to litep2p peer IDs
-let mut peer_map = PeerMap::new();
-peer_map.insert(ValidatorId(0), peer_id_0);
-peer_map.insert(ValidatorId(1), peer_id_1);
-// ...
-
-let known_addresses = vec![
-    (peer_id_0, vec!["/ip4/10.0.0.1/tcp/30000".parse().unwrap()]),
-    (peer_id_1, vec!["/ip4/10.0.0.2/tcp/30000".parse().unwrap()]),
-];
-
-// create returns (service, network_sink, msg_rx)
-let (net_service, network_sink, msg_rx) = NetworkService::create(
-    "/ip4/0.0.0.0/tcp/30000".parse().unwrap(),
-    peer_map,
-    known_addresses,
-    None,
-).unwrap();
-
-// run the network event loop
-tokio::spawn(async move { net_service.run().await });
-
-// pass network_sink and msg_rx to ConsensusEngine::new()
-use std::sync::{Arc, RwLock};
-
-let shared_store = Arc::new(RwLock::new(Box::new(store) as Box<dyn hotmint_consensus::store::BlockStore>));
-let engine = ConsensusEngine::new(
-    state,
-    shared_store,
-    Box::new(network_sink),
-    Box::new(app),
-    Box::new(signer),
-    msg_rx,
-    None,
-);
-```
+| `PeerMap` | Bidirectional `ValidatorId <-> PeerId` mapping |
+| `PeerBook` | Persistent peer discovery state |
 
 ## License
 

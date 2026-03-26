@@ -11,12 +11,13 @@ This is the core crate of Hotmint. It implements the full HotStuff-2 protocol �
 
 ```
 ConsensusEngine
-  ├── ConsensusState      mutable state (view, locks, role)
+  ├── ConsensusState      mutable state (view, locks, role, epoch)
   ├── view_protocol       steady-state protocol (Paper Figure 1)
   ├── pacemaker           timeout & view change (Paper Figure 2)
   ├── vote_collector      vote aggregation & QC formation
   ├── commit              two-chain commit rule
-  └── leader              round-robin leader election
+  ├── leader              round-robin / weighted leader election
+  └── liveness            offline validator tracking
 ```
 
 ## Pluggable Traits
@@ -25,7 +26,13 @@ ConsensusEngine
 |:------|:--------|:--------------|
 | `Application` | ABCI-like app lifecycle | `NoopApplication` |
 | `BlockStore` | Block persistence | `MemoryBlockStore` |
-| `NetworkSink` | Message transport | `Litep2pNetworkSink` |
+| `NetworkSink` | Message transport + tx gossip | `Litep2pNetworkSink` |
+
+## Key Design Points
+
+- **Ancestor blocks in proposals** — when a leader proposes, it includes all uncommitted ancestor blocks so replicas who missed earlier views can still commit the full chain
+- **Cross-epoch tolerance** — the engine retains the previous epoch's validator set to verify in-flight messages (TCs, Wishes) formed before an epoch transition
+- **Vote extensions** (ABCI++) — validators can attach application-specific data to Vote2 messages, delivered to the next proposer
 
 ## Usage
 
@@ -51,7 +58,7 @@ tokio::spawn(async move { engine.run().await });
 
 ### Implement Application
 
-All methods have default no-op implementations. Lifecycle: `execute_block(txs, ctx)` → `on_commit(block, ctx)`.
+All methods have default no-op implementations. Lifecycle: `execute_block(txs, ctx)` -> `on_commit(block, ctx)`.
 
 ```rust
 use ruc::*;
@@ -66,18 +73,6 @@ impl Application for MyApp {
         Ok(())
     }
 }
-```
-
-### Prometheus Metrics
-
-```rust
-use prometheus_client::registry::Registry;
-use hotmint_consensus::metrics::ConsensusMetrics;
-
-let mut registry = Registry::default();
-let metrics = ConsensusMetrics::new(&mut registry);
-// Exposes: hotmint_blocks_committed, hotmint_votes_sent,
-//          hotmint_view_timeouts, hotmint_view_duration_seconds, ...
 ```
 
 ## License
