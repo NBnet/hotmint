@@ -69,6 +69,8 @@ pub struct ConsensusEngine {
     liveness_tracker: LivenessTracker,
     /// Optional write-ahead log for commit crash recovery.
     wal: Option<Box<dyn Wal>>,
+    /// B-3: Per-sender inbound message rate limiter.
+    msg_rate_limiter: HashMap<ValidatorId, (std::time::Instant, u32)>,
 }
 
 /// Configuration for ConsensusEngine.
@@ -278,6 +280,7 @@ impl ConsensusEngine {
             evidence_store: config.evidence_store,
             liveness_tracker: LivenessTracker::new(),
             wal: config.wal,
+            msg_rate_limiter: HashMap::new(),
         }
     }
 
@@ -904,9 +907,25 @@ impl ConsensusEngine {
 
     async fn handle_message(
         &mut self,
-        _sender: Option<ValidatorId>,
+        sender: Option<ValidatorId>,
         msg: ConsensusMessage,
     ) -> Result<()> {
+        // B-3: Per-sender rate limit before CPU-intensive crypto verification.
+        // Allow up to 100 messages per second per sender.
+        const MAX_MSG_PER_SEC: u32 = 100;
+        if let Some(vid) = sender {
+            let now = std::time::Instant::now();
+            let entry = self.msg_rate_limiter.entry(vid).or_insert((now, 0));
+            if now.duration_since(entry.0).as_secs() >= 1 {
+                *entry = (now, 1);
+            } else {
+                entry.1 += 1;
+                if entry.1 > MAX_MSG_PER_SEC {
+                    return Ok(());
+                }
+            }
+        }
+
         // Run signature verification in a blocking context so that the tokio
         // event loop is not stalled by CPU-intensive Ed25519 batch operations.
         // block_in_place yields the current thread to the scheduler while the
@@ -1078,6 +1097,7 @@ impl ConsensusEngine {
                             epoch: self.state.current_epoch.number,
                             epoch_start_view: self.state.current_epoch.start_view,
                             validator_set: &self.state.validator_set,
+                            timestamp: block.timestamp,
                             vote_extensions: vec![],
                         };
                         self.app.extend_vote(&block, &ctx)
@@ -1327,6 +1347,7 @@ impl ConsensusEngine {
                     epoch: self.state.current_epoch.number,
                     epoch_start_view: self.state.current_epoch.start_view,
                     validator_set: &self.state.validator_set,
+                    timestamp: block.timestamp,
                     vote_extensions: vec![],
                 };
                 self.app.extend_vote(&block, &ctx)

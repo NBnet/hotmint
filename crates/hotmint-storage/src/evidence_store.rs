@@ -51,6 +51,9 @@ impl EvidenceStore for MemoryEvidenceStore {
 
     fn mark_committed(&mut self, view: ViewNumber, validator: ValidatorId) {
         self.committed.insert((view, validator));
+        // C-5: Prune committed proofs to avoid unbounded growth.
+        self.proofs
+            .retain(|p| !self.committed.contains(&(p.view, p.validator)));
     }
 
     fn all(&self) -> Vec<EquivocationProof> {
@@ -71,6 +74,7 @@ pub struct PersistentEvidenceStore {
     proofs: MapxOrd<u64, EquivocationProof>,
     committed: MapxOrd<u64, u8>,
     next_id: u64,
+    meta_path: std::path::PathBuf,
 }
 
 impl PersistentEvidenceStore {
@@ -95,6 +99,7 @@ impl PersistentEvidenceStore {
                 proofs,
                 committed,
                 next_id,
+                meta_path: meta_path.clone(),
             })
         } else {
             let proofs: MapxOrd<u64, EquivocationProof> = MapxOrd::new();
@@ -111,6 +116,7 @@ impl PersistentEvidenceStore {
                 proofs,
                 committed,
                 next_id,
+                meta_path,
             })
         }
     }
@@ -128,6 +134,17 @@ impl PersistentEvidenceStore {
             .iter()
             .any(|(_, p)| p.view == proof.view && p.validator == proof.validator)
     }
+
+    /// A-4: Write the updated next_id back to the meta file so it survives restarts.
+    fn persist_next_id(&self) {
+        if let Ok(bytes) = std::fs::read(&self.meta_path) {
+            if bytes.len() == 24 {
+                let mut meta = bytes;
+                meta[16..24].copy_from_slice(&self.next_id.to_le_bytes());
+                let _ = std::fs::write(&self.meta_path, &meta);
+            }
+        }
+    }
 }
 
 impl EvidenceStore for PersistentEvidenceStore {
@@ -137,6 +154,8 @@ impl EvidenceStore for PersistentEvidenceStore {
         }
         self.proofs.insert(&self.next_id, &proof);
         self.next_id += 1;
+        // A-4: Persist next_id so it survives restarts.
+        self.persist_next_id();
     }
 
     fn get_pending(&self) -> Vec<EquivocationProof> {
@@ -156,6 +175,16 @@ impl EvidenceStore for PersistentEvidenceStore {
     fn mark_committed(&mut self, view: ViewNumber, validator: ValidatorId) {
         let key = Self::committed_key(view, validator);
         self.committed.insert(&key, &1);
+        // C-5: Prune the committed proof from the proofs map to bound growth.
+        let to_remove: Vec<u64> = self
+            .proofs
+            .iter()
+            .filter(|(_, p)| p.view == view && p.validator == validator)
+            .map(|(id, _)| id)
+            .collect();
+        for id in to_remove {
+            self.proofs.remove(&id);
+        }
     }
 
     fn all(&self) -> Vec<EquivocationProof> {
@@ -203,8 +232,8 @@ mod tests {
         let pending = store.get_pending();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].view, ViewNumber(2));
-        // all() still returns everything
-        assert_eq!(store.all().len(), 2);
+        // C-5: committed proofs are pruned, so all() returns only the remaining one
+        assert_eq!(store.all().len(), 1);
     }
 
     #[test]

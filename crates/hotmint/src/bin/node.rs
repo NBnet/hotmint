@@ -27,7 +27,7 @@ use hotmint::network::service::{NetworkService, PeerMap};
 use hotmint::prelude::*;
 use hotmint::storage::block_store::VsdbBlockStore;
 use hotmint::storage::consensus_state::PersistentConsensusState;
-use hotmint_api::http_rpc::ChainEvent;
+use hotmint_api::http_rpc::{ChainEvent, HttpRpcServer};
 use tokio::sync::broadcast;
 
 #[derive(Parser)]
@@ -433,10 +433,10 @@ async fn run_node(
     let (tx_gossip_tx, mut tx_gossip_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4096);
 
     // Channel for chain event broadcasting (WebSocket subscribers).
-    let (event_tx, _event_rx) = broadcast::channel::<ChainEvent>(256);
+    let (event_tx, event_rx) = broadcast::channel::<ChainEvent>(256);
 
     let app: Arc<dyn Application> = Arc::new(AppWithStatus {
-        inner: app_box,
+        inner: Arc::from(app_box),
         status_tx,
         vs_tx,
         epoch_tx,
@@ -461,8 +461,9 @@ async fn run_node(
     // Respect serve_rpc / serve_sync config flags: when disabled, spawn a
     // permanently-pending task to keep the supervisor select! arms typed consistently.
     let network_handle = tokio::spawn(async move { network_service.run().await });
+    let rpc_state = Arc::new(rpc_state);
     let rpc_handle: tokio::task::JoinHandle<()> = if config.node.serve_rpc {
-        let rpc_server = hotmint::api::rpc::RpcServer::bind(&config.rpc.laddr, rpc_state)
+        let rpc_server = hotmint::api::rpc::RpcServer::bind_arc(&config.rpc.laddr, rpc_state.clone())
             .await
             .c(d!("failed to bind RPC server"))?;
         info!(rpc_addr = %config.rpc.laddr, "RPC server listening");
@@ -471,6 +472,26 @@ async fn run_node(
         info!("RPC server disabled by config (serve_rpc = false)");
         tokio::spawn(future::pending())
     };
+
+    // P0-1: Spawn HTTP/WebSocket RPC server if configured.
+    if !config.rpc.http_laddr.is_empty() {
+        let http_addr: std::net::SocketAddr = config
+            .rpc
+            .http_laddr
+            .parse()
+            .c(d!("invalid http_laddr: {}", config.rpc.http_laddr))?;
+        let http_rpc = HttpRpcServer::new(http_addr, rpc_state.clone(), 256);
+        let http_event_tx = http_rpc.event_sender();
+        // Forward chain events from the broadcast channel to the HTTP WS channel.
+        tokio::spawn(async move {
+            let mut rx = event_rx;
+            while let Ok(ev) = rx.recv().await {
+                let _ = http_event_tx.send(ev);
+            }
+        });
+        info!(http_addr = %config.rpc.http_laddr, "HTTP RPC server listening");
+        tokio::spawn(async move { http_rpc.run().await });
+    }
 
     let sync_sink = network_sink.clone();
 
@@ -868,7 +889,7 @@ async fn run_node(
 /// Wrapper that implements `Application` by delegating to an inner application,
 /// while also updating the RPC status watch channel on each commit.
 struct AppWithStatus {
-    inner: Box<dyn Application>,
+    inner: Arc<dyn Application>,
     status_tx: watch::Sender<ConsensusStatus>,
     vs_tx: watch::Sender<Vec<hotmint::api::types::ValidatorInfoResponse>>,
     epoch_tx: watch::Sender<hotmint_types::epoch::Epoch>,
@@ -943,13 +964,12 @@ impl Application for AppWithStatus {
                 });
             }
         }
-        // Mempool re-validation: evict txs that are no longer valid after commit.
-        let app = self.inner.as_ref();
+        // A-5: Mempool re-validation runs in a background task to avoid
+        // blocking the commit path. Evicts txs no longer valid after commit.
+        let app = self.inner.clone();
         let mempool = self.mempool.clone();
-        // Use tokio::task::block_in_place since on_commit runs in a sync context
-        // within the consensus engine (via spawn_blocking or block_in_place).
         tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
+            tokio::runtime::Handle::current().spawn(async move {
                 mempool
                     .recheck(|tx| {
                         let result = app.validate_tx(tx, None);

@@ -305,27 +305,27 @@ All security vulnerabilities (C-1..C-7) and engineering defects (H-1..H-12, R-1)
 
 | ID | Priority | Feature | Status | Remaining |
 |----|----------|---------|:------:|-----------|
-| P0-1 | 🟢 P0 | Standard HTTP/WS RPC + event subscription | ⚠️ | Wire `HttpRpcServer` into node startup |
+| P0-1 | 🟢 P0 | Standard HTTP/WS RPC + event subscription | ✅ | Wire `HttpRpcServer` into node startup |
 | P1-1 | 🟢 P1 | Snapshot State Sync | ⚠️ | Call `sync_via_snapshot()` in client path; add QC-anchored trust verification |
 | P1-2 | 🟢 P1 | Weighted proposer selection | ✅ | — |
 | P2-1 | 🟢 P2 | Light client verification protocol | ✅ | — |
 | P2-2 | 🟢 P2 | ABCI++ Vote Extensions | ✅ | — |
-| A-1 | 🔴 P0 | Epoch transition crash-safety | [ ] | Persist `pending_epoch`; propagate from `sync_to_tip` |
-| A-2 | 🔴 P0 | App state divergence: fail fast on app_hash mismatch | [ ] | Check `last_block_app_hash` at startup; halt on divergence |
-| A-3 | 🔴 P0 | Snapshot sync trusted anchor verification | [ ] | Bind snapshot hash to signed QC before trusting |
-| A-4 | 🟡 P1 | `PersistentEvidenceStore` next_id not persisted on writes | [ ] | Write `next_id` back to meta in `put_evidence()` |
-| A-5 | 🟡 P1 | `recheck()` blocks commit path; packer skips on first oversized tx | [ ] | Run recheck async/background; use skip-and-continue packing |
-| A-6 | 🟡 P1 | Light client `verify_header` lacks height monotonicity | [ ] | Enforce `header.height > trusted_height` in `verify_header` |
-| A-7 | 🔵 P2 | `submit_tx` API doc/behavior mismatch; `query` silent hex degradation | [ ] | Fix README example; return error on bad hex in `query` |
-| A-8 | 🟡 P1 | EVM block timestamp hardcoded to 0 | [ ] | Pass real block timestamp into revm block context |
-| B-1 | 🔴 P0 | BFT Time: proposer can inflate chain time up to drift limit, breaking honest successors | [ ] | Proposer must use `max(SystemTime::now(), parent.timestamp)` |
-| B-2 | 🟡 P1 | Mempool payload collection: O(N log N) pop-skip-reinsert loop holds async lock | [ ] | Replace pop/reinsert with iterator; cap max skipped per round |
-| B-3 | 🟡 P1 | No inbound message rate limit before `block_in_place` crypto verification | [ ] | Add per-sender rate limit; bound concurrent verifications |
-| C-1 | 🔴 P0 | `on_prepare` missing step guard — node can send Vote2 without having sent Vote1 | [ ] | Add `if state.step != ViewStep::Voted { return; }` at entry of `on_prepare` |
-| C-2 | 🟡 P1 | Mempool tx gossip: no per-peer rate limit, unlimited unique txs accepted | [ ] | Add per-peer token bucket in `handle_mempool_notification_event` |
-| C-3 | 🟡 P1 | HTTP RPC body has no size limit (Axum default is 2 GB) | [ ] | Add `DefaultBodyLimit::max(1 MB)` layer to the Axum router |
-| C-4 | 🔵 P2 | WebSocket connection counter not decremented on task panic | [ ] | Wrap counter in RAII guard; or decrement via `defer`-equivalent |
-| C-5 | 🔵 P2 | `PersistentEvidenceStore` has no pruning — committed evidence kept forever | [ ] | Delete evidence from vsdb after `mark_committed` + N-block delay |
+| A-1 | 🔴 P0 | Epoch transition crash-safety | ✅ | Persist `pending_epoch`; propagate from `sync_to_tip` |
+| A-2 | 🔴 P0 | App state divergence: fail fast on app_hash mismatch | ✅ | Check `last_block_app_hash` at startup; halt on divergence |
+| A-3 | 🔴 P0 | Snapshot sync trusted anchor verification | ✅ | Bind snapshot hash to signed QC before trusting |
+| A-4 | 🟡 P1 | `PersistentEvidenceStore` next_id not persisted on writes | ✅ | Write `next_id` back to meta in `put_evidence()` |
+| A-5 | 🟡 P1 | `recheck()` blocks commit path; packer skips on first oversized tx | ✅ | Run recheck async/background; use skip-and-continue packing |
+| A-6 | 🟡 P1 | Light client `verify_header` lacks height monotonicity | ✅ | Enforce `header.height > trusted_height` in `verify_header` |
+| A-7 | 🔵 P2 | `submit_tx` API doc/behavior mismatch; `query` silent hex degradation | ✅ | Fix README example; return error on bad hex in `query` |
+| A-8 | 🟡 P1 | EVM block timestamp hardcoded to 0 | ✅ | Pass real block timestamp into revm block context |
+| B-1 | 🔴 P0 | BFT Time: proposer can inflate chain time up to drift limit, breaking honest successors | ✅ | Proposer must use `max(SystemTime::now(), parent.timestamp)` |
+| B-2 | 🟡 P1 | Mempool payload collection: O(N log N) pop-skip-reinsert loop holds async lock | ✅ | Replace pop/reinsert with iterator; cap max skipped per round |
+| B-3 | 🟡 P1 | No inbound message rate limit before `block_in_place` crypto verification | ✅ | Add per-sender rate limit; bound concurrent verifications |
+| C-1 | 🔴 P0 | `on_prepare` missing step guard — node can send Vote2 without having sent Vote1 | ✅ | Add `if state.step != ViewStep::Voted { return; }` at entry of `on_prepare` |
+| C-2 | 🟡 P1 | Mempool tx gossip: no per-peer rate limit, unlimited unique txs accepted | ✅ | Add per-peer token bucket in `handle_mempool_notification_event` |
+| C-3 | 🟡 P1 | HTTP RPC body has no size limit (Axum default is 2 GB) | ✅ | Add `DefaultBodyLimit::max(1 MB)` layer to the Axum router |
+| C-4 | 🔵 P2 | WebSocket connection counter not decremented on task panic | ✅ | Wrap counter in RAII guard; or decrement via `defer`-equivalent |
+| C-5 | 🔵 P2 | `PersistentEvidenceStore` has no pruning — committed evidence kept forever | ✅ | Delete evidence from vsdb after `mark_committed` |
 
 ---
 

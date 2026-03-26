@@ -120,6 +120,7 @@ pub fn try_commit(
             epoch: current_epoch.number,
             epoch_start_view: current_epoch.start_view,
             validator_set: &current_epoch.validator_set,
+            timestamp: block.timestamp,
             vote_extensions: vec![],
         };
 

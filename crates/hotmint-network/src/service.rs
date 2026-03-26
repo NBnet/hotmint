@@ -186,6 +186,8 @@ pub struct NetworkService {
     mempool_seen_backup: HashSet<[u8; 32]>,
     /// Peers with open mempool notification substreams.
     mempool_notif_connected_peers: HashSet<PeerId>,
+    /// C-2: Per-peer mempool tx gossip rate limit (Instant, count).
+    mempool_peer_rate: HashMap<PeerId, (Instant, u32)>,
 }
 
 /// Configuration for creating a [`NetworkService`].
@@ -360,6 +362,7 @@ impl NetworkService {
                 mempool_seen_active: HashSet::new(),
                 mempool_seen_backup: HashSet::new(),
                 mempool_notif_connected_peers: HashSet::new(),
+                mempool_peer_rate: HashMap::new(),
             },
             sink,
             msg_rx,
@@ -1001,11 +1004,25 @@ impl NetworkService {
             NotificationEvent::NotificationStreamClosed { peer } => {
                 trace!(peer = %peer, "mempool notif stream closed");
                 self.mempool_notif_connected_peers.remove(&peer);
+                self.mempool_peer_rate.remove(&peer);
             }
             NotificationEvent::NotificationReceived {
-                peer: _,
+                peer,
                 notification,
             } => {
+                // C-2: Per-peer tx gossip rate limit — max 500 tx/sec per peer.
+                const MAX_TX_PER_SEC: u32 = 500;
+                let now = Instant::now();
+                let entry = self.mempool_peer_rate.entry(peer).or_insert((now, 0));
+                if now.duration_since(entry.0).as_secs() >= 1 {
+                    *entry = (now, 1);
+                } else {
+                    entry.1 += 1;
+                    if entry.1 > MAX_TX_PER_SEC {
+                        return;
+                    }
+                }
+
                 let hash = blake3::hash(&notification);
                 let hash_bytes: [u8; 32] = *hash.as_bytes();
                 if self.mempool_seen_active.contains(&hash_bytes)

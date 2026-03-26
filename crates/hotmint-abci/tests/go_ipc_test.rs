@@ -26,6 +26,7 @@ fn make_block_context(vs: &ValidatorSet) -> BlockContext<'_> {
         epoch: EpochNumber(0),
         epoch_start_view: ViewNumber(0),
         validator_set: vs,
+        timestamp: 0,
         vote_extensions: vec![],
     }
 }

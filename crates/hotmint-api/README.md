@@ -77,8 +77,8 @@ impl Application for MyApp {
 echo '{"method":"status","params":{},"id":1}' | nc 127.0.0.1 26657
 # => {"result":{"validator_id":0,"current_view":42,"last_committed_height":15,"mempool_size":3},...}
 
-# submit transaction (hex-encoded)
-echo '{"method":"submit_tx","params":{"tx":"deadbeef"},"id":2}' | nc 127.0.0.1 26657
+# submit transaction (hex-encoded, bare string in params)
+echo '{"method":"submit_tx","params":"deadbeef","id":2}' | nc 127.0.0.1 26657
 # => {"result":{"accepted":true},...}
 ```
 

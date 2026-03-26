@@ -88,12 +88,16 @@ pub struct RpcServer {
 
 impl RpcServer {
     pub async fn bind(addr: &str, state: RpcState) -> Result<Self> {
+        Self::bind_arc(addr, Arc::new(state)).await
+    }
+
+    pub async fn bind_arc(addr: &str, state: Arc<RpcState>) -> Result<Self> {
         let listener = TcpListener::bind(addr)
             .await
             .c(d!("failed to bind RPC server"))?;
         info!(addr = addr, "RPC server listening");
         Ok(Self {
-            state: Arc::new(state),
+            state,
             listener,
         })
     }
@@ -560,7 +564,16 @@ pub(crate) async fn handle_request(
                 .get("data")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let data = hex_decode(data_hex).unwrap_or_default();
+            let data = match hex_decode(data_hex) {
+                Some(d) => d,
+                None => {
+                    return RpcResponse::err(
+                        req.id,
+                        -32602,
+                        "invalid hex in 'data' parameter".to_string(),
+                    );
+                }
+            };
             match &state.app {
                 Some(app) => match app.query(path, &data) {
                     Ok(resp) => {

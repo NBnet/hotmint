@@ -74,6 +74,15 @@ impl LightClient {
         qc: &QuorumCertificate,
         verifier: &dyn Verifier,
     ) -> Result<()> {
+        // A-6: Enforce height monotonicity — reject replayed or older headers.
+        if header.height <= self.trusted_height {
+            return Err(eg!(
+                "header height {} <= trusted height {}",
+                header.height.as_u64(),
+                self.trusted_height.as_u64()
+            ));
+        }
+
         // 1. Check QC's block_hash matches the header's hash
         if qc.block_hash != header.hash {
             return Err(eg!(

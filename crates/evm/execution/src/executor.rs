@@ -208,7 +208,7 @@ impl Application for EvmExecutor {
                 .modify_block_chained(|block| {
                     block.number = U256::from(ctx.height.as_u64());
                     block.beneficiary = coinbase;
-                    block.timestamp = U256::ZERO; // TODO: use real block timestamp
+                    block.timestamp = U256::from(ctx.timestamp);
                     block.gas_limit = config.block_gas_limit;
                     block.basefee = config.base_fee_per_gas;
                 });

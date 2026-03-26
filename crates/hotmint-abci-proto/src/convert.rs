@@ -143,6 +143,7 @@ impl From<&OwnedBlockContext> for pb::BlockContext {
                     data: data.clone(),
                 })
                 .collect(),
+            timestamp: c.timestamp,
         }
     }
 }
@@ -165,6 +166,7 @@ impl From<pb::BlockContext> for OwnedBlockContext {
                 .validator_set
                 .map(ValidatorSet::from)
                 .unwrap_or_else(|| ValidatorSet::new(vec![])),
+            timestamp: c.timestamp,
             vote_extensions: c
                 .vote_extensions
                 .into_iter()

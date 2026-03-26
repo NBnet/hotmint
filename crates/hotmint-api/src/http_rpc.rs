@@ -5,6 +5,7 @@ use axum::Router;
 use axum::extract::State;
 use axum::extract::connect_info::ConnectInfo;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::DefaultBodyLimit;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
@@ -86,6 +87,7 @@ impl HttpRpcServer {
         let app = Router::new()
             .route("/", post(json_rpc_handler))
             .route("/ws", get(ws_upgrade_handler))
+            .layer(DefaultBodyLimit::max(1024 * 1024)) // C-3: 1 MB body limit
             .layer(cors)
             .with_state(self.state.clone());
 
@@ -215,11 +217,23 @@ impl SubscribeFilter {
     }
 }
 
+/// RAII guard that decrements the WebSocket connection counter on drop,
+/// preventing permanent counter inflation if `handle_ws` panics (C-4).
+struct WsCountGuard(Arc<HttpRpcState>);
+impl Drop for WsCountGuard {
+    fn drop(&mut self) {
+        self.0
+            .ws_connection_count
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// WebSocket connection handler: subscribe to chain events and forward them.
 async fn handle_ws(mut socket: WebSocket, state: Arc<HttpRpcState>) {
     state
         .ws_connection_count
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let _guard = WsCountGuard(state.clone());
     let mut rx = state.event_tx.subscribe();
     let mut filter = SubscribeFilter::default();
 
@@ -267,7 +281,5 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<HttpRpcState>) {
             }
         }
     }
-    state
-        .ws_connection_count
-        .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    // Guard handles decrement via Drop — no manual fetch_sub needed.
 }

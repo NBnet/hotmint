@@ -62,6 +62,10 @@ impl Default for NodeModeConfig {
 pub struct RpcConfig {
     /// JSON-RPC listen address (e.g., "127.0.0.1:20001").
     pub laddr: String,
+    /// HTTP/WebSocket RPC listen address (e.g., "127.0.0.1:20002").
+    /// If empty or absent, the HTTP RPC server is not started.
+    #[serde(default)]
+    pub http_laddr: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +98,7 @@ impl Default for NodeConfig {
             node: NodeModeConfig::default(),
             rpc: RpcConfig {
                 laddr: "127.0.0.1:20001".into(),
+                http_laddr: String::new(),
             },
             p2p: P2pConfig {
                 laddr: "/ip4/0.0.0.0/tcp/20000".into(),

@@ -534,6 +534,7 @@ pub fn replay_blocks(
             epoch: state.current_epoch.number,
             epoch_start_view: state.current_epoch.start_view,
             validator_set: &state.current_epoch.validator_set,
+            timestamp: block.timestamp,
             vote_extensions: vec![],
         };
 

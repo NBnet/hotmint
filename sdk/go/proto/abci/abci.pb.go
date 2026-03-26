@@ -354,6 +354,7 @@ type BlockContext struct {
 	EpochStartView uint64                 `protobuf:"varint,5,opt,name=epoch_start_view,json=epochStartView,proto3" json:"epoch_start_view,omitempty"`
 	ValidatorSet   *ValidatorSet          `protobuf:"bytes,6,opt,name=validator_set,json=validatorSet,proto3" json:"validator_set,omitempty"`
 	VoteExtensions []*VoteExtension       `protobuf:"bytes,7,rep,name=vote_extensions,json=voteExtensions,proto3" json:"vote_extensions,omitempty"`
+	Timestamp      uint64                 `protobuf:"varint,8,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -435,6 +436,13 @@ func (x *BlockContext) GetVoteExtensions() []*VoteExtension {
 		return x.VoteExtensions
 	}
 	return nil
+}
+
+func (x *BlockContext) GetTimestamp() uint64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
 }
 
 type EquivocationProof struct {

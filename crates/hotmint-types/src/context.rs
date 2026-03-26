@@ -13,6 +13,8 @@ pub struct BlockContext<'a> {
     pub epoch: EpochNumber,
     pub epoch_start_view: ViewNumber,
     pub validator_set: &'a ValidatorSet,
+    /// Block timestamp in milliseconds since Unix epoch.
+    pub timestamp: u64,
     /// Aggregated vote extensions from the previous round's Vote2 messages.
     /// Only populated for `create_payload` when the previous round committed
     /// via a DoubleCertificate whose Vote2 round carried extensions.
@@ -39,6 +41,7 @@ pub struct OwnedBlockContext {
     pub epoch: EpochNumber,
     pub epoch_start_view: ViewNumber,
     pub validator_set: ValidatorSet,
+    pub timestamp: u64,
     #[serde(default)]
     pub vote_extensions: Vec<(ValidatorId, Vec<u8>)>,
 }
@@ -52,6 +55,7 @@ impl From<&BlockContext<'_>> for OwnedBlockContext {
             epoch: ctx.epoch,
             epoch_start_view: ctx.epoch_start_view,
             validator_set: ctx.validator_set.clone(),
+            timestamp: ctx.timestamp,
             vote_extensions: ctx.vote_extensions.clone(),
         }
     }

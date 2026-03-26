@@ -139,6 +139,13 @@ pub fn propose(
         .c(d!("parent block not found"))?;
     let height = parent.height.next();
 
+    // BFT Time: proposer sets timestamp = max(now, parent.timestamp + 1).
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let timestamp = std::cmp::max(now_ms, parent.timestamp.saturating_add(1));
+
     let ctx = BlockContext {
         height,
         view: state.current_view,
@@ -146,6 +153,7 @@ pub fn propose(
         epoch: state.current_epoch.number,
         epoch_start_view: state.current_epoch.start_view,
         validator_set: &state.validator_set,
+        timestamp,
         vote_extensions: std::mem::take(&mut state.pending_vote_extensions),
     };
 
@@ -158,16 +166,6 @@ pub fn propose(
             "embedding equivocation evidence in block"
         );
     }
-
-    // BFT Time: proposer sets timestamp = max(now, parent.timestamp + 1).
-    // This ensures an honest proposer never produces a timestamp behind the
-    // chain tip, even if a previous Byzantine proposer inflated the timestamp
-    // up to the drift limit.
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    let timestamp = std::cmp::max(now_ms, parent.timestamp.saturating_add(1));
 
     let mut block = Block {
         height,
@@ -342,6 +340,7 @@ pub fn on_proposal(
         epoch: state.current_epoch.number,
         epoch_start_view: state.current_epoch.start_view,
         validator_set: &state.validator_set,
+        timestamp: block.timestamp,
         vote_extensions: vec![],
     };
 

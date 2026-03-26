@@ -174,17 +174,24 @@ impl Mempool {
         let mut payload = Vec::new();
         let mut total_gas = 0u64;
         let mut skipped = Vec::new();
+        // B-2/A-5: Cap skipped transactions to bound the loop.
+        const MAX_SKIPPED: usize = 200;
 
         while let Some(entry) = entries.pop_last() {
-            // Byte limit: hard stop (all remaining txs are at most this size or smaller,
-            // but we can't know without iterating — stop here for simplicity).
+            // Byte limit: skip this tx if it doesn't fit, continue with smaller ones.
             if payload.len() + 4 + entry.tx.len() > max_bytes {
                 skipped.push(entry);
-                break;
+                if skipped.len() >= MAX_SKIPPED {
+                    break;
+                }
+                continue;
             }
             // Gas limit: skip this tx but continue collecting smaller ones.
             if max_gas > 0 && total_gas + entry.gas_wanted > max_gas {
                 skipped.push(entry);
+                if skipped.len() >= MAX_SKIPPED {
+                    break;
+                }
                 continue;
             }
             seen.remove(&entry.hash);
