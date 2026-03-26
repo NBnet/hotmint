@@ -44,10 +44,9 @@ ruc = "9.3"
 use ruc::*;
 use hotmint::prelude::*;
 use hotmint::consensus::application::Application;
-use hotmint::consensus::engine::ConsensusEngine;
+use hotmint::consensus::engine::ConsensusEngineBuilder;
 use hotmint::consensus::state::ConsensusState;
 use hotmint::consensus::store::MemoryBlockStore;
-use hotmint::consensus::network::ChannelNetwork;
 use hotmint::crypto::Ed25519Signer;
 
 struct MyApp;
@@ -72,15 +71,15 @@ let vs = ValidatorSet::new(
     }).collect()
 );
 
-// 2. Create channels and spawn engines
+// 2. Create network service and spawn engine
 // (see docs/getting-started.md for the full wiring example)
 ```
 
 ## Demo Binary
 
 ```bash
-# run the built-in 4-node in-process demo
-cargo run --bin hotmint-node
+# run the built-in 4-node cluster demo
+cargo run -p hotmint-demo
 ```
 
 ## Documentation

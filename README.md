@@ -154,7 +154,7 @@ The consensus engine is fully decoupled from all I/O through four pluggable trai
 |:------|:--------|:-------------------------|
 | `Application` | ABCI-like app lifecycle | `NoopApplication`, `IpcApplicationClient` |
 | `BlockStore` | Block persistence | `MemoryBlockStore`, `VsdbBlockStore` |
-| `NetworkSink` | Message transport | `ChannelNetwork`, `Litep2pNetworkSink` |
+| `NetworkSink` | Message transport | `Litep2pNetworkSink` |
 | `Signer` | Cryptographic signing | `Ed25519Signer` |
 
 📖 **[Architecture →](docs/architecture.md)** · **[Core types →](docs/types.md)** · **[Wire protocol →](docs/wire-protocol.md)**
@@ -183,8 +183,7 @@ cargo run --bin hotmint-node -- node
 
 | Example | Description | Run |
 |:--------|:------------|:----|
-| [demo](examples/demo) | Minimal 4-node in-process cluster with a counting app | `cargo run --bin hotmint-demo` |
-| [evm-chain](examples/evm-chain) | Complete EVM chain using **revm** + vsdb MPT state trie | `cargo run --bin hotmint-evm-chain` |
+| [demo](examples/demo) | Minimal 4-node cluster with a counting app | `cargo run --bin hotmint-demo` |
 | [utxo-chain](examples/utxo-chain) | Bitcoin-style UTXO chain with ed25519 sigs + SMT proofs | `cargo run --bin hotmint-utxo-chain` |
 | [cluster-node](examples/cluster-node) | Production-style P2P node with persistent storage, sync, PEX | `cargo run --bin hotmint-cluster-node` |
 | [bench-consensus](examples/bench-consensus) | Raw consensus throughput benchmark | `make bench-consensus` |

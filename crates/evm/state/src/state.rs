@@ -103,7 +103,7 @@ impl VsdbStateDb {
 
     /// Insert a block hash.
     pub fn insert_block_hash(&mut self, number: u64, hash: &B256) {
-        self.block_hashes.insert(&number.to_be_bytes(), &hash.0);
+        self.block_hashes.insert(number.to_be_bytes(), &hash.0);
     }
 
     /// Get account info.
@@ -133,10 +133,10 @@ impl VsdbStateDb {
     pub fn get_code(&self, addr: &Address) -> Vec<u8> {
         if let Some(stored) = self.accounts.get(addr.as_slice()) as Option<StoredAccount> {
             let code_hash = B256::from(stored.code_hash);
-            if code_hash != revm::primitives::KECCAK_EMPTY {
-                if let Some(bytes) = self.contracts.get(code_hash.as_slice()) {
-                    return bytes;
-                }
+            if code_hash != revm::primitives::KECCAK_EMPTY
+                && let Some(bytes) = self.contracts.get(code_hash.as_slice())
+            {
+                return bytes;
             }
         }
         vec![]
@@ -190,10 +190,10 @@ impl Database for VsdbStateDb {
             .map(|s: StoredAccount| {
                 let mut info = s.to_info();
                 // Load code if this account has non-empty code.
-                if info.code_hash != revm::primitives::KECCAK_EMPTY {
-                    if let Some(bytes) = self.contracts.get(info.code_hash.as_slice()) {
-                        info.code = Some(Bytecode::new_raw(Bytes::from(bytes)));
-                    }
+                if info.code_hash != revm::primitives::KECCAK_EMPTY
+                    && let Some(bytes) = self.contracts.get(info.code_hash.as_slice())
+                {
+                    info.code = Some(Bytecode::new_raw(Bytes::from(bytes)));
                 }
                 info
             }))
@@ -215,7 +215,7 @@ impl Database for VsdbStateDb {
     }
 
     fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
-        match self.block_hashes.get(&number.to_be_bytes()) {
+        match self.block_hashes.get(number.to_be_bytes()) {
             Some(h) => Ok(B256::from(h)),
             None => Ok(B256::ZERO),
         }
@@ -231,10 +231,10 @@ impl revm::database_interface::DatabaseRef for VsdbStateDb {
             .get(address.as_slice())
             .map(|s: StoredAccount| {
                 let mut info = s.to_info();
-                if info.code_hash != revm::primitives::KECCAK_EMPTY {
-                    if let Some(bytes) = self.contracts.get(info.code_hash.as_slice()) {
-                        info.code = Some(Bytecode::new_raw(Bytes::from(bytes)));
-                    }
+                if info.code_hash != revm::primitives::KECCAK_EMPTY
+                    && let Some(bytes) = self.contracts.get(info.code_hash.as_slice())
+                {
+                    info.code = Some(Bytecode::new_raw(Bytes::from(bytes)));
                 }
                 info
             }))
@@ -256,7 +256,7 @@ impl revm::database_interface::DatabaseRef for VsdbStateDb {
     }
 
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
-        match self.block_hashes.get(&number.to_be_bytes()) {
+        match self.block_hashes.get(number.to_be_bytes()) {
             Some(h) => Ok(B256::from(h)),
             None => Ok(B256::ZERO),
         }
@@ -364,20 +364,20 @@ impl EvmState {
 
     /// Get account code bytes (reads from cache first, then vsdb).
     pub fn get_code(&self, addr: &Address) -> Vec<u8> {
-        if let Some(acc) = self.db.cache.accounts.get(addr) {
-            if let Some(ref code) = acc.info.code {
-                return code.bytes_slice().to_vec();
-            }
+        if let Some(acc) = self.db.cache.accounts.get(addr)
+            && let Some(ref code) = acc.info.code
+        {
+            return code.bytes_slice().to_vec();
         }
         self.db.db.get_code(addr)
     }
 
     /// Get storage value at (address, slot).
     pub fn get_storage(&self, addr: &Address, slot: &U256) -> U256 {
-        if let Some(acc) = self.db.cache.accounts.get(addr) {
-            if let Some(val) = acc.storage.get(slot) {
-                return *val;
-            }
+        if let Some(acc) = self.db.cache.accounts.get(addr)
+            && let Some(val) = acc.storage.get(slot)
+        {
+            return *val;
         }
         self.db.db.get_storage(addr, slot)
     }

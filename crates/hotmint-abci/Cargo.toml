@@ -20,3 +20,5 @@ ruc = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 parking_lot = { workspace = true }
 hotmint-crypto = { workspace = true }
+hotmint-mgmt = { path = "../../tools/hotmint-mgmt" }
+serde_json = { workspace = true }

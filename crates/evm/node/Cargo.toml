@@ -9,6 +9,10 @@ repository.workspace = true
 name = "hotmint-evm"
 path = "src/main.rs"
 
+[[bin]]
+name = "bench-evm"
+path = "src/bench.rs"
+
 [dependencies]
 hotmint = { workspace = true }
 hotmint-types = { workspace = true }
@@ -20,21 +24,25 @@ hotmint-evm-execution = { workspace = true }
 hotmint-evm-rpc = { workspace = true }
 hotmint-evm-txpool = { workspace = true }
 hotmint-evm-precompile = { workspace = true }
+hotmint-mgmt = { path = "../../../tools/hotmint-mgmt" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 ruc = { workspace = true }
 clap = { workspace = true }
-
-[dev-dependencies]
+litep2p = { workspace = true }
+parking_lot = { workspace = true }
+hex = { workspace = true }
+vsdb = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-signer-local = { workspace = true }
 alloy-network = { workspace = true }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+
+[dev-dependencies]
 alloy-rlp = { workspace = true }
-hex = { workspace = true }
-reqwest = { version = "0.12", features = ["json"] }

@@ -1,173 +1,143 @@
-use ruc::*;
+//! Integration test: 4-node consensus via real multi-process cluster.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::process::Child;
+use std::time::Duration;
 
-use parking_lot::RwLock;
+use hotmint_mgmt::cluster;
+
+const NUM_VALIDATORS: u32 = 4;
+
+fn query_height(host: &str, port: u16) -> Option<u64> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let addr = format!("{host}:{port}");
+    let mut stream =
+        TcpStream::connect_timeout(&addr.parse().ok()?, Duration::from_secs(1)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(1))).ok()?;
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"status","params":[]}"#;
+    stream.write_all(req.as_bytes()).ok()?;
+    stream.write_all(b"\n").ok()?;
+
+    let mut buf = vec![0u8; 4096];
+    let n = stream.read(&mut buf).ok()?;
+    let text = std::str::from_utf8(&buf[..n]).ok()?;
+    let val: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
+    val["result"]["last_committed_height"].as_u64()
+}
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use hotmint_consensus::application::Application;
-use hotmint_consensus::engine::{ConsensusEngine, EngineConfig};
-use hotmint_consensus::network::{ChannelNetwork, MsgSender};
-use hotmint_consensus::state::ConsensusState;
-use hotmint_consensus::store::MemoryBlockStore;
-use hotmint_crypto::{Ed25519Signer, Ed25519Verifier};
-use hotmint_types::*;
-use tokio::sync::mpsc;
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-const NUM_VALIDATORS: u64 = 4;
+fn setup_cluster() -> (Vec<Child>, cluster::ClusterState, std::path::PathBuf) {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let base_dir =
+        std::env::temp_dir().join(format!("hotmint-four-node-{}-{id}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base_dir);
 
-struct TestApp {
-    commit_count: Arc<AtomicU64>,
+    let binary = hotmint_mgmt::build_binary("cluster-node", Some("cluster-node"))
+        .expect("failed to build cluster-node");
+
+    let ports = hotmint_mgmt::find_free_ports((NUM_VALIDATORS * 2) as usize);
+    let p2p_base = ports[0];
+    let rpc_base = ports[NUM_VALIDATORS as usize];
+
+    cluster::init_cluster(
+        &base_dir,
+        NUM_VALIDATORS,
+        "test-four-node",
+        p2p_base,
+        rpc_base,
+        "127.0.0.1",
+    )
+    .unwrap();
+
+    let state = cluster::ClusterState::load(&base_dir).unwrap();
+
+    let children = hotmint_mgmt::start_cluster_nodes(&binary, &state, &base_dir, &[]);
+
+    (children, state, base_dir)
 }
 
-impl Application for TestApp {
-    fn on_commit(&self, _block: &Block, _ctx: &BlockContext) -> Result<()> {
-        self.commit_count.fetch_add(1, Ordering::Relaxed);
-        Ok(())
-    }
-}
+#[test]
+fn test_four_node_consensus_commits_blocks() {
+    let (mut children, state, base_dir) = setup_cluster();
+    let rpc_port = state.validators[0].rpc_port;
 
-fn spawn_network(n: u64) -> (Vec<Arc<AtomicU64>>, Vec<tokio::task::JoinHandle<()>>) {
-    let mut signers: Vec<Option<Ed25519Signer>> = (0..n)
-        .map(|i| Some(Ed25519Signer::generate(ValidatorId(i))))
-        .collect();
-
-    let validator_infos: Vec<ValidatorInfo> = signers
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            let s = s.as_ref().unwrap();
-            ValidatorInfo {
-                id: ValidatorId(i as u64),
-                public_key: hotmint_types::Signer::public_key(s),
-                power: 1,
-            }
-        })
-        .collect();
-    let validator_set = ValidatorSet::new(validator_infos);
-
-    let mut receivers = HashMap::new();
-    let mut all_senders: HashMap<ValidatorId, MsgSender> = HashMap::new();
-
-    for i in 0..n {
-        let (tx, rx) = mpsc::channel(8192);
-        receivers.insert(ValidatorId(i), rx);
-        all_senders.insert(ValidatorId(i), tx);
-    }
-
-    let mut counters = Vec::new();
-    let mut handles = Vec::new();
-
-    for i in 0..n {
-        let vid = ValidatorId(i);
-        let rx = receivers.remove(&vid).unwrap();
-        let senders: Vec<(ValidatorId, MsgSender)> = all_senders
-            .iter()
-            .map(|(&id, tx)| (id, tx.clone()))
-            .collect();
-
-        let network = ChannelNetwork::new(vid, senders);
-        let store = Arc::new(RwLock::new(
-            Box::new(MemoryBlockStore::new()) as Box<dyn hotmint_consensus::store::BlockStore>
-        ));
-        let commit_count = Arc::new(AtomicU64::new(0));
-        counters.push(commit_count.clone());
-        let app = TestApp {
-            commit_count: commit_count.clone(),
-        };
-        let signer = signers[i as usize].take().unwrap();
-        let state = ConsensusState::new(vid, validator_set.clone());
-
-        let engine = ConsensusEngine::new(
-            state,
-            store,
-            Box::new(network),
-            Box::new(app),
-            Box::new(signer),
-            rx,
-            EngineConfig {
-                verifier: Box::new(Ed25519Verifier),
-                pacemaker: None,
-                persistence: None,
-                evidence_store: None,
-                wal: None,
-            },
-        );
-
-        handles.push(tokio::spawn(async move { engine.run().await }));
-    }
-
-    (counters, handles)
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_four_node_consensus_commits_blocks() {
-    let _ = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::WARN)
-        .with_test_writer()
-        .try_init();
-
-    let (counters, handles) = spawn_network(NUM_VALIDATORS);
-
-    tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
-
-    // All validators should have committed at least 1 block
-    for (i, counter) in counters.iter().enumerate() {
-        let count = counter.load(Ordering::Relaxed);
-        assert!(
-            count >= 1,
-            "validator {} committed {} blocks, expected >= 1",
-            i,
-            count
-        );
-    }
-
-    // At least one validator should have committed multiple blocks
-    let max_commits = counters
-        .iter()
-        .map(|c| c.load(Ordering::Relaxed))
-        .max()
-        .unwrap();
+    // Wait for cluster to start.
     assert!(
-        max_commits >= 2,
-        "max commits is {}, expected >= 2",
-        max_commits
+        hotmint_mgmt::wait_for_rpc("127.0.0.1", rpc_port, 20),
+        "cluster did not start within 20s"
     );
 
-    for h in handles {
-        h.abort();
-    }
-}
+    // Wait for blocks to accumulate.
+    std::thread::sleep(Duration::from_secs(8));
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_consensus_tolerates_one_silent_validator() {
-    let _ = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::WARN)
-        .with_test_writer()
-        .try_init();
-
-    // Spawn 4 nodes but immediately abort one
-    let (counters, handles) = spawn_network(NUM_VALIDATORS);
-
-    // Kill validator 3 — simulate a silent/crashed node
-    handles[3].abort();
-
-    // With 3 out of 4 validators (quorum=3), consensus should still work
-    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-
-    // The 3 active validators should commit blocks
-    for (i, counter) in counters.iter().enumerate().take(3) {
-        let count = counter.load(Ordering::Relaxed);
+    // All validators should have committed blocks.
+    for v in &state.validators {
+        let height = query_height("127.0.0.1", v.rpc_port).unwrap_or(0);
         assert!(
-            count >= 1,
-            "active validator {} committed {} blocks, expected >= 1",
-            i,
-            count
+            height >= 1,
+            "V{} committed {} blocks, expected >= 1",
+            v.id,
+            height
         );
     }
 
-    for h in handles {
-        h.abort();
+    // At least one validator should have committed multiple blocks.
+    let max_height = state
+        .validators
+        .iter()
+        .filter_map(|v| query_height("127.0.0.1", v.rpc_port))
+        .max()
+        .unwrap_or(0);
+    assert!(max_height >= 2, "max height is {max_height}, expected >= 2");
+
+    for c in &mut children {
+        let _ = c.kill();
+        let _ = c.wait();
     }
+    let _ = std::fs::remove_dir_all(&base_dir);
+}
+
+#[test]
+fn test_consensus_tolerates_one_silent_validator() {
+    let (mut children, state, base_dir) = setup_cluster();
+
+    // Wait for ALL nodes to be ready before killing one.
+    for v in &state.validators {
+        assert!(
+            hotmint_mgmt::wait_for_rpc("127.0.0.1", v.rpc_port, 20),
+            "V{} did not start within 20s",
+            v.id
+        );
+    }
+
+    // Let the cluster run briefly so all connections are established.
+    std::thread::sleep(Duration::from_secs(3));
+
+    // Kill validator 3 — simulate a crashed node.
+    let _ = children[3].kill();
+    let _ = children[3].wait();
+
+    // With 3 of 4 validators (quorum=3), consensus should still work.
+    std::thread::sleep(Duration::from_secs(10));
+
+    // The first 3 active validators should commit blocks.
+    for v in state.validators.iter().take(3) {
+        let height = query_height("127.0.0.1", v.rpc_port).unwrap_or(0);
+        assert!(
+            height >= 1,
+            "active V{} committed {} blocks, expected >= 1",
+            v.id,
+            height
+        );
+    }
+
+    for c in &mut children {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+    let _ = std::fs::remove_dir_all(&base_dir);
 }

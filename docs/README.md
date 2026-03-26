@@ -14,7 +14,7 @@ Comprehensive documentation for the Hotmint BFT consensus framework.
 | [Core Types](types.md) | Type reference: blocks, certificates, votes, validators, signing bytes |
 | [Cryptography](crypto.md) | `Signer`/`Verifier` traits, Ed25519, aggregate signatures |
 | [Storage](storage.md) | `BlockStore` trait, vsdb persistence, crash recovery |
-| [Networking](networking.md) | `NetworkSink` trait, in-memory channels, litep2p P2P |
+| [Networking](networking.md) | `NetworkSink` trait, litep2p P2P transport |
 | [Mempool & API](mempool-api.md) | Transaction mempool and JSON-RPC server |
 | [Metrics](metrics.md) | Prometheus metrics and observability |
 | [Wire Protocol](wire-protocol.md) | Codec framing, postcard format, ABCI IPC protocol, block hash spec |

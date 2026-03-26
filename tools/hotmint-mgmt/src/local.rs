@@ -13,7 +13,7 @@ use ruc::*;
 use crate::cluster::ClusterState;
 
 /// Find the cluster-node binary: check --binary flag, workspace target, PATH.
-fn find_binary(binary: Option<&Path>) -> Result<PathBuf> {
+pub fn find_binary(binary: Option<&Path>) -> Result<PathBuf> {
     if let Some(b) = binary {
         if b.exists() {
             return Ok(b.to_path_buf());
@@ -21,11 +21,19 @@ fn find_binary(binary: Option<&Path>) -> Result<PathBuf> {
         return Err(eg!("binary not found: {}", b.display()));
     }
 
-    // Try workspace target/release
-    let workspace_bin =
+    // Try workspace target/release (via cargo metadata for robustness)
+    if let Some(root) = crate::find_workspace_root() {
+        let workspace_bin = root.join("target/release/cluster-node");
+        if workspace_bin.exists() {
+            return Ok(workspace_bin);
+        }
+    }
+
+    // Fallback: relative from CARGO_MANIFEST_DIR (when built from within hotmint-mgmt)
+    let manifest_bin =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/cluster-node");
-    if workspace_bin.exists() {
-        return workspace_bin.canonicalize().c(d!());
+    if manifest_bin.exists() {
+        return manifest_bin.canonicalize().c(d!());
     }
 
     // Try PATH

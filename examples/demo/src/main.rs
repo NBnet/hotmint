@@ -1,104 +1,117 @@
-use ruc::*;
+//! hotmint-demo: Start a 4-node cluster using hotmint-mgmt, observe blocks.
+//!
+//! Usage:
+//!   cargo run -p hotmint-demo
+//!   (builds cluster-node, inits a temp cluster, starts nodes, monitors for 30s)
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
-use hotmint::consensus::application::Application;
-use hotmint::consensus::engine::ConsensusEngineBuilder;
-use hotmint::consensus::network::ChannelNetwork;
-use hotmint::consensus::state::ConsensusState;
-use hotmint::consensus::store::MemoryBlockStore;
-use hotmint::crypto::{Ed25519Signer, Ed25519Verifier};
-use hotmint::prelude::*;
-use tracing::{Level, info};
+use hotmint_mgmt::cluster;
 
-const NUM_VALIDATORS: u64 = 4;
+const NUM_VALIDATORS: u32 = 4;
+const DURATION_SECS: u64 = 30;
 
-struct CountingApp {
-    validator_id: ValidatorId,
-    commit_count: AtomicU64,
-}
-
-impl Application for CountingApp {
-    fn on_commit(&self, block: &Block, _ctx: &BlockContext) -> Result<()> {
-        let count = self.commit_count.fetch_add(1, Ordering::Relaxed) + 1;
-        info!(
-            validator = %self.validator_id,
-            height = block.height.as_u64(),
-            hash = %block.hash,
-            total_commits = count,
-            "block committed"
-        );
-        Ok(())
-    }
-}
-
-#[tokio::main]
-async fn main() {
+fn main() {
     if std::env::args().any(|a| a == "--help" || a == "-h") {
-        println!("hotmint-demo: 4-node in-process consensus demo");
+        println!("hotmint-demo: 4-node multi-process consensus demo");
         println!("Usage: hotmint-demo");
         println!();
         println!(
-            "Runs {} validators connected via in-memory channels for 30 seconds.",
-            NUM_VALIDATORS
+            "Runs {} validators as separate processes for {} seconds.",
+            NUM_VALIDATORS, DURATION_SECS
         );
         return;
     }
 
-    tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .with_target(false)
-        .init();
+    println!("=== Hotmint Demo ({NUM_VALIDATORS} validators, {DURATION_SECS}s) ===\n");
 
-    info!("starting hotmint with {} validators", NUM_VALIDATORS);
+    // Build cluster-node binary.
+    println!("Building cluster-node...");
+    let binary = hotmint_mgmt::build_binary("cluster-node", Some("cluster-node"))
+        .expect("failed to build cluster-node");
+    println!("  Binary: {}\n", binary.display());
 
-    let signers: Vec<Ed25519Signer> = (0..NUM_VALIDATORS)
-        .map(|i| Ed25519Signer::generate(ValidatorId(i)))
-        .collect();
+    // Init cluster in temp dir.
+    let base_dir = std::env::temp_dir().join(format!("hotmint-demo-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base_dir);
 
-    let signer_refs: Vec<&dyn Signer> = signers.iter().map(|s| s as &dyn Signer).collect();
-    let validator_set = ValidatorSet::from_signers(&signer_refs);
+    let ports = hotmint_mgmt::find_free_ports((NUM_VALIDATORS * 2) as usize);
+    let p2p_base = ports[0];
+    let rpc_base = ports[NUM_VALIDATORS as usize];
 
-    info!(
-        validators = NUM_VALIDATORS,
-        quorum = validator_set.quorum_threshold(),
-        max_faulty_power = validator_set.max_faulty_power(),
-        "validator set created"
-    );
+    cluster::init_cluster(
+        &base_dir,
+        NUM_VALIDATORS,
+        "hotmint-demo",
+        p2p_base,
+        rpc_base,
+        "127.0.0.1",
+    )
+    .expect("init cluster");
 
-    let mesh = ChannelNetwork::create_mesh(NUM_VALIDATORS);
-    assert_eq!(
-        mesh.len(),
-        signers.len(),
-        "mesh and signers must have the same length"
-    );
+    let state = cluster::ClusterState::load(&base_dir).unwrap();
 
-    let mut handles = Vec::new();
-
-    for (i, ((network, rx), signer)) in mesh.into_iter().zip(signers.into_iter()).enumerate() {
-        let vid = ValidatorId(i as u64);
-        let store = MemoryBlockStore::new_shared();
-        let state = ConsensusState::new(vid, validator_set.clone());
-
-        let engine = ConsensusEngineBuilder::new()
-            .state(state)
-            .store(store)
-            .network(Box::new(network))
-            .app(Box::new(CountingApp {
-                validator_id: vid,
-                commit_count: AtomicU64::new(0),
-            }))
-            .signer(Box::new(signer))
-            .messages(rx)
-            .verifier(Box::new(Ed25519Verifier))
-            .build()
-            .expect("all required fields set");
-
-        handles.push(tokio::spawn(async move { engine.run().await }));
+    // Start all nodes with staggered startup.
+    let mut children = hotmint_mgmt::start_cluster_nodes(&binary, &state, &base_dir, &[]);
+    for (i, c) in children.iter().enumerate() {
+        let v = &state.validators[i];
+        println!(
+            "  V{}: started (pid {}, p2p={}, rpc={})",
+            v.id,
+            c.id(),
+            v.p2p_port,
+            v.rpc_port
+        );
     }
 
-    info!("all validators spawned, consensus running...");
+    println!("\nAll validators spawned, monitoring consensus...\n");
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-    info!("shutting down after 30 seconds");
+    // Monitor via RPC for DURATION_SECS.
+    let start = Instant::now();
+    let rpc_port = state.validators[0].rpc_port;
+
+    // Wait for first RPC response.
+    if !hotmint_mgmt::wait_for_rpc("127.0.0.1", rpc_port, 15) {
+        eprintln!("ERROR: cluster did not start within 15s");
+    }
+
+    while start.elapsed() < Duration::from_secs(DURATION_SECS) {
+        std::thread::sleep(Duration::from_secs(3));
+        // Query each node's status via RPC.
+        for v in &state.validators {
+            if let Some(info) = query_height("127.0.0.1", v.rpc_port) {
+                println!("  V{}: height={info}", v.id);
+            }
+        }
+    }
+
+    println!("\n=== Demo complete ({DURATION_SECS}s) ===");
+
+    // Kill all.
+    for child in &mut children {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let _ = std::fs::remove_dir_all(&base_dir);
+}
+
+fn query_height(host: &str, port: u16) -> Option<String> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let addr = format!("{host}:{port}");
+    let mut stream =
+        TcpStream::connect_timeout(&addr.parse().ok()?, Duration::from_secs(1)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(1))).ok()?;
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"status","params":[]}"#;
+    stream.write_all(req.as_bytes()).ok()?;
+    stream.write_all(b"\n").ok()?;
+
+    let mut buf = vec![0u8; 4096];
+    let n = stream.read(&mut buf).ok()?;
+    let text = std::str::from_utf8(&buf[..n]).ok()?;
+    let val: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
+    let h = val["result"]["last_committed_height"].as_u64()?;
+    let v = val["result"]["current_view"].as_u64()?;
+    Some(format!("{h}, view={v}"))
 }

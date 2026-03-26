@@ -93,13 +93,13 @@ pub fn validate_tx(
 ) -> Result<(), TxError> {
     // Chain ID check.
     let tx_chain_id = tx.envelope.chain_id();
-    if let Some(id) = tx_chain_id {
-        if id != chain_id {
-            return Err(TxError::ChainIdMismatch {
-                expected: chain_id,
-                got: Some(id),
-            });
-        }
+    if let Some(id) = tx_chain_id
+        && id != chain_id
+    {
+        return Err(TxError::ChainIdMismatch {
+            expected: chain_id,
+            got: Some(id),
+        });
     }
 
     // Nonce check.
@@ -171,7 +171,7 @@ mod tests {
         let signing_key = k256::ecdsa::SigningKey::random(&mut rand::thread_rng());
         let address = alloy_primitives::Address::from_private_key(&signing_key);
 
-        let mut tx = TxLegacy {
+        let tx = TxLegacy {
             chain_id: Some(1337),
             nonce: 0,
             gas_price: 1_000_000_000,
@@ -277,7 +277,7 @@ mod tests {
         let signing_key = k256::ecdsa::SigningKey::random(&mut rand::thread_rng());
         let expected = alloy_primitives::Address::from_private_key(&signing_key);
 
-        let mut tx = TxEip1559 {
+        let tx = TxEip1559 {
             chain_id: 1337,
             nonce: 42,
             max_fee_per_gas: 30_000_000_000,

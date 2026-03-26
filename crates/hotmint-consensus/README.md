@@ -25,26 +25,26 @@ ConsensusEngine
 |:------|:--------|:--------------|
 | `Application` | ABCI-like app lifecycle | `NoopApplication` |
 | `BlockStore` | Block persistence | `MemoryBlockStore` |
-| `NetworkSink` | Message transport | `ChannelNetwork` |
+| `NetworkSink` | Message transport | `Litep2pNetworkSink` |
 
 ## Usage
 
 ```rust
-use hotmint_consensus::engine::ConsensusEngine;
+use hotmint_consensus::engine::ConsensusEngineBuilder;
 use hotmint_consensus::state::ConsensusState;
 use hotmint_consensus::store::MemoryBlockStore;
-use hotmint_consensus::network::ChannelNetwork;
 use hotmint_consensus::application::NoopApplication;
 
-let engine = ConsensusEngine::new(
-    ConsensusState::new(vid, validator_set),
-    std::sync::Arc::new(std::sync::RwLock::new(Box::new(MemoryBlockStore::new()))),
-    Box::new(ChannelNetwork::new(vid, senders)),
-    Box::new(NoopApplication),
-    Box::new(signer),
-    msg_rx,
-    None,
-);
+let engine = ConsensusEngineBuilder::new()
+    .state(ConsensusState::new(vid, validator_set))
+    .store(MemoryBlockStore::new_shared())
+    .network(network_sink)           // Box<dyn NetworkSink>
+    .app(Box::new(NoopApplication))
+    .signer(Box::new(signer))
+    .messages(msg_rx)
+    .verifier(Box::new(verifier))
+    .build()
+    .unwrap();
 
 tokio::spawn(async move { engine.run().await });
 ```

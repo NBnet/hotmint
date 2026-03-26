@@ -41,7 +41,7 @@ bench-consensus:
 	$(CARGO) run --release -p bench-consensus
 
 bench-evm:
-	$(CARGO) run --release -p evm-chain-example --bin bench-evm
+	$(CARGO) run --release -p hotmint-evm-node --bin bench-evm
 
 bench-ipc:
 	$(CARGO) run --release -p bench-ipc

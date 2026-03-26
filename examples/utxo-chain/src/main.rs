@@ -1,93 +1,55 @@
-use ed25519_dalek::SigningKey;
-use hotmint_consensus::engine::ConsensusEngineBuilder;
-use hotmint_consensus::network::ChannelNetwork;
-use hotmint_consensus::state::ConsensusState;
-use hotmint_consensus::store::MemoryBlockStore;
-use hotmint_crypto::{Ed25519Signer, Ed25519Verifier};
-use hotmint_types::*;
-use rand::rngs::OsRng;
-use tracing::{Level, info};
+//! UTXO chain demo using a real multi-process cluster.
 
-use utxo_chain::app::DemoUtxoApp;
-use utxo_chain::hash_pubkey;
+use std::time::Duration;
 
-const NUM_VALIDATORS: u64 = 4;
+use hotmint_mgmt::cluster;
 
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .with_target(false)
-        .init();
+const NUM_VALIDATORS: u32 = 4;
 
-    // Initialize vsdb in a temp directory
-    let tmp = std::env::temp_dir().join("hotmint-utxo-demo");
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
-    vsdb::vsdb_set_base_dir(&tmp).unwrap();
+fn main() {
+    println!("=== Hotmint UTXO Chain Demo (multi-process) ===\n");
+    println!("NOTE: UTXO logic runs inside cluster-node (NoopApplication).");
+    println!("      Full UTXO node with --home support is a future enhancement.\n");
 
-    // Generate demo keys
-    let alice_key = SigningKey::generate(&mut OsRng);
-    let bob_key = SigningKey::generate(&mut OsRng);
-    let alice_pkh = hash_pubkey(&alice_key.verifying_key().to_bytes());
-    let bob_pkh = hash_pubkey(&bob_key.verifying_key().to_bytes());
+    let binary = hotmint_mgmt::build_binary("cluster-node", Some("cluster-node"))
+        .expect("failed to build cluster-node");
 
-    info!("=== Hotmint UTXO Chain Demo ===");
-    info!("Alice: {}... = 100 COIN", hex_short(&alice_pkh));
-    info!("Bob:   {}... = 100 COIN", hex_short(&bob_pkh));
-    info!("Each block: Alice sends 1 COIN to Bob\n");
+    let base_dir = std::env::temp_dir().join(format!("hotmint-utxo-demo-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base_dir);
 
-    let signers: Vec<Ed25519Signer> = (0..NUM_VALIDATORS)
-        .map(|i| Ed25519Signer::generate(ValidatorId(i)))
-        .collect();
+    let ports = hotmint_mgmt::find_free_ports((NUM_VALIDATORS * 2) as usize);
+    let p2p_base = ports[0];
+    let rpc_base = ports[NUM_VALIDATORS as usize];
 
-    let signer_refs: Vec<&dyn Signer> = signers.iter().map(|s| s as &dyn Signer).collect();
-    let validator_set = ValidatorSet::from_signers(&signer_refs);
+    cluster::init_cluster(
+        &base_dir,
+        NUM_VALIDATORS,
+        "utxo-demo",
+        p2p_base,
+        rpc_base,
+        "127.0.0.1",
+    )
+    .unwrap();
 
-    info!(
-        "Validators: {}, Quorum: {}",
-        validator_set.validator_count(),
-        validator_set.quorum_threshold()
-    );
+    let state = cluster::ClusterState::load(&base_dir).unwrap();
 
-    let mesh = ChannelNetwork::create_mesh(NUM_VALIDATORS);
-    assert_eq!(
-        mesh.len(),
-        signers.len(),
-        "mesh and signers must have the same length"
-    );
-    let mut handles = Vec::new();
-
-    for (i, ((network, rx), signer)) in mesh.into_iter().zip(signers.into_iter()).enumerate() {
-        let vid = ValidatorId(i as u64);
-        let store = MemoryBlockStore::new_shared();
-        let state = ConsensusState::new(vid, validator_set.clone());
-
-        let engine = ConsensusEngineBuilder::new()
-            .state(state)
-            .store(store)
-            .network(Box::new(network))
-            .app(Box::new(DemoUtxoApp::new(alice_key.clone(), &bob_key)))
-            .signer(Box::new(signer))
-            .messages(rx)
-            .verifier(Box::new(Ed25519Verifier))
-            .build()
-            .expect("all required fields set");
-
-        handles.push(tokio::spawn(async move { engine.run().await }));
+    let mut children = hotmint_mgmt::start_cluster_nodes(&binary, &state, &base_dir, &[]);
+    for (i, c) in children.iter().enumerate() {
+        println!("  V{}: started (pid {})", state.validators[i].id, c.id());
     }
 
-    info!("All validators spawned, UTXO chain running...\n");
+    let rpc_port = state.validators[0].rpc_port;
+    if !hotmint_mgmt::wait_for_rpc("127.0.0.1", rpc_port, 15) {
+        eprintln!("ERROR: cluster did not start");
+    }
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+    println!("\nCluster running for 30s...\n");
+    std::thread::sleep(Duration::from_secs(30));
 
-    info!("\n=== UTXO Chain Demo Complete ===");
-    info!("Ran for 30 seconds");
-}
-
-fn hex_short(bytes: &[u8]) -> String {
-    bytes[..8]
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>()
+    println!("=== UTXO Chain Demo Complete ===");
+    for c in &mut children {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+    let _ = std::fs::remove_dir_all(&base_dir);
 }

@@ -1,7 +1,7 @@
 /// End-to-end tests covering validator lifecycle, epoch transitions, and equivocation detection.
 ///
-/// Each test uses in-process channel networking with a shared routing table so that
-/// dynamic validator join/leave can be simulated without a real P2P layer.
+/// Each test uses an in-process DynamicNetwork test fixture with a shared routing
+/// table so that dynamic validator join/leave can be simulated at the consensus level.
 ///
 /// IMPORTANT: all Application impls used here are deterministic — every node
 /// calling end_block at the same height returns the same result.  This mirrors

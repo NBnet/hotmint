@@ -61,14 +61,15 @@ pub struct EvmTxPool {
     inner: Mutex<PoolInner>,
 }
 
+type NonceLookup = Box<dyn Fn(&Address) -> u64 + Send + Sync>;
+
 struct PoolInner {
     /// Per-sender queues.
     senders: HashMap<Address, SenderQueue>,
     /// Tx hash → sender for quick lookup.
     by_hash: HashMap<B256, Address>,
     /// Function to get the current nonce for a sender.
-    /// This is set by the executor when wiring up the pool.
-    nonce_fn: Option<Box<dyn Fn(&Address) -> u64 + Send + Sync>>,
+    nonce_fn: Option<NonceLookup>,
 }
 
 impl EvmTxPool {
@@ -124,10 +125,8 @@ impl EvmTxPool {
         let queue = inner.senders.entry(sender).or_default();
 
         // Determine whether this goes to pending or queued.
-        let is_pending = tx_nonce == current_nonce
-            || queue
-                .pending
-                .contains_key(&tx_nonce.checked_sub(1).unwrap_or(0));
+        let is_pending =
+            tx_nonce == current_nonce || queue.pending.contains_key(&tx_nonce.saturating_sub(1));
 
         let target = if is_pending {
             &mut queue.pending
@@ -356,7 +355,7 @@ mod tests {
     use alloy_primitives::{Bytes, Signature, TxKind, U256};
 
     fn make_eip1559_tx(key: &k256::ecdsa::SigningKey, nonce: u64, tip: u128) -> Vec<u8> {
-        let mut tx = TxEip1559 {
+        let tx = TxEip1559 {
             chain_id: 1337,
             nonce,
             max_fee_per_gas: 30_000_000_000,

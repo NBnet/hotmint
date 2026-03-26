@@ -5,11 +5,5 @@ edition = "2024"
 publish = false
 
 [dependencies]
-hotmint = { workspace = true }
-hotmint-types = { workspace = true }
-hotmint-consensus = { workspace = true }
-hotmint-crypto = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-ruc = { workspace = true }
+hotmint-mgmt = { path = "../../tools/hotmint-mgmt" }
+serde_json = { workspace = true }

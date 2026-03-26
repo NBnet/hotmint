@@ -23,7 +23,7 @@ pub struct Vote {
     pub vote_type: VoteType,
     /// Optional vote extension data (ABCI++ Vote Extensions).
     /// Only meaningful for Vote2 (second-phase votes).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub extension: Option<Vec<u8>>,
 }
 

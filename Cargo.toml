@@ -14,7 +14,6 @@ members = [
     "crates/hotmint-staking",
     "crates/hotmint-light",
     "examples/demo",
-    "examples/evm-chain",
     "examples/bench-consensus",
     "examples/bench-ipc",
     "examples/utxo-chain",

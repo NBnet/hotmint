@@ -19,9 +19,9 @@
 //!   hotmint-mgmt logs --hosts hosts.toml [--lines N] [--grep PAT]  # Collect logs
 //!   hotmint-mgmt remote-status --hosts hosts.toml     # Show remote node status
 
-mod cluster;
-mod local;
-mod remote;
+use hotmint_mgmt::cluster;
+use hotmint_mgmt::local;
+use hotmint_mgmt::remote;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;

@@ -1,7 +1,11 @@
 //! End-to-end integration test for the Hotmint EVM chain.
+//!
+//! Starts a real 4-node cluster using hotmint-mgmt, builds and launches
+//! `hotmint-evm` processes, then runs RPC tests against them.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::process::{Child, Command};
 
 use alloy_consensus::{Signed, TxEip1559, TxEnvelope};
 use alloy_eips::eip2718::Encodable2718;
@@ -9,24 +13,16 @@ use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 
-use hotmint::crypto::{Ed25519Signer, Ed25519Verifier};
-use hotmint_consensus::engine::ConsensusEngineBuilder;
-use hotmint_consensus::network::ChannelNetwork;
-use hotmint_consensus::state::ConsensusState;
-use hotmint_consensus::store::MemoryBlockStore;
-use hotmint_evm_execution::{EvmExecutor, SharedExecutor};
-use hotmint_evm_rpc::{EvmRpcState, start_rpc_server};
 use hotmint_evm_types::genesis::{EvmGenesis, GenesisAlloc};
-use hotmint_types::*;
+use hotmint_mgmt::cluster;
 
-const NUM_VALIDATORS: u64 = 4;
-const RPC_PORT: u16 = 18545;
+const NUM_VALIDATORS: u32 = 4;
 
-fn rpc_url() -> String {
-    format!("http://127.0.0.1:{RPC_PORT}/")
+fn rpc_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/")
 }
 
-async fn rpc_call(method: &str, params: serde_json::Value) -> serde_json::Value {
+async fn rpc_call(port: u16, method: &str, params: serde_json::Value) -> serde_json::Value {
     let client = reqwest::Client::new();
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -35,7 +31,7 @@ async fn rpc_call(method: &str, params: serde_json::Value) -> serde_json::Value 
         "id": 1
     });
     client
-        .post(&rpc_url())
+        .post(rpc_url(port))
         .json(&body)
         .send()
         .await
@@ -45,15 +41,81 @@ async fn rpc_call(method: &str, params: serde_json::Value) -> serde_json::Value 
         .expect("RPC response parse failed")
 }
 
+/// Setup cluster, start nodes, return (children, eth_rpc_port_for_node_0, base_dir).
+fn setup_and_start(evm_genesis: &EvmGenesis) -> (Vec<Child>, u16, PathBuf) {
+    let base_dir = std::env::temp_dir().join(format!("hotmint-evm-e2e-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base_dir);
+
+    // Find free ports.
+    let ports = hotmint_mgmt::find_free_ports((NUM_VALIDATORS * 3) as usize);
+    let p2p_base = ports[0];
+    let rpc_base = ports[NUM_VALIDATORS as usize];
+    let eth_rpc_ports: Vec<u16> = ports[(NUM_VALIDATORS * 2) as usize..].to_vec();
+
+    cluster::init_cluster(
+        &base_dir,
+        NUM_VALIDATORS,
+        "evm-e2e-test",
+        p2p_base,
+        rpc_base,
+        "127.0.0.1",
+    )
+    .unwrap();
+
+    // Write EVM genesis.
+    let evm_genesis_json = serde_json::to_string_pretty(evm_genesis).unwrap();
+    for i in 0..NUM_VALIDATORS {
+        let config_dir = base_dir.join(format!("v{i}")).join("config");
+        std::fs::write(config_dir.join("evm-genesis.json"), &evm_genesis_json).unwrap();
+    }
+
+    // Build hotmint-evm binary.
+    let binary = hotmint_mgmt::build_binary("hotmint-evm-node", Some("hotmint-evm"))
+        .expect("failed to build hotmint-evm");
+
+    let state = cluster::ClusterState::load(&base_dir).unwrap();
+    let mut children = Vec::new();
+    for (i, v) in state.validators.iter().enumerate() {
+        let log = std::fs::File::create(base_dir.join(format!("v{}.log", v.id))).unwrap();
+        let log_err = log.try_clone().unwrap();
+        let child = Command::new(&binary)
+            .arg("--home")
+            .arg(&v.home_dir)
+            .arg("--rpc-addr")
+            .arg(format!("127.0.0.1:{}", eth_rpc_ports[i]))
+            .stdout(log)
+            .stderr(log_err)
+            .spawn()
+            .unwrap();
+        children.push(child);
+        // Stagger startup to avoid Noise handshake collisions.
+        if i < state.validators.len() - 1 {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+    }
+
+    (children, eth_rpc_ports[0], base_dir)
+}
+
+/// Wait until eth_blockNumber returns >= min_height.
+async fn wait_for_blocks(port: u16, min_height: u64, timeout_secs: u64) -> bool {
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs);
+    while tokio::time::Instant::now() < deadline {
+        let resp = rpc_call(port, "eth_blockNumber", serde_json::json!([])).await;
+        if let Some(hex) = resp["result"].as_str()
+            && let Ok(h) = u64::from_str_radix(hex.strip_prefix("0x").unwrap_or(hex), 16)
+            && h >= min_height
+        {
+            return true;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+    false
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn e2e_ethereum_rpc() {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .try_init()
-        .ok();
-
-    // Create a funded account using a known private key.
+    // Create a funded account.
     let signer = PrivateKeySigner::random();
     let funded_addr = signer.address();
 
@@ -77,63 +139,25 @@ async fn e2e_ethereum_rpc() {
         timestamp: 0,
     };
 
-    // Build the validator set.
-    let signers: Vec<Ed25519Signer> = (0..NUM_VALIDATORS)
-        .map(|i| Ed25519Signer::generate(ValidatorId(i)))
-        .collect();
-    let signer_refs: Vec<&dyn Signer> = signers.iter().map(|s| s as &dyn Signer).collect();
-    let validator_set = ValidatorSet::from_signers(&signer_refs);
+    let (mut children, rpc_port, base_dir) = setup_and_start(&genesis);
 
-    let shared_executor = Arc::new(EvmExecutor::from_genesis(&genesis));
-
-    // Start RPC server.
-    let rpc_state = Arc::new(EvmRpcState {
-        executor: Arc::clone(&shared_executor),
-        chain_id: genesis.chain_id,
-    });
-    let rpc_addr = format!("127.0.0.1:{RPC_PORT}").parse().unwrap();
-    tokio::spawn(start_rpc_server(rpc_addr, rpc_state));
-
-    // Start consensus engines.
-    let mesh = ChannelNetwork::create_mesh(NUM_VALIDATORS);
-    for (i, ((network, rx), ed_signer)) in mesh.into_iter().zip(signers.into_iter()).enumerate() {
-        let vid = ValidatorId(i as u64);
-        let store = MemoryBlockStore::new_shared();
-        let state = ConsensusState::new(vid, validator_set.clone());
-
-        let app: Box<dyn hotmint_consensus::application::Application> = if i == 0 {
-            Box::new(SharedExecutor(Arc::clone(&shared_executor)))
-        } else {
-            Box::new(EvmExecutor::from_genesis(&genesis))
-        };
-
-        let engine = ConsensusEngineBuilder::new()
-            .state(state)
-            .store(store)
-            .network(Box::new(network))
-            .app(app)
-            .signer(Box::new(ed_signer))
-            .messages(rx)
-            .verifier(Box::new(Ed25519Verifier))
-            .build()
-            .expect("engine build");
-
-        tokio::spawn(async move { engine.run().await });
-    }
-
-    // Wait for startup.
-    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    // Wait for cluster to produce at least 1 block.
+    assert!(
+        wait_for_blocks(rpc_port, 1, 30).await,
+        "cluster did not produce blocks within 30s"
+    );
 
     // === Test 1: eth_chainId ===
-    let resp = rpc_call("eth_chainId", serde_json::json!([])).await;
+    let resp = rpc_call(rpc_port, "eth_chainId", serde_json::json!([])).await;
     assert_eq!(resp["result"].as_str().unwrap(), "0x539");
 
     // === Test 2: web3_clientVersion ===
-    let resp = rpc_call("web3_clientVersion", serde_json::json!([])).await;
+    let resp = rpc_call(rpc_port, "web3_clientVersion", serde_json::json!([])).await;
     assert!(resp["result"].as_str().unwrap().starts_with("hotmint-evm"));
 
     // === Test 3: eth_getBalance ===
     let resp = rpc_call(
+        rpc_port,
         "eth_getBalance",
         serde_json::json!([format!("0x{}", hex::encode(funded_addr)), "latest"]),
     )
@@ -147,6 +171,7 @@ async fn e2e_ethereum_rpc() {
 
     // === Test 4: eth_getTransactionCount ===
     let resp = rpc_call(
+        rpc_port,
         "eth_getTransactionCount",
         serde_json::json!([format!("0x{}", hex::encode(funded_addr)), "latest"]),
     )
@@ -154,16 +179,16 @@ async fn e2e_ethereum_rpc() {
     assert_eq!(resp["result"].as_str().unwrap(), "0x0");
 
     // === Test 5: eth_gasPrice ===
-    let resp = rpc_call("eth_gasPrice", serde_json::json!([])).await;
+    let resp = rpc_call(rpc_port, "eth_gasPrice", serde_json::json!([])).await;
     assert_eq!(resp["result"].as_str().unwrap(), "0x3b9aca00");
 
     // === Test 6: eth_syncing ===
-    let resp = rpc_call("eth_syncing", serde_json::json!([])).await;
+    let resp = rpc_call(rpc_port, "eth_syncing", serde_json::json!([])).await;
     assert_eq!(resp["result"], serde_json::Value::Bool(false));
 
     // === Test 7: eth_sendRawTransaction (EIP-1559) ===
     let recipient = Address::repeat_byte(0x42);
-    let transfer_amount = U256::from(1_000_000_000_000_000_000u128); // 1 ETH
+    let transfer_amount = U256::from(1_000_000_000_000_000_000u128);
 
     let mut tx = TxEip1559 {
         chain_id: 1337,
@@ -177,9 +202,7 @@ async fn e2e_ethereum_rpc() {
         access_list: Default::default(),
     };
 
-    let sig = signer
-        .sign_transaction_sync(&mut tx)
-        .expect("signing should work");
+    let sig = signer.sign_transaction_sync(&mut tx).expect("signing");
     let signed_tx = Signed::new_unchecked(tx, sig, Default::default());
     let envelope: TxEnvelope = TxEnvelope::from(signed_tx);
     let raw_tx = {
@@ -189,6 +212,7 @@ async fn e2e_ethereum_rpc() {
     };
 
     let resp = rpc_call(
+        rpc_port,
         "eth_sendRawTransaction",
         serde_json::json!([format!("0x{}", hex::encode(&raw_tx))]),
     )
@@ -207,6 +231,7 @@ async fn e2e_ethereum_rpc() {
 
     // === Test 8: eth_feeHistory ===
     let resp = rpc_call(
+        rpc_port,
         "eth_feeHistory",
         serde_json::json!(["0x1", "latest", [25, 75]]),
     )
@@ -215,6 +240,7 @@ async fn e2e_ethereum_rpc() {
 
     // === Test 9: eth_getBlockByNumber ===
     let resp = rpc_call(
+        rpc_port,
         "eth_getBlockByNumber",
         serde_json::json!(["latest", false]),
     )
@@ -222,17 +248,24 @@ async fn e2e_ethereum_rpc() {
     assert!(resp["result"]["gasLimit"].is_string());
 
     // === Test 10: net_version ===
-    let resp = rpc_call("net_version", serde_json::json!([])).await;
+    let resp = rpc_call(rpc_port, "net_version", serde_json::json!([])).await;
     assert_eq!(resp["result"].as_str().unwrap(), "1337");
 
     // === Test 11: eth_accounts ===
-    let resp = rpc_call("eth_accounts", serde_json::json!([])).await;
+    let resp = rpc_call(rpc_port, "eth_accounts", serde_json::json!([])).await;
     assert!(resp["result"].as_array().unwrap().is_empty());
 
     // === Test 12: unknown method ===
-    let resp = rpc_call("nonexistent_method", serde_json::json!([])).await;
+    let resp = rpc_call(rpc_port, "nonexistent_method", serde_json::json!([])).await;
     assert!(resp["error"].is_object());
     assert_eq!(resp["error"]["code"], -32601);
 
     println!("\n✅ All E2E RPC tests passed!");
+
+    // Cleanup.
+    for child in &mut children {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let _ = std::fs::remove_dir_all(&base_dir);
 }

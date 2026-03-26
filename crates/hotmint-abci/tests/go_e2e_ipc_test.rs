@@ -1,22 +1,13 @@
-use std::collections::HashMap;
-use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
+//! E2E test: Go ABCI servers + real multi-process hotmint-node cluster.
 
-use parking_lot::RwLock;
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use hotmint_abci::client::IpcApplicationClient;
 use hotmint_consensus::application::Application;
-use hotmint_consensus::engine::{ConsensusEngine, EngineConfig};
-use hotmint_consensus::network::ChannelNetwork;
-use hotmint_consensus::state::ConsensusState;
-use hotmint_consensus::store::MemoryBlockStore;
-use hotmint_crypto::{Ed25519Signer, Ed25519Verifier};
-use hotmint_types::validator::{ValidatorId, ValidatorInfo, ValidatorSet};
-use hotmint_types::*;
-use tokio::sync::mpsc;
+use hotmint_mgmt::cluster;
 
-const NUM_VALIDATORS: u64 = 4;
+const NUM_VALIDATORS: u32 = 4;
 
 fn build_go_testserver() -> Option<std::path::PathBuf> {
     let go_server_dir = std::env::current_dir().unwrap().join("../../sdk/go");
@@ -61,116 +52,88 @@ fn wait_for_socket(path: &std::path::Path) {
     panic!("Go server did not create socket at {:?}", path);
 }
 
-/// End-to-end test: 4 Rust consensus engines talking through Go ABCI servers.
+/// End-to-end test: hotmint-node processes talking through Go ABCI servers.
 ///
 /// This test requires Go to be installed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn go_ipc_consensus_e2e() {
-    let binary = match build_go_testserver() {
+    let go_binary = match build_go_testserver() {
         Some(b) => b,
         None => return,
     };
 
-    let dir = std::env::temp_dir().join(format!("hotmint-go-e2e-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let base_dir = std::env::temp_dir().join(format!("hotmint-go-e2e-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base_dir);
 
-    // Start a Go ABCI server for each validator.
+    let ports = hotmint_mgmt::find_free_ports((NUM_VALIDATORS * 2) as usize);
+    let p2p_base = ports[0];
+    let rpc_base = ports[NUM_VALIDATORS as usize];
+
+    cluster::init_cluster(
+        &base_dir,
+        NUM_VALIDATORS,
+        "go-ipc-e2e",
+        p2p_base,
+        rpc_base,
+        "127.0.0.1",
+    )
+    .unwrap();
+
+    let state = cluster::ClusterState::load(&base_dir).unwrap();
+
+    // Start Go ABCI servers.
     let mut go_servers: Vec<Child> = Vec::new();
     let mut sock_paths = Vec::new();
     for i in 0..NUM_VALIDATORS {
-        let path = dir.join(format!("go-app-{i}.sock"));
-        let child = start_go_server(&binary, &path);
+        let path = base_dir.join(format!("go-app-{i}.sock"));
+        let child = start_go_server(&go_binary, &path);
         go_servers.push(child);
         sock_paths.push(path);
     }
 
-    // Wait for all sockets.
     for path in &sock_paths {
         wait_for_socket(path);
     }
 
-    // Create validators.
-    let signers: Vec<Ed25519Signer> = (0..NUM_VALIDATORS)
-        .map(|i| Ed25519Signer::generate(ValidatorId(i)))
-        .collect();
-    let validator_infos: Vec<ValidatorInfo> = signers
-        .iter()
-        .map(|s| ValidatorInfo {
-            id: Signer::validator_id(s),
-            public_key: Signer::public_key(s),
-            power: 1,
-        })
-        .collect();
-    let validator_set = ValidatorSet::new(validator_infos);
-
-    // Set up channel-based networking.
-    let mut receivers = HashMap::new();
-    let mut all_senders: HashMap<
-        ValidatorId,
-        mpsc::Sender<(Option<ValidatorId>, ConsensusMessage)>,
-    > = HashMap::new();
-    for i in 0..NUM_VALIDATORS {
-        let (tx, rx) = mpsc::channel(8192);
-        receivers.insert(ValidatorId(i), rx);
-        all_senders.insert(ValidatorId(i), tx);
-    }
-
-    // Start consensus engines connected to Go ABCI servers.
-    let mut handles = Vec::new();
-    for (i, signer) in signers.into_iter().enumerate() {
-        let vid = ValidatorId(i as u64);
-        let rx = receivers.remove(&vid).unwrap();
-        let senders: Vec<_> = all_senders
-            .iter()
-            .map(|(&id, tx)| (id, tx.clone()))
-            .collect();
-
-        let ipc_client = IpcApplicationClient::new(&sock_paths[i]);
-        let network = ChannelNetwork::new(vid, senders);
-        let store: Arc<RwLock<Box<dyn hotmint_consensus::store::BlockStore>>> =
-            Arc::new(RwLock::new(Box::new(MemoryBlockStore::new())));
-        let state = ConsensusState::new(vid, validator_set.clone());
-
-        let engine = ConsensusEngine::new(
-            state,
-            store,
-            Box::new(network),
-            Box::new(ipc_client),
-            Box::new(signer),
-            rx,
-            EngineConfig {
-                verifier: Box::new(Ed25519Verifier),
-                pacemaker: None,
-                persistence: None,
-                evidence_store: None,
-                wal: None,
-            },
+    // Patch config.toml to set proxy_app for each node.
+    for (i, v) in state.validators.iter().enumerate() {
+        let config_path = std::path::Path::new(&v.home_dir).join("config/config.toml");
+        let config_text = std::fs::read_to_string(&config_path).unwrap();
+        let patched = config_text.replace(
+            "proxy_app = \"\"",
+            &format!("proxy_app = \"{}\"", sock_paths[i].display()),
         );
-
-        handles.push(tokio::spawn(async move { engine.run().await }));
+        std::fs::write(&config_path, patched).unwrap();
     }
+
+    // Build and start hotmint-node processes.
+    let node_binary = hotmint_mgmt::build_binary("hotmint", Some("hotmint-node"))
+        .expect("failed to build hotmint-node");
+
+    let mut children =
+        hotmint_mgmt::start_cluster_nodes(&node_binary, &state, &base_dir, &["node"]);
+
+    let rpc_port = state.validators[0].rpc_port;
+    assert!(
+        hotmint_mgmt::wait_for_rpc("127.0.0.1", rpc_port, 20),
+        "cluster did not start within 20s"
+    );
 
     // Run for 5 seconds.
     tokio::time::sleep(Duration::from_secs(5)).await;
 
-    // Abort engines first — this releases the IPC connections so we can
-    // open a new one to query the Go server (single-connection model).
-    for h in &handles {
-        h.abort();
+    // Stop consensus engines first so IPC connections are released.
+    for c in &mut children {
+        let _ = c.kill();
+        let _ = c.wait();
     }
-    // Allow the engine tasks to finish and drop their connections.
-    for h in handles {
-        let _ = h.await;
-    }
-    // Small delay for Go server to accept new connections.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Query commit count from one Go server via IPC.
     let client = IpcApplicationClient::new(&sock_paths[0]);
     let count_bytes = client.query("commits", &[]).unwrap();
     let commits = u64::from_le_bytes(count_bytes.data.try_into().unwrap_or([0; 8]));
 
-    // Kill Go servers.
     for mut child in go_servers {
         let _ = child.kill();
         let _ = child.wait();
@@ -182,6 +145,6 @@ async fn go_ipc_consensus_e2e() {
     );
     eprintln!("Go e2e: {commits} commits in 5 seconds");
 
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_file(&binary);
+    let _ = std::fs::remove_dir_all(&base_dir);
+    let _ = std::fs::remove_file(&go_binary);
 }

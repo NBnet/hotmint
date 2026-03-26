@@ -22,6 +22,8 @@ prometheus-client = { workspace = true }
 tracing-subscriber = { workspace = true }
 rand = { workspace = true }
 criterion = { workspace = true }
+hotmint-mgmt = { path = "../../tools/hotmint-mgmt" }
+serde_json = { workspace = true }
 
 [[bench]]
 name = "consensus_bench"
