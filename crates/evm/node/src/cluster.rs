@@ -69,6 +69,7 @@ pub fn start_evm_nodes(
         let child = Command::new(binary)
             .arg("--home")
             .arg(&v.home_dir)
+            .arg("node")
             .arg("--rpc-addr")
             .arg(format!("127.0.0.1:{}", eth_rpc_ports[i]))
             .stdout(log)
