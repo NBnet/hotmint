@@ -86,6 +86,22 @@ impl EvmState {
             .unwrap_or(0)
     }
 
+    /// Set account nonce and update the state trie.
+    pub fn set_nonce(&mut self, addr: &Address, nonce: u64) {
+        let entry = self.db.cache.accounts.entry(*addr).or_default();
+        entry.info.nonce = nonce;
+        let encoded = encode_account_leaf(&entry.info);
+        let _ = self.state_trie.insert(addr.as_slice(), &encoded);
+    }
+
+    /// Set account balance and update the state trie.
+    pub fn set_balance(&mut self, addr: &Address, balance: U256) {
+        let entry = self.db.cache.accounts.entry(*addr).or_default();
+        entry.info.balance = balance;
+        let encoded = encode_account_leaf(&entry.info);
+        let _ = self.state_trie.insert(addr.as_slice(), &encoded);
+    }
+
     /// Record a block hash for BLOCKHASH opcode.
     pub fn record_block_hash(&mut self, number: u64, hash: B256) {
         self.block_hashes.insert(number, hash);

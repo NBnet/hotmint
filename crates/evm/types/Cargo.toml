@@ -12,4 +12,9 @@ revm = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-rlp = { workspace = true }
 alloy-consensus = { workspace = true }
+alloy-eips = { workspace = true }
 ruc = { workspace = true }
+
+[dev-dependencies]
+k256 = { workspace = true }
+rand = { workspace = true }
