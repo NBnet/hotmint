@@ -85,7 +85,8 @@ impl VsdbStateDb {
 
     /// Insert an account (for genesis initialization).
     pub fn insert_account(&mut self, addr: &Address, info: &AccountInfo) {
-        self.accounts.insert(addr.as_slice(), &StoredAccount::from_info(info));
+        self.accounts
+            .insert(addr.as_slice(), &StoredAccount::from_info(info));
         if let Some(code) = &info.code {
             let bytes = code.bytes_slice().to_vec();
             if !bytes.is_empty() {
@@ -107,7 +108,9 @@ impl VsdbStateDb {
 
     /// Get account info.
     pub fn get_account(&self, addr: &Address) -> Option<AccountInfo> {
-        self.accounts.get(addr.as_slice()).map(|s: StoredAccount| s.to_info())
+        self.accounts
+            .get(addr.as_slice())
+            .map(|s: StoredAccount| s.to_info())
     }
 
     /// Get account balance.
@@ -150,28 +153,22 @@ impl VsdbStateDb {
 
     /// Set account balance.
     pub fn set_balance(&mut self, addr: &Address, balance: U256) {
-        let mut stored = self
-            .accounts
-            .get(addr.as_slice())
-            .unwrap_or(StoredAccount {
-                balance_be: [0u8; 32],
-                nonce: 0,
-                code_hash: revm::primitives::KECCAK_EMPTY.0,
-            });
+        let mut stored = self.accounts.get(addr.as_slice()).unwrap_or(StoredAccount {
+            balance_be: [0u8; 32],
+            nonce: 0,
+            code_hash: revm::primitives::KECCAK_EMPTY.0,
+        });
         stored.balance_be = balance.to_be_bytes();
         self.accounts.insert(addr.as_slice(), &stored);
     }
 
     /// Set account nonce.
     pub fn set_nonce(&mut self, addr: &Address, nonce: u64) {
-        let mut stored = self
-            .accounts
-            .get(addr.as_slice())
-            .unwrap_or(StoredAccount {
-                balance_be: [0u8; 32],
-                nonce: 0,
-                code_hash: revm::primitives::KECCAK_EMPTY.0,
-            });
+        let mut stored = self.accounts.get(addr.as_slice()).unwrap_or(StoredAccount {
+            balance_be: [0u8; 32],
+            nonce: 0,
+            code_hash: revm::primitives::KECCAK_EMPTY.0,
+        });
         stored.nonce = nonce;
         self.accounts.insert(addr.as_slice(), &stored);
     }
@@ -187,16 +184,19 @@ impl Database for VsdbStateDb {
     type Error = VsdbError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        Ok(self.accounts.get(address.as_slice()).map(|s: StoredAccount| {
-            let mut info = s.to_info();
-            // Load code if this account has non-empty code.
-            if info.code_hash != revm::primitives::KECCAK_EMPTY {
-                if let Some(bytes) = self.contracts.get(info.code_hash.as_slice()) {
-                    info.code = Some(Bytecode::new_raw(Bytes::from(bytes)));
+        Ok(self
+            .accounts
+            .get(address.as_slice())
+            .map(|s: StoredAccount| {
+                let mut info = s.to_info();
+                // Load code if this account has non-empty code.
+                if info.code_hash != revm::primitives::KECCAK_EMPTY {
+                    if let Some(bytes) = self.contracts.get(info.code_hash.as_slice()) {
+                        info.code = Some(Bytecode::new_raw(Bytes::from(bytes)));
+                    }
                 }
-            }
-            info
-        }))
+                info
+            }))
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
@@ -226,15 +226,18 @@ impl revm::database_interface::DatabaseRef for VsdbStateDb {
     type Error = VsdbError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        Ok(self.accounts.get(address.as_slice()).map(|s: StoredAccount| {
-            let mut info = s.to_info();
-            if info.code_hash != revm::primitives::KECCAK_EMPTY {
-                if let Some(bytes) = self.contracts.get(info.code_hash.as_slice()) {
-                    info.code = Some(Bytecode::new_raw(Bytes::from(bytes)));
+        Ok(self
+            .accounts
+            .get(address.as_slice())
+            .map(|s: StoredAccount| {
+                let mut info = s.to_info();
+                if info.code_hash != revm::primitives::KECCAK_EMPTY {
+                    if let Some(bytes) = self.contracts.get(info.code_hash.as_slice()) {
+                        info.code = Some(Bytecode::new_raw(Bytes::from(bytes)));
+                    }
                 }
-            }
-            info
-        }))
+                info
+            }))
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {

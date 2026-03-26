@@ -1,5 +1,5 @@
 use alloy_consensus::transaction::SignerRecoverable;
-use alloy_consensus::{TxEnvelope, Transaction};
+use alloy_consensus::{Transaction, TxEnvelope};
 use alloy_eips::Decodable2718;
 use alloy_primitives::{Address, B256, U256};
 
@@ -39,13 +39,19 @@ impl std::fmt::Display for TxError {
             Self::NonceTooLow { expected, got } => {
                 write!(f, "nonce too low: expected >= {expected}, got {got}")
             }
-            Self::InsufficientBalance { required, available } => {
+            Self::InsufficientBalance {
+                required,
+                available,
+            } => {
                 write!(f, "insufficient balance: need {required}, have {available}")
             }
             Self::IntrinsicGasTooLow { required, got } => {
                 write!(f, "intrinsic gas too low: need {required}, got {got}")
             }
-            Self::GasLimitExceedsBlock { tx_gas, block_limit } => {
+            Self::GasLimitExceedsBlock {
+                tx_gas,
+                block_limit,
+            } => {
                 write!(f, "gas limit {tx_gas} exceeds block limit {block_limit}")
             }
         }
@@ -59,8 +65,8 @@ impl std::error::Error for TxError {}
 /// Accepts EIP-2718 typed transaction envelopes (type 1/2/4)
 /// and legacy (untyped) RLP-encoded transactions.
 pub fn decode_and_recover(raw: &[u8]) -> Result<VerifiedTx, TxError> {
-    let envelope = TxEnvelope::decode_2718(&mut &raw[..])
-        .map_err(|e| TxError::RlpDecode(e.to_string()))?;
+    let envelope =
+        TxEnvelope::decode_2718(&mut &raw[..]).map_err(|e| TxError::RlpDecode(e.to_string()))?;
 
     let sender = envelope
         .recover_signer()
@@ -157,9 +163,9 @@ pub fn effective_gas_tip(tx: &TxEnvelope, base_fee: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::{TxLegacy, SignableTransaction};
-    use alloy_primitives::{TxKind, Bytes, Signature};
+    use alloy_consensus::{SignableTransaction, TxLegacy};
     use alloy_eips::Encodable2718;
+    use alloy_primitives::{Bytes, Signature, TxKind};
 
     fn make_signed_legacy_tx() -> (Vec<u8>, Address) {
         let signing_key = k256::ecdsa::SigningKey::random(&mut rand::thread_rng());

@@ -76,8 +76,7 @@ mod hex_bytes {
             (0..s.len())
                 .step_by(2)
                 .map(|i| {
-                    u8::from_str_radix(&s[i..i + 2], 16)
-                        .map_err(|e| format!("invalid hex: {e}"))
+                    u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| format!("invalid hex: {e}"))
                 })
                 .collect()
         }

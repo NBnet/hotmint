@@ -1,3 +1,3 @@
 pub mod state;
 
-pub use state::{EvmState, VsdbStateDb, VsdbError};
+pub use state::{EvmState, VsdbError, VsdbStateDb};

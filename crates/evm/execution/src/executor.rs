@@ -20,7 +20,7 @@ use alloy_consensus::Transaction;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use revm::context::TxEnv;
 use revm::handler::ExecuteCommitEvm;
-use revm::primitives::{hardfork::SpecId, TxKind};
+use revm::primitives::{TxKind, hardfork::SpecId};
 use revm::{Context, MainBuilder, MainContext};
 
 /// EVM block executor implementing the Hotmint `Application` trait.
@@ -82,8 +82,7 @@ impl EvmExecutor {
 
     /// Get the current committed block height.
     pub fn block_height(&self) -> u64 {
-        self.block_height
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.block_height.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Submit a raw signed Ethereum transaction to the pool.
@@ -356,9 +355,7 @@ impl Application for EvmExecutor {
                 let val = state.get_storage(&addr, &slot);
                 val.to_be_bytes::<32>().to_vec()
             }
-            "eth_blockNumber" => {
-                self.block_height().to_be_bytes().to_vec()
-            }
+            "eth_blockNumber" => self.block_height().to_be_bytes().to_vec(),
             _ => vec![],
         };
         Ok(hotmint_types::QueryResponse {
@@ -392,11 +389,7 @@ impl Application for SharedExecutor {
         Application::on_commit(self.0.as_ref(), block, ctx)
     }
 
-    fn query(
-        &self,
-        path: &str,
-        data: &[u8],
-    ) -> Result<hotmint_types::QueryResponse> {
+    fn query(&self, path: &str, data: &[u8]) -> Result<hotmint_types::QueryResponse> {
         Application::query(self.0.as_ref(), path, data)
     }
 }

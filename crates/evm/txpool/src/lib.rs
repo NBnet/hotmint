@@ -86,7 +86,10 @@ impl EvmTxPool {
 
     /// Set the nonce lookup function (called during pool operations).
     pub fn set_nonce_fn(&self, f: Box<dyn Fn(&Address) -> u64 + Send + Sync>) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).nonce_fn = Some(f);
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .nonce_fn = Some(f);
     }
 
     /// Submit a raw Ethereum transaction to the pool.
@@ -110,11 +113,7 @@ impl EvmTxPool {
 
         let sender = entry.verified.sender;
         let tx_nonce = entry.verified.envelope.nonce();
-        let current_nonce = inner
-            .nonce_fn
-            .as_ref()
-            .map(|f| f(&sender))
-            .unwrap_or(0);
+        let current_nonce = inner.nonce_fn.as_ref().map(|f| f(&sender)).unwrap_or(0);
 
         if tx_nonce < current_nonce {
             return Err(format!(
@@ -193,7 +192,12 @@ impl EvmTxPool {
         let mut candidates: Vec<(Address, u64, u64, Vec<u8>)> = Vec::new(); // (sender, nonce, tip, raw)
         for (sender, queue) in &inner.senders {
             if let Some((&nonce, entry)) = queue.pending.iter().next() {
-                candidates.push((*sender, nonce, entry.effective_tip, entry.verified.raw.clone()));
+                candidates.push((
+                    *sender,
+                    nonce,
+                    entry.effective_tip,
+                    entry.verified.raw.clone(),
+                ));
             }
         }
         // Sort by tip descending.
@@ -346,16 +350,12 @@ impl EvmTxPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_consensus::TxEnvelope;
     use alloy_consensus::{SignableTransaction, TxEip1559};
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Bytes, Signature, TxKind, U256};
-    use alloy_consensus::TxEnvelope;
 
-    fn make_eip1559_tx(
-        key: &k256::ecdsa::SigningKey,
-        nonce: u64,
-        tip: u128,
-    ) -> Vec<u8> {
+    fn make_eip1559_tx(key: &k256::ecdsa::SigningKey, nonce: u64, tip: u128) -> Vec<u8> {
         let mut tx = TxEip1559 {
             chain_id: 1337,
             nonce,
@@ -437,7 +437,9 @@ mod tests {
 
         // Same nonce, lower tip → should fail.
         let raw3 = make_eip1559_tx(&key, 0, 500_000_000);
-        let err = pool.submit_tx(&raw3).expect_err("should reject underpriced");
+        let err = pool
+            .submit_tx(&raw3)
+            .expect_err("should reject underpriced");
         assert!(err.contains("replacement underpriced"));
     }
 

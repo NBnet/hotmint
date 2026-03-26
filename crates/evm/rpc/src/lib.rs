@@ -74,9 +74,7 @@ impl JsonRpcResponse {
 
 /// Start the EVM JSON-RPC server.
 pub async fn start_rpc_server(addr: SocketAddr, state: Arc<EvmRpcState>) {
-    let app = Router::new()
-        .route("/", post(handle_rpc))
-        .with_state(state);
+    let app = Router::new().route("/", post(handle_rpc)).with_state(state);
 
     info!(%addr, "starting EVM JSON-RPC server");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
@@ -132,21 +130,15 @@ fn query_storage(executor: &EvmExecutor, addr: &Address, slot: &U256) -> U256 {
 fn dispatch(state: &EvmRpcState, req: &JsonRpcRequest) -> JsonRpcResponse {
     match req.method.as_str() {
         // --- Chain ---
-        "eth_chainId" => {
-            JsonRpcResponse::ok(req.id.clone(), to_hex_u64(state.chain_id))
-        }
-        "net_version" => {
-            JsonRpcResponse::ok(
-                req.id.clone(),
-                serde_json::Value::String(state.chain_id.to_string()),
-            )
-        }
-        "web3_clientVersion" => {
-            JsonRpcResponse::ok(
-                req.id.clone(),
-                serde_json::Value::String("hotmint-evm/0.1.0".to_string()),
-            )
-        }
+        "eth_chainId" => JsonRpcResponse::ok(req.id.clone(), to_hex_u64(state.chain_id)),
+        "net_version" => JsonRpcResponse::ok(
+            req.id.clone(),
+            serde_json::Value::String(state.chain_id.to_string()),
+        ),
+        "web3_clientVersion" => JsonRpcResponse::ok(
+            req.id.clone(),
+            serde_json::Value::String("hotmint-evm/0.1.0".to_string()),
+        ),
 
         // --- Block ---
         "eth_blockNumber" => {
@@ -185,7 +177,13 @@ fn dispatch(state: &EvmRpcState, req: &JsonRpcRequest) -> JsonRpcResponse {
         "eth_getStorageAt" => {
             let arr = match req.params.as_array() {
                 Some(a) if a.len() >= 2 => a,
-                _ => return JsonRpcResponse::err(req.id.clone(), -32602, "expected [addr, slot, block]"),
+                _ => {
+                    return JsonRpcResponse::err(
+                        req.id.clone(),
+                        -32602,
+                        "expected [addr, slot, block]",
+                    );
+                }
             };
             let addr = match parse_address(&arr[0]) {
                 Ok(a) => a,
@@ -204,9 +202,7 @@ fn dispatch(state: &EvmRpcState, req: &JsonRpcRequest) -> JsonRpcResponse {
             let config = state.executor.config();
             JsonRpcResponse::ok(req.id.clone(), to_hex_u64(config.base_fee_per_gas))
         }
-        "eth_estimateGas" => {
-            JsonRpcResponse::ok(req.id.clone(), to_hex_u64(21_000))
-        }
+        "eth_estimateGas" => JsonRpcResponse::ok(req.id.clone(), to_hex_u64(21_000)),
         "eth_maxPriorityFeePerGas" => {
             JsonRpcResponse::ok(req.id.clone(), to_hex_u64(1_000_000_000))
         }
@@ -224,12 +220,12 @@ fn dispatch(state: &EvmRpcState, req: &JsonRpcRequest) -> JsonRpcResponse {
                                     req.id.clone(),
                                     -32602,
                                     &format!("invalid hex: {e}"),
-                                )
+                                );
                             }
                         }
                     }
                     None => {
-                        return JsonRpcResponse::err(req.id.clone(), -32602, "expected hex string")
+                        return JsonRpcResponse::err(req.id.clone(), -32602, "expected hex string");
                     }
                 },
                 None => return JsonRpcResponse::err(req.id.clone(), -32602, "missing params"),
@@ -262,23 +258,12 @@ fn dispatch(state: &EvmRpcState, req: &JsonRpcRequest) -> JsonRpcResponse {
                 }),
             )
         }
-        "eth_getBlockByHash" => {
-            JsonRpcResponse::ok(req.id.clone(), serde_json::Value::Null)
-        }
-        "eth_getTransactionByHash" => {
-            JsonRpcResponse::ok(req.id.clone(), serde_json::Value::Null)
-        }
-        "eth_getTransactionReceipt" => {
-            JsonRpcResponse::ok(req.id.clone(), serde_json::Value::Null)
-        }
-        "eth_getLogs" => {
-            JsonRpcResponse::ok(req.id.clone(), serde_json::json!([]))
-        }
+        "eth_getBlockByHash" => JsonRpcResponse::ok(req.id.clone(), serde_json::Value::Null),
+        "eth_getTransactionByHash" => JsonRpcResponse::ok(req.id.clone(), serde_json::Value::Null),
+        "eth_getTransactionReceipt" => JsonRpcResponse::ok(req.id.clone(), serde_json::Value::Null),
+        "eth_getLogs" => JsonRpcResponse::ok(req.id.clone(), serde_json::json!([])),
         "eth_call" => {
-            JsonRpcResponse::ok(
-                req.id.clone(),
-                serde_json::Value::String("0x".to_string()),
-            )
+            JsonRpcResponse::ok(req.id.clone(), serde_json::Value::String("0x".to_string()))
         }
         "eth_feeHistory" => {
             let base_fee = state.executor.config().base_fee_per_gas;
@@ -292,12 +277,8 @@ fn dispatch(state: &EvmRpcState, req: &JsonRpcRequest) -> JsonRpcResponse {
                 }),
             )
         }
-        "eth_syncing" => {
-            JsonRpcResponse::ok(req.id.clone(), serde_json::Value::Bool(false))
-        }
-        "eth_accounts" => {
-            JsonRpcResponse::ok(req.id.clone(), serde_json::json!([]))
-        }
+        "eth_syncing" => JsonRpcResponse::ok(req.id.clone(), serde_json::Value::Bool(false)),
+        "eth_accounts" => JsonRpcResponse::ok(req.id.clone(), serde_json::json!([])),
 
         _ => {
             warn!(method = %req.method, "unknown RPC method");

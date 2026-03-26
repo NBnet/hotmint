@@ -136,9 +136,7 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for HotmintPrecompiles {
     }
 
     fn contains(&self, address: &Address) -> bool {
-        *address == BALANCES_ADDR
-            || *address == STAKING_ADDR
-            || self.eth.contains(address)
+        *address == BALANCES_ADDR || *address == STAKING_ADDR || self.eth.contains(address)
     }
 }
 
@@ -217,19 +215,16 @@ impl HotmintPrecompiles {
                 match context.journal_mut().transfer(caller, to, amount) {
                     Ok(None) => {
                         // Success.
-                        result.output =
-                            Bytes::copy_from_slice(&U256::from(1).to_be_bytes::<32>());
+                        result.output = Bytes::copy_from_slice(&U256::from(1).to_be_bytes::<32>());
                     }
                     Ok(Some(_transfer_error)) => {
                         // Transfer error (e.g., insufficient balance).
                         result.result = InstructionResult::Revert;
-                        result.output =
-                            Bytes::copy_from_slice(&U256::ZERO.to_be_bytes::<32>());
+                        result.output = Bytes::copy_from_slice(&U256::ZERO.to_be_bytes::<32>());
                     }
                     Err(_db_error) => {
                         result.result = InstructionResult::Revert;
-                        result.output =
-                            Bytes::copy_from_slice(&U256::ZERO.to_be_bytes::<32>());
+                        result.output = Bytes::copy_from_slice(&U256::ZERO.to_be_bytes::<32>());
                     }
                 }
             }
@@ -277,12 +272,14 @@ impl HotmintPrecompiles {
                 let delegator = inputs.caller;
 
                 // Transfer tokens from delegator to staking address (lock).
-                match context.journal_mut().transfer(delegator, STAKING_ADDR, amount) {
+                match context
+                    .journal_mut()
+                    .transfer(delegator, STAKING_ADDR, amount)
+                {
                     Ok(None) => {}
                     _ => {
                         result.result = InstructionResult::Revert;
-                        result.output =
-                            Bytes::copy_from_slice(&U256::ZERO.to_be_bytes::<32>());
+                        result.output = Bytes::copy_from_slice(&U256::ZERO.to_be_bytes::<32>());
                         return result;
                     }
                 }
@@ -314,19 +311,20 @@ impl HotmintPrecompiles {
                     let mut staking = self.staking.lock().unwrap_or_else(|e| e.into_inner());
                     if staking.unbond(delegator, validator, amount).is_err() {
                         result.result = InstructionResult::Revert;
-                        result.output =
-                            Bytes::copy_from_slice(&U256::ZERO.to_be_bytes::<32>());
+                        result.output = Bytes::copy_from_slice(&U256::ZERO.to_be_bytes::<32>());
                         return result;
                     }
                 }
 
                 // Return tokens from staking address to delegator.
-                match context.journal_mut().transfer(STAKING_ADDR, delegator, amount) {
+                match context
+                    .journal_mut()
+                    .transfer(STAKING_ADDR, delegator, amount)
+                {
                     Ok(None) => {}
                     _ => {
                         result.result = InstructionResult::Revert;
-                        result.output =
-                            Bytes::copy_from_slice(&U256::ZERO.to_be_bytes::<32>());
+                        result.output = Bytes::copy_from_slice(&U256::ZERO.to_be_bytes::<32>());
                         return result;
                     }
                 }
@@ -412,7 +410,11 @@ mod tests {
         assert!(state.unbond(delegator, validator, U256::from(500)).is_ok());
         assert_eq!(state.get_stake(&delegator, &validator), U256::from(1500));
 
-        assert!(state.unbond(delegator, validator, U256::from(2000)).is_err());
+        assert!(
+            state
+                .unbond(delegator, validator, U256::from(2000))
+                .is_err()
+        );
 
         let delegator2 = Address::repeat_byte(0xBB);
         state.delegate(delegator2, validator, U256::from(300));
@@ -445,25 +447,13 @@ mod tests {
         use alloy_primitives::keccak256;
 
         assert_eq!(&keccak256(b"balanceOf(address)")[..4], &SEL_BALANCE_OF);
-        assert_eq!(
-            &keccak256(b"transfer(address,uint256)")[..4],
-            &SEL_TRANSFER
-        );
-        assert_eq!(
-            &keccak256(b"delegate(address,uint256)")[..4],
-            &SEL_DELEGATE
-        );
-        assert_eq!(
-            &keccak256(b"unbond(address,uint256)")[..4],
-            &SEL_UNBOND
-        );
+        assert_eq!(&keccak256(b"transfer(address,uint256)")[..4], &SEL_TRANSFER);
+        assert_eq!(&keccak256(b"delegate(address,uint256)")[..4], &SEL_DELEGATE);
+        assert_eq!(&keccak256(b"unbond(address,uint256)")[..4], &SEL_UNBOND);
         assert_eq!(
             &keccak256(b"getStake(address,address)")[..4],
             &SEL_GET_STAKE
         );
-        assert_eq!(
-            &keccak256(b"totalStake(address)")[..4],
-            &SEL_TOTAL_STAKE
-        );
+        assert_eq!(&keccak256(b"totalStake(address)")[..4], &SEL_TOTAL_STAKE);
     }
 }

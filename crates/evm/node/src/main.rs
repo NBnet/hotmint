@@ -2,11 +2,11 @@ use clap::Parser;
 use std::sync::Arc;
 use tracing::{Level, info};
 
+use hotmint::crypto::{Ed25519Signer, Ed25519Verifier};
 use hotmint_consensus::engine::ConsensusEngineBuilder;
 use hotmint_consensus::network::ChannelNetwork;
 use hotmint_consensus::state::ConsensusState;
 use hotmint_consensus::store::MemoryBlockStore;
-use hotmint::crypto::{Ed25519Signer, Ed25519Verifier};
 use hotmint_evm_execution::{EvmExecutor, SharedExecutor};
 use hotmint_evm_rpc::{EvmRpcState, start_rpc_server};
 use hotmint_evm_types::genesis::EvmGenesis;
@@ -115,7 +115,10 @@ async fn main() {
 
     if cli.duration > 0 {
         tokio::time::sleep(tokio::time::Duration::from_secs(cli.duration)).await;
-        info!("\n=== Hotmint EVM Chain stopped after {}s ===", cli.duration);
+        info!(
+            "\n=== Hotmint EVM Chain stopped after {}s ===",
+            cli.duration
+        );
     } else {
         // Run forever.
         std::future::pending::<()>().await;
