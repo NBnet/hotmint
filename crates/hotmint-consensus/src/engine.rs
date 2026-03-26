@@ -872,10 +872,10 @@ impl ConsensusEngine {
                 if self.verify_tc(tc, vs) {
                     return true;
                 }
-                if let Some(ref prev) = self.previous_validator_set {
-                    if self.verify_tc(tc, prev) {
-                        return true;
-                    }
+                if let Some(ref prev) = self.previous_validator_set
+                    && self.verify_tc(tc, prev)
+                {
+                    return true;
                 }
                 warn!(view = %tc.view, "TC verification failed (tried current and previous validator sets)");
                 false
