@@ -1,6 +1,6 @@
 # Hotmint Security Audit & Evolution Roadmap
 
-> **Report Version:** Based on Hotmint v0.8 / CometBFT v0.38
+> **Report Version:** Based on Hotmint v0.8.3 / CometBFT v0.38
 > **Generated:** 2026-03-24 | **Last Audit:** 2026-03-25 | **Last Document Sync:** 2026-03-26
 > **Sources:** CometBFT feature gap analysis + two rounds of code security audit
 > **Purpose:** Serves as a reference baseline for the long-term evolution roadmap. Update completion status after each iteration (change `[ ]` to `[x]`, partially complete marked `[~]`).
@@ -106,7 +106,8 @@ Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential 
 | Re-validation | Re-runs `CheckTx` on pending txs after block production | `recheck()` async re-validation after each commit, evicts invalid txs ✅ |
 | Gas Awareness | Application returns `gas_wanted`, Mempool evicts accordingly | `gas_wanted` field + `max_gas_per_block` truncation ✅ |
 | API Rate Limiting | Supports rate limiting configuration | Token bucket rate limiting (TCP per-conn + HTTP global) ✅ |
-| P2P Broadcast | Flood Mempool, peer Gossip | `tx_gossip` channel broadcasts accepted txs to peers ✅ |
+| Pluggable Pool | Not pluggable (hardcoded CListMempool) | `MempoolAdapter` trait — chains supply their own pool impl (e.g. `EvmTxPool` with sender/nonce) ✅ |
+| P2P Broadcast | Flood Mempool, peer Gossip | `NetworkSink::broadcast_tx()` — decoupled from pool impl, any chain can gossip ✅ |
 
 ---
 
@@ -389,34 +390,33 @@ Parity's (Polkadot) **Substrate FRAME Pallets** represent the industry's most co
 
 #### 16.5.3 Hybrid Execution Roadmap (5 Phases)
 
-**Phase 1: Underlying Native Economic System (AI-Ported from Substrate)**
-- Use AI to port `pallet-balances` to vsdb: `transfer`, `withdraw` (Gas deduction), `deposit` (block rewards)
-- Introduce `U256` safe arithmetic to prevent overflow
-- Build EVM world state structure: `AccountStore: MapxOrd<H160, AccountInfo>`, `CodeStore: Mapx<H256, Vec<u8>>`, `StorageStore: Mapx<(H160, H256), H256>`
-- Implement `Timestamp` and `BlockContext` (inject height, Gas Limit, Coinbase, timestamp)
+**Phase 1: Underlying Native Economic System (AI-Ported from Substrate)** ✅
+- ~~Use AI to port `pallet-balances` to vsdb~~ → `hotmint-evm-state` (`EvmState`): vsdb-backed account balance, nonce, code, storage
+- ~~Introduce `U256` safe arithmetic~~ → via `alloy-primitives::U256`
+- ~~Build EVM world state structure~~ → `EvmState` with vsdb `CacheDB` adapter for revm
+- ~~Implement `Timestamp` and `BlockContext`~~ → `BlockContext` carries height, gas_limit, coinbase, timestamp
 
-**Phase 2: Introduce Reth Core Primitives (Alloy)**
-- Introduce `alloy-primitives` (replacing `sp-core`), `alloy-rlp` for Ethereum transaction decoding
-- In `Application::validate_tx`: RLP decode → `ecrecover` signature recovery → ChainID validation → Nonce increment check → Balance sufficiency check
-- Cryptography: use `libsecp256k1` or `k256` crate
+**Phase 2: Introduce Reth Core Primitives (Alloy)** ✅
+- ~~Introduce `alloy-primitives`, `alloy-rlp`~~ → `hotmint-evm-types` crate
+- ~~`validate_tx`: RLP decode → ecrecover → ChainID → Nonce → Balance~~ → `tx::decode_and_recover()` + `tx::validate_tx()`
+- ~~Cryptography~~ → `k256` crate for secp256k1 ECDSA recovery
 
-**Phase 3: Integrate the Leading Execution Engine (Revm)**
-- Implement `revm::Database` trait for vsdb (`basic`/`storage`/`code`/`block_hash`, ~4 methods)
-- In `Application::execute_block`: instantiate `revm::Evm` → execute transactions sequentially → batch-write state changes to vsdb
-- Gas settlement: deduct maximum Gas fee before execution, refund remainder after execution, reward consumed fees to Proposer
-- Events and logs: persist EVM Logs and Receipts to vsdb transaction receipt storage
-- **app_hash determinism:** Strictly use `BTreeMap` / `vsdb::MapxOrd` (internal B+ tree ordered traversal) for state root computation; prohibit `HashMap` from participating in hash calculation
+**Phase 3: Integrate the Leading Execution Engine (Revm)** ✅
+- ~~Implement `revm::Database` trait for vsdb~~ → `EvmState` provides `CacheDB` for revm
+- ~~`execute_block`: revm → batch-write~~ → `EvmExecutor::execute_block()` in `hotmint-evm-execution`
+- ~~Gas settlement~~ → max fee deducted pre-execution, refund after, proposer reward
+- ~~Events and logs~~ → `EvmReceipt` with logs persisted per block
+- ~~app_hash determinism~~ → `BTreeMap` + vsdb `MapxOrd` for state root
 
-**Phase 4: Cross-Layer Bridging (Precompile Interoperability)**
-- Implement `revm::Precompile` interface, exposing underlying native functions to EVM contracts
-- Example: address `0x0800` → underlying `Staking` module (stake/delegate/withdraw rewards)
-- Example: address `0x0801` → underlying `Balances` module (native cross-layer transfer)
-- AI task: write bridging code that traps Ethereum contract calls into the Rust native layer for high-speed execution
+**Phase 4: Cross-Layer Bridging (Precompile Interoperability)** ✅
+- ~~Implement `revm::Precompile` interface~~ → `hotmint-evm-precompile` crate
+- ~~Address `0x0800` → Staking module~~ → `SharedStakingState` bridging EVM to `hotmint-staking`
 
-**Phase 5: Expose Web3 API (Alloy/Reth RPC)**
-- Build HTTP/WS server using `jsonrpsee`
-- Implement standard Ethereum APIs: `eth_chainId`, `eth_blockNumber`, `eth_getBalance`, `eth_getTransactionCount`, `eth_call` (dry-run), `eth_estimateGas`, `eth_sendRawTransaction` (push into Hotmint Mempool), `eth_getLogs` (Bloom Filter / vsdb receipt query)
-- Compatible with MetaMask, Hardhat, Foundry, and other toolchains
+**Phase 5: Expose Web3 API (Alloy/Reth RPC)** ✅ (Basic)
+- ~~Build HTTP server~~ → `hotmint-evm-rpc` (axum-based)
+- ~~Standard Ethereum APIs~~ → `eth_chainId`, `eth_blockNumber`, `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode`, `eth_getStorageAt`, `eth_gasPrice`, `eth_estimateGas`, `eth_sendRawTransaction`, `eth_getBlockByNumber`, `eth_feeHistory`, `eth_syncing`, `net_version`, `web3_clientVersion`
+- ~~Compatible with MetaMask, Hardhat, Foundry~~ → basic compatibility achieved
+- **Remaining:** `eth_call` (dry-run), `eth_getLogs`, `eth_getTransactionReceipt` (full), `eth_getTransactionByHash` (full) — currently return stubs
 
 #### 16.5.4 Key Risks and Pitfalls
 
@@ -428,6 +428,8 @@ Parity's (Polkadot) **Substrate FRAME Pallets** represent the industry's most co
 #### 16.5.5 Acceptance Milestone
 
 MetaMask successfully connects to Hotmint-EVM and completes a transfer or contract deployment — this serves as the minimum validation that Phases 1–4 are functional end-to-end.
+
+> **Status:** E2E test (`crates/evm/node/tests/e2e_rpc.rs`) validates a 4-node cluster with EIP-1559 transfer submission via JSON-RPC. The benchmark (`bench-evm`) measures confirmed-on-chain TPS. MetaMask basic connectivity is possible but full wallet workflow (receipt tracking, block explorer) requires completing `eth_call`, `eth_getLogs`, and full receipt/tx-by-hash responses.
 
 ---
 
@@ -441,6 +443,52 @@ Post-completion Hotmint ecosystem position:
 | Business Logic | — | AI-ported Substrate Pallets: pure Rust, type-safe, no Keeper/Handler nesting |
 | Smart Contracts | — | Native EVM compatibility via revm (industry-leading EVM engine) + Substrate Pallets native economic model |
 | Positioning | High-performance AppChain consensus engine | Next-gen AppChain + Rollup Sequencer full-stack solution (best-in-class versatility) |
+
+---
+
+## 17. Hotmint-EVM Production Gap Analysis
+
+> **As of v0.8.3:** The EVM chain has a working validator node with revm execution, Ethereum JSON-RPC, P2P gossip, and trait-based pluggable mempool. The following gaps remain for production readiness.
+
+### 17.1 Completed (v0.8.3)
+
+| Feature | Implementation | Crate |
+|:--------|:--------------|:------|
+| EVM execution via revm | `EvmExecutor` implements `Application` trait | `hotmint-evm-execution` |
+| EIP-1559 transaction pool | `EvmTxPool` with sender/nonce ordering, RBF, tip priority | `hotmint-evm-txpool` |
+| Pluggable mempool | `MempoolAdapter` trait, `EvmMempoolAdapter` wraps `EvmTxPool` | `hotmint-mempool`, `hotmint-evm-execution` |
+| Transaction gossip | `NetworkSink::broadcast_tx()` on RPC submit + gossip receive loop | `hotmint-consensus`, `hotmint-evm-rpc`, `hotmint-evm-node` |
+| Nonce-fn wiring | `EvmExecutor::setup_nonce_fn()` connects txpool to committed state | `hotmint-evm-execution` |
+| Ethereum JSON-RPC | 16 methods (eth_*, net_*, web3_*) via axum | `hotmint-evm-rpc` |
+| Staking precompile | `0x0800` → `hotmint-staking` via `SharedStakingState` | `hotmint-evm-precompile` |
+| Cluster management | `init_evm_cluster()`, `start_evm_nodes()`, `kill_stale_nodes()` | `hotmint-evm-node`, `hotmint-mgmt` |
+| TPS benchmark | Nonce-confirmed on-chain throughput measurement | `hotmint-evm-node` (bench-evm) |
+| State persistence | vsdb-backed EVM state with MPT state root | `hotmint-evm-state` |
+
+### 17.2 Missing — EVM Node Infrastructure
+
+| # | Priority | Gap | Description | Standard Node Has It? |
+|---|:--------:|:----|:------------|:---------------------:|
+| E-1 | P0 | **Fullnode mode** | EVM node requires pubkey in genesis; cannot run non-validator RPC-only nodes | Yes (`mode = "fullnode"`) |
+| E-2 | P0 | **Block sync on startup** | EVM node does not call `sync_to_tip()` — restarted nodes cannot catch up | Yes |
+| E-3 | P0 | **Sync responder returns real status** | `GetStatus` hardcoded to height=0 — peers cannot sync from this node | Yes (via `sync_status_rx` watch) |
+| E-4 | P1 | **`init` subcommand** | No CLI for initializing node directory + evm-genesis.json | Yes (`hotmint-node init`) |
+| E-5 | P1 | **Graceful shutdown** | No `ctrl_c()` / `SIGTERM` handling — can only be force-killed | Yes (tokio::select! signal handler) |
+| E-6 | P1 | **WAL (Write-Ahead Log)** | `wal: None` — no crash-safe commit recovery | Yes (`ConsensusWal`) |
+| E-7 | P1 | **Evidence store** | `evidence_store: None` — equivocation proofs not persisted | Yes (`VsdbEvidenceStore`) |
+| E-8 | P2 | **CLI override options** | Only `--home` and `--rpc-addr`; cannot override P2P addr, mode, etc. | Yes (`--p2p-laddr`, `--rpc-laddr`, `--proxy-app`) |
+| E-9 | P2 | **Config respect** | `serve_rpc`, `serve_sync` flags in config.toml are ignored | Yes |
+
+### 17.3 Missing — Ethereum JSON-RPC Completeness
+
+| # | Priority | Method | Current | Needed |
+|---|:--------:|:-------|:--------|:-------|
+| R-1 | P0 | `eth_call` | Returns `"0x"` stub | Dry-run EVM execution (read-only `transact()`) |
+| R-2 | P0 | `eth_getTransactionReceipt` | Returns `null` | Return status, gasUsed, logs, blockHash, blockNumber |
+| R-3 | P1 | `eth_getTransactionByHash` | Returns `null` | Return full tx envelope from tx index |
+| R-4 | P1 | `eth_getLogs` | Returns `[]` | Filter logs by address, topics, block range |
+| R-5 | P2 | `eth_getBlockByNumber` | Returns stub block | Return real block with transaction list |
+| R-6 | P2 | `eth_estimateGas` | Returns hardcoded `21000` | Dry-run execution to estimate actual gas |
 
 ---
 
