@@ -17,6 +17,7 @@ path = "src/bench.rs"
 hotmint = { workspace = true }
 hotmint-types = { workspace = true }
 hotmint-consensus = { workspace = true }
+hotmint-mempool = { workspace = true }
 hotmint-crypto = { workspace = true }
 hotmint-evm-types = { workspace = true }
 hotmint-evm-state = { workspace = true }

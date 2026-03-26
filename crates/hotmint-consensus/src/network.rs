@@ -16,4 +16,8 @@ pub trait NetworkSink: Send + Sync {
     /// Broadcast equivocation evidence to all peers.
     /// Default is no-op for test stubs.
     fn broadcast_evidence(&self, _proof: &EquivocationProof) {}
+
+    /// Broadcast a raw transaction to all connected peers via the mempool gossip protocol.
+    /// Default is no-op for test stubs.
+    fn broadcast_tx(&self, _tx_bytes: Vec<u8>) {}
 }

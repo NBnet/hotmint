@@ -1182,4 +1182,10 @@ impl NetworkSink for Litep2pNetworkSink {
             Err(e) => warn!("broadcast_evidence encode failed: {e}"),
         }
     }
+
+    fn broadcast_tx(&self, tx_bytes: Vec<u8>) {
+        if let Err(e) = self.cmd_tx.try_send(NetCommand::BroadcastTx(tx_bytes)) {
+            warn!("broadcast_tx cmd dropped: {e}");
+        }
+    }
 }

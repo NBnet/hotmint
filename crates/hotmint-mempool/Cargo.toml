@@ -11,3 +11,4 @@ keywords.workspace = true
 tracing = { workspace = true }
 tokio = { workspace = true }
 blake3 = { workspace = true }
+async-trait = { workspace = true }

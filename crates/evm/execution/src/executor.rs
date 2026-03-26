@@ -89,6 +89,22 @@ impl EvmExecutor {
     pub fn submit_raw_tx(&self, raw: &[u8]) -> std::result::Result<B256, String> {
         self.txpool.submit_tx(raw)
     }
+
+    /// Wire the txpool's nonce lookup to read from the executor's committed state.
+    /// Must be called after the executor is placed in an `Arc`.
+    pub fn setup_nonce_fn(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        self.txpool.set_nonce_fn(Box::new(move |addr| {
+            weak.upgrade()
+                .map(|exec| {
+                    exec.state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .get_nonce(addr)
+                })
+                .unwrap_or(0)
+        }));
+    }
 }
 
 impl Application for EvmExecutor {
@@ -391,6 +407,33 @@ impl Application for SharedExecutor {
 
     fn query(&self, path: &str, data: &[u8]) -> Result<hotmint_types::QueryResponse> {
         Application::query(self.0.as_ref(), path, data)
+    }
+}
+
+/// Adapter making `EvmTxPool` usable as a framework `MempoolAdapter`.
+///
+/// The EVM pool has its own (sender, nonce)-based semantics, so:
+/// - `add_tx` calls `submit_tx` which does full decode + validate + insert
+/// - `recheck` is a no-op — EVM pool uses `on_commit` for nonce-based eviction
+pub struct EvmMempoolAdapter {
+    pub txpool: Arc<EvmTxPool>,
+}
+
+#[async_trait::async_trait]
+impl hotmint_mempool::MempoolAdapter for EvmMempoolAdapter {
+    async fn add_tx(&self, tx: Vec<u8>, _priority: u64, _gas_wanted: u64) -> bool {
+        self.txpool.submit_tx(&tx).is_ok()
+    }
+
+    async fn size(&self) -> usize {
+        self.txpool.pending_count() + self.txpool.queued_count()
+    }
+
+    async fn recheck(
+        &self,
+        _validator: Box<dyn for<'a> Fn(&'a [u8]) -> Option<(u64, u64)> + Send + Sync>,
+    ) {
+        // EVM pool handles post-commit cleanup via on_commit (nonce-based eviction).
     }
 }
 

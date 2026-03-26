@@ -23,7 +23,7 @@ async fn setup_server() -> (String, tokio::task::JoinHandle<()>) {
         peer_info_rx,
         validator_set_rx,
         app: None,
-        tx_gossip: None,
+        network_sink: None,
         chain_id_hash: [0u8; 32],
     };
 

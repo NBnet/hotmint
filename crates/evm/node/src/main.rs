@@ -158,7 +158,7 @@ async fn run(home: &std::path::Path, eth_rpc_addr: &str) -> Result<()> {
         peer_info_rx: _,
         connected_count_rx: _,
         notif_connected_count_rx: mut notif_count_rx,
-        mempool_tx_rx: _,
+        mut mempool_tx_rx,
     } = {
         let peer_book_path = home.join("data").join("peer_book.json");
         let peer_book = hotmint::network::peer::PeerBook::load(&peer_book_path)
@@ -187,6 +187,7 @@ async fn run(home: &std::path::Path, eth_rpc_addr: &str) -> Result<()> {
 
     // Application — EVM executor with shared reference for RPC.
     let shared_executor = Arc::new(EvmExecutor::from_genesis(&evm_genesis));
+    shared_executor.setup_nonce_fn();
     let app: Box<dyn hotmint::consensus::application::Application> =
         Box::new(SharedExecutor(Arc::clone(&shared_executor)));
 
@@ -195,9 +196,32 @@ async fn run(home: &std::path::Path, eth_rpc_addr: &str) -> Result<()> {
     let rpc_state = Arc::new(EvmRpcState {
         executor: Arc::clone(&shared_executor),
         chain_id: evm_genesis.chain_id,
+        network_sink: Some(Arc::new(network_sink.clone())),
     });
     tokio::spawn(start_rpc_server(rpc_addr, rpc_state));
     info!(rpc = %eth_rpc_addr, "Ethereum JSON-RPC server listening");
+
+    // Mempool gossip: receive txs from peers and add to local EVM txpool.
+    {
+        use hotmint_evm_execution::EvmMempoolAdapter;
+        use hotmint_mempool::MempoolAdapter;
+
+        let gossip_mempool = Arc::new(EvmMempoolAdapter {
+            txpool: Arc::clone(&shared_executor.txpool),
+        });
+        let gossip_app: Arc<dyn hotmint::consensus::application::Application> =
+            Arc::new(SharedExecutor(Arc::clone(&shared_executor)));
+        tokio::spawn(async move {
+            while let Some(tx_bytes) = mempool_tx_rx.recv().await {
+                let result = gossip_app.validate_tx(&tx_bytes, None);
+                if result.valid {
+                    let _ = gossip_mempool
+                        .add_tx(tx_bytes, result.priority, result.gas_wanted)
+                        .await;
+                }
+            }
+        });
+    }
 
     let sync_sink = network_sink.clone();
 

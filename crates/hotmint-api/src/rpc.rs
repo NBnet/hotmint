@@ -5,7 +5,7 @@ use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::Mutex;
 
 use crate::types::{
     BlockInfo, BlockResultsInfo, CommitQcInfo, EpochInfo, EventAttributeInfo, EventInfo,
@@ -15,7 +15,7 @@ use crate::types::{
 use hotmint_consensus::application::Application;
 use hotmint_consensus::commit::decode_payload;
 use hotmint_consensus::store::BlockStore;
-use hotmint_mempool::Mempool;
+use hotmint_mempool::MempoolAdapter;
 use hotmint_network::service::PeerStatus;
 use hotmint_types::{BlockHash, Height};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -64,7 +64,7 @@ impl ConsensusStatus {
 /// Shared state accessible by the RPC server
 pub struct RpcState {
     pub validator_id: u64,
-    pub mempool: Arc<Mempool>,
+    pub mempool: Arc<dyn MempoolAdapter>,
     pub status_rx: watch::Receiver<ConsensusStatus>,
     /// Shared block store for block queries
     pub store: Arc<parking_lot::RwLock<Box<dyn BlockStore>>>,
@@ -74,8 +74,8 @@ pub struct RpcState {
     pub validator_set_rx: watch::Receiver<Vec<ValidatorInfoResponse>>,
     /// Application reference for tx validation (optional for backward compatibility).
     pub app: Option<Arc<dyn Application>>,
-    /// Optional sender to gossip accepted transactions to peers.
-    pub tx_gossip: Option<mpsc::Sender<Vec<u8>>>,
+    /// Optional network sink for broadcasting transactions to peers.
+    pub network_sink: Option<Arc<dyn hotmint_consensus::network::NetworkSink>>,
     /// Chain ID hash for light client verification.
     pub chain_id_hash: [u8; 32],
 }
@@ -308,11 +308,13 @@ pub(crate) async fn handle_request(
             };
             let accepted = state
                 .mempool
-                .add_tx_with_gas(tx_bytes.clone(), priority, gas_wanted)
+                .add_tx(tx_bytes.clone(), priority, gas_wanted)
                 .await;
             // Gossip accepted transactions to peers.
-            if accepted && let Some(ref gossip) = state.tx_gossip {
-                let _ = gossip.try_send(tx_bytes);
+            if accepted {
+                if let Some(ref sink) = state.network_sink {
+                    sink.broadcast_tx(tx_bytes);
+                }
             }
             json_ok(req.id, &TxResult { accepted })
         }

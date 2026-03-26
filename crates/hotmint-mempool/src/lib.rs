@@ -7,6 +7,35 @@ use tracing::debug;
 /// Transaction hash for deduplication
 pub type TxHash = [u8; 32];
 
+/// Trait abstracting mempool operations for the framework.
+///
+/// The framework uses this trait for:
+/// - RPC `submit_tx`: validate + add to pool + gossip
+/// - Gossip receive: validate + add to pool
+/// - Post-commit recheck: evict stale txs
+/// - Status queries: pool size
+///
+/// `create_payload` / `collect_payload` is NOT on this trait —
+/// it stays on the `Application` trait where each chain controls
+/// its own payload assembly logic.
+#[async_trait::async_trait]
+pub trait MempoolAdapter: Send + Sync {
+    /// Add a validated transaction to the pool.
+    /// Returns true if accepted (not a duplicate, not full, etc.).
+    /// `priority` and `gas_wanted` come from `Application::validate_tx`.
+    async fn add_tx(&self, tx: Vec<u8>, priority: u64, gas_wanted: u64) -> bool;
+
+    /// Current number of pending transactions.
+    async fn size(&self) -> usize;
+
+    /// Re-validate all pending transactions after a block commit.
+    /// `validator` returns `Some((priority, gas_wanted))` for valid txs, `None` for invalid.
+    async fn recheck(
+        &self,
+        validator: Box<dyn for<'a> Fn(&'a [u8]) -> Option<(u64, u64)> + Send + Sync>,
+    );
+}
+
 /// A transaction entry in the priority mempool.
 #[derive(Clone)]
 struct TxEntry {
@@ -272,6 +301,24 @@ impl Mempool {
 
     fn hash_tx(tx: &[u8]) -> TxHash {
         *blake3::hash(tx).as_bytes()
+    }
+}
+
+#[async_trait::async_trait]
+impl MempoolAdapter for Mempool {
+    async fn add_tx(&self, tx: Vec<u8>, priority: u64, gas_wanted: u64) -> bool {
+        self.add_tx_with_gas(tx, priority, gas_wanted).await
+    }
+
+    async fn size(&self) -> usize {
+        Mempool::size(self).await
+    }
+
+    async fn recheck(
+        &self,
+        validator: Box<dyn for<'a> Fn(&'a [u8]) -> Option<(u64, u64)> + Send + Sync>,
+    ) {
+        Mempool::recheck(self, &*validator).await
     }
 }
 

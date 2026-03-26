@@ -14,12 +14,15 @@ use tracing::{info, warn};
 
 use alloy_primitives::{Address, B256, U256};
 use hotmint_consensus::application::Application;
+use hotmint_consensus::network::NetworkSink;
 use hotmint_evm_execution::EvmExecutor;
 
 /// Shared state for the EVM RPC server.
 pub struct EvmRpcState {
     pub executor: Arc<EvmExecutor>,
     pub chain_id: u64,
+    /// Optional network sink for broadcasting transactions to peers.
+    pub network_sink: Option<Arc<dyn NetworkSink>>,
 }
 
 /// JSON-RPC 2.0 request.
@@ -232,10 +235,16 @@ fn dispatch(state: &EvmRpcState, req: &JsonRpcRequest) -> JsonRpcResponse {
             };
 
             match state.executor.submit_raw_tx(&raw) {
-                Ok(hash) => JsonRpcResponse::ok(
-                    req.id.clone(),
-                    serde_json::Value::String(format!("0x{}", hex::encode(hash))),
-                ),
+                Ok(hash) => {
+                    // Gossip accepted transaction to peers.
+                    if let Some(ref sink) = state.network_sink {
+                        sink.broadcast_tx(raw);
+                    }
+                    JsonRpcResponse::ok(
+                        req.id.clone(),
+                        serde_json::Value::String(format!("0x{}", hex::encode(hash))),
+                    )
+                }
                 Err(e) => JsonRpcResponse::err(req.id.clone(), -32000, &e),
             }
         }

@@ -22,7 +22,7 @@ use hotmint::consensus::state::ConsensusState;
 use hotmint::consensus::store::{BlockStore, SharedStoreAdapter};
 use hotmint::consensus::sync::sync_to_tip;
 use hotmint::crypto::{Ed25519Signer, Ed25519Verifier};
-use hotmint::mempool::Mempool;
+use hotmint::mempool::{Mempool, MempoolAdapter};
 use hotmint::network::service::{NetworkService, PeerMap};
 use hotmint::prelude::*;
 use hotmint::storage::block_store::VsdbBlockStore;
@@ -429,9 +429,6 @@ async fn run_node(
         config.mempool.max_tx_bytes,
     ));
 
-    // Channel for tx gossip: RPC → network sink.
-    let (tx_gossip_tx, mut tx_gossip_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4096);
-
     // Channel for chain event broadcasting (WebSocket subscribers).
     let (event_tx, event_rx) = broadcast::channel::<ChainEvent>(256);
 
@@ -447,13 +444,13 @@ async fn run_node(
     // 11. Create RPC server
     let rpc_state = hotmint::api::rpc::RpcState {
         validator_id: our_vid.0,
-        mempool: mempool.clone(),
+        mempool: mempool.clone() as Arc<dyn MempoolAdapter>,
         status_rx,
         store: store.clone(),
         peer_info_rx,
         validator_set_rx: vs_rx,
         app: Some(app.clone()),
-        tx_gossip: Some(tx_gossip_tx),
+        network_sink: Some(Arc::new(network_sink.clone())),
         chain_id_hash: state.chain_id_hash,
     };
     // 12. Spawn network + RPC before sync (sync needs the network running).
@@ -498,29 +495,18 @@ async fn run_node(
 
     let sync_sink = network_sink.clone();
 
-    // Mempool gossip: forward locally accepted txs to peers via the network.
-    let gossip_sink = network_sink.clone();
-    tokio::spawn(async move {
-        while let Some(tx_bytes) = tx_gossip_rx.recv().await {
-            gossip_sink.broadcast_tx(tx_bytes);
-        }
-    });
-
     // Mempool gossip: receive txs from peers and add to local mempool.
-    let gossip_mempool = mempool.clone();
+    // (Outbound gossip is now handled directly via NetworkSink::broadcast_tx in RPC.)
+    let gossip_mempool = mempool.clone() as Arc<dyn MempoolAdapter>;
     let gossip_app = app.clone();
     tokio::spawn(async move {
         while let Some(tx_bytes) = mempool_tx_rx.recv().await {
-            // Validate the gossipped tx before adding.
-            let (priority, gas_wanted) = {
-                let result = gossip_app.validate_tx(&tx_bytes, None);
-                if !result.valid {
-                    continue;
-                }
-                (result.priority, result.gas_wanted)
-            };
+            let result = gossip_app.validate_tx(&tx_bytes, None);
+            if !result.valid {
+                continue;
+            }
             let _ = gossip_mempool
-                .add_tx_with_gas(tx_bytes, priority, gas_wanted)
+                .add_tx(tx_bytes, result.priority, result.gas_wanted)
                 .await;
         }
     });
