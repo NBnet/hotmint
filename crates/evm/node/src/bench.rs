@@ -3,8 +3,9 @@
 //! 1. Initializes a 4-node cluster via hotmint-mgmt
 //! 2. Builds and starts `hotmint-evm` node processes
 //! 3. Submits pre-signed EIP-1559 transactions via JSON-RPC
-//! 4. Measures observed block production and transaction throughput
-//! 5. Cleans up
+//! 4. Polls until all transactions are confirmed on-chain (nonce-based)
+//! 5. Reports true TPS (confirmed tx / wall-clock time)
+//! 6. Cleans up
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -20,8 +21,9 @@ use hotmint_evm_node::cluster::{init_evm_cluster, start_evm_nodes};
 use hotmint_evm_types::genesis::{EvmGenesis, GenesisAlloc};
 
 const NUM_VALIDATORS: u32 = 4;
-const DURATION_SECS: u64 = 10;
 const ETH: u128 = 1_000_000_000_000_000_000;
+/// Maximum time to wait for all txs to be confirmed.
+const CONFIRM_TIMEOUT_SECS: u64 = 120;
 
 fn bench_evm_genesis(sender: Address, recipient: Address) -> EvmGenesis {
     let mut alloc = BTreeMap::new();
@@ -83,36 +85,39 @@ fn presign_txs(
     raw_txs
 }
 
-/// Query eth_blockNumber via HTTP JSON-RPC.
-fn rpc_block_number(rpc_url: &str) -> Option<u64> {
+fn rpc_json(rpc_url: &str, method: &str, params: serde_json::Value) -> Option<serde_json::Value> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(5))
         .build()
         .ok()?;
-    let body = json!({
-        "jsonrpc": "2.0",
-        "method": "eth_blockNumber",
-        "params": [],
-        "id": 1
-    });
+    let body = json!({ "jsonrpc": "2.0", "method": method, "params": params, "id": 1 });
     let resp: serde_json::Value = client.post(rpc_url).json(&body).send().ok()?.json().ok()?;
+    Some(resp)
+}
+
+fn rpc_block_number(rpc_url: &str) -> Option<u64> {
+    let resp = rpc_json(rpc_url, "eth_blockNumber", json!([]))?;
     let hex = resp["result"].as_str()?;
     u64::from_str_radix(hex.strip_prefix("0x")?, 16).ok()
 }
 
-/// Submit a raw transaction via eth_sendRawTransaction.
+fn rpc_get_nonce(rpc_url: &str, addr: &Address) -> Option<u64> {
+    let resp = rpc_json(
+        rpc_url,
+        "eth_getTransactionCount",
+        json!([format!("0x{}", hex::encode(addr)), "latest"]),
+    )?;
+    let hex = resp["result"].as_str()?;
+    u64::from_str_radix(hex.strip_prefix("0x")?, 16).ok()
+}
+
 fn rpc_send_raw_tx(rpc_url: &str, raw_tx: &[u8]) -> bool {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .unwrap();
-    let body = json!({
-        "jsonrpc": "2.0",
-        "method": "eth_sendRawTransaction",
-        "params": [format!("0x{}", hex::encode(raw_tx))],
-        "id": 1
-    });
-    client.post(rpc_url).json(&body).send().is_ok()
+    rpc_json(
+        rpc_url,
+        "eth_sendRawTransaction",
+        json!([format!("0x{}", hex::encode(raw_tx))]),
+    )
+    .is_some()
 }
 
 fn wait_for_blocks(rpc_url: &str, min_blocks: u64, timeout_secs: u64) -> bool {
@@ -126,6 +131,29 @@ fn wait_for_blocks(rpc_url: &str, min_blocks: u64, timeout_secs: u64) -> bool {
         std::thread::sleep(Duration::from_millis(500));
     }
     false
+}
+
+/// Wait until the sender's on-chain nonce reaches `expected_nonce`.
+/// Returns actual confirmed nonce and elapsed time since `start`.
+fn wait_for_confirmations(
+    rpc_url: &str,
+    sender: &Address,
+    expected_nonce: u64,
+    start: Instant,
+    timeout_secs: u64,
+) -> (u64, Duration) {
+    let deadline = start + Duration::from_secs(timeout_secs);
+    let mut confirmed = 0u64;
+    while Instant::now() < deadline {
+        if let Some(nonce) = rpc_get_nonce(rpc_url, sender) {
+            confirmed = nonce;
+            if nonce >= expected_nonce {
+                return (confirmed, start.elapsed());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    (confirmed, start.elapsed())
 }
 
 fn run_bench(label: &str, txs_to_submit: usize) {
@@ -173,43 +201,56 @@ fn run_bench(label: &str, txs_to_submit: usize) {
     // Pre-sign transactions.
     let raw_txs = presign_txs(&eth_signer, recipient, 1337, txs_to_submit);
 
-    // Get starting block number.
+    // Record starting state.
     let start_block = rpc_block_number(&rpc_url).unwrap_or(0);
 
-    // Submit transactions as fast as possible.
-    let submit_start = Instant::now();
+    // Submit all transactions as fast as possible.
+    let bench_start = Instant::now();
     let mut submitted = 0u64;
     for raw_tx in &raw_txs {
         if rpc_send_raw_tx(&rpc_url, raw_tx) {
             submitted += 1;
         }
     }
-    let submit_elapsed = submit_start.elapsed();
+    let submit_elapsed = bench_start.elapsed();
 
-    // Wait for transactions to be included in blocks.
-    std::thread::sleep(Duration::from_secs(DURATION_SECS));
+    // Wait for all txs to be confirmed on-chain (nonce reaches submitted count).
+    let (confirmed, total_elapsed) = wait_for_confirmations(
+        &rpc_url,
+        &sender,
+        submitted,
+        bench_start,
+        CONFIRM_TIMEOUT_SECS,
+    );
+
     let end_block = rpc_block_number(&rpc_url).unwrap_or(start_block);
-
     let blocks_produced = end_block.saturating_sub(start_block);
-    let elapsed_total = submit_elapsed + Duration::from_secs(DURATION_SECS);
-    let blocks_per_sec = blocks_produced as f64 / elapsed_total.as_secs_f64();
-    let tx_per_sec = submitted as f64 / elapsed_total.as_secs_f64();
-    let ms_per_block = if blocks_produced > 0 {
-        elapsed_total.as_millis() as f64 / blocks_produced as f64
+
+    // TPS = confirmed tx / total wall-clock time (submit + confirmation).
+    let tps = if total_elapsed.as_secs_f64() > 0.0 {
+        confirmed as f64 / total_elapsed.as_secs_f64()
     } else {
-        f64::INFINITY
+        0.0
     };
 
     println!("  Config: {label}");
     println!("    {NUM_VALIDATORS} validators (separate processes), real litep2p networking");
     println!(
-        "    Submitted: {submitted} EIP-1559 transfers in {:.1}s",
-        submit_elapsed.as_secs_f64()
+        "    Submitted:  {submitted} txs in {:.2}s ({:.0} submit/s)",
+        submit_elapsed.as_secs_f64(),
+        submitted as f64 / submit_elapsed.as_secs_f64().max(0.001),
     );
     println!(
-        "    Result: {blocks_per_sec:.1} blocks/sec, {tx_per_sec:.0} tx/sec, {ms_per_block:.1} ms/block"
+        "    Confirmed:  {confirmed}/{submitted} txs in {:.2}s",
+        total_elapsed.as_secs_f64(),
     );
-    println!("    Total: {blocks_produced} blocks (height {start_block}→{end_block})");
+    println!("    Throughput: {tps:.1} tx/s (confirmed on-chain)");
+    println!(
+        "    Blocks:     {blocks_produced} (height {start_block}→{end_block})",
+    );
+    if confirmed < submitted {
+        println!("    WARNING: {}/{submitted} txs NOT confirmed within timeout", submitted - confirmed);
+    }
     println!();
 
     // Cleanup.
