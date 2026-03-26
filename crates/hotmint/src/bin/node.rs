@@ -301,6 +301,8 @@ async fn run_node(
     if let Some(hash) = pcs.load_last_app_hash() {
         state.last_app_hash = hash;
     }
+    // A-1: Restore pending epoch transition for crash-safety.
+    let restored_pending_epoch = pcs.load_pending_epoch();
 
     // Check WAL for incomplete commits (crash recovery).
     match hotmint_storage::wal::ConsensusWal::check_recovery(&data_dir) {
@@ -395,6 +397,8 @@ async fn run_node(
     let mut engine_state_epoch = state.current_epoch.clone();
     let mut engine_state_height = state.last_committed_height;
     let mut engine_state_app_hash = state.last_app_hash;
+    // A-1: Track pending epoch through sync for crash-safety.
+    let mut engine_state_pending_epoch = restored_pending_epoch;
     let (status_tx, status_rx) = watch::channel(ConsensusStatus::new(
         0,
         state.last_committed_height.as_u64(),
@@ -634,6 +638,7 @@ async fn run_node(
                     last_committed_height: &mut engine_state_height,
                     last_app_hash: &mut engine_state_app_hash,
                     chain_id_hash: &state.chain_id_hash,
+                    pending_epoch: &mut engine_state_pending_epoch,
                 };
                 match sync_to_tip(&mut sync_state, &sync_tx, &mut sync_resp_rx).await {
                     Ok(()) => {
@@ -689,6 +694,7 @@ async fn run_node(
                     let mut epoch = current_epoch;
                     // NoopApplication: app_hash is carried from blocks, initial value irrelevant
                     let mut app_hash = BlockHash::GENESIS;
+                    let mut watcher_pending_epoch: Option<Epoch> = None;
 
                     for (vid, peer_id) in &watcher_peers {
                         let pid = *peer_id;
@@ -711,6 +717,7 @@ async fn run_node(
                             last_committed_height: &mut h,
                             last_app_hash: &mut app_hash,
                             chain_id_hash: &watcher_chain_id_hash,
+                            pending_epoch: &mut watcher_pending_epoch,
                         };
                         match sync_to_tip(&mut sync_state, &sync_tx, &mut watcher_resp_rx).await {
                             Ok(()) => {
@@ -795,6 +802,7 @@ async fn run_node(
                 hotmint_storage::wal::ConsensusWal::open(&data_dir)
                     .expect("failed to open consensus WAL"),
             )),
+            pending_epoch: engine_state_pending_epoch,
         },
     );
 

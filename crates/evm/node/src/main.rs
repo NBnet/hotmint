@@ -292,6 +292,7 @@ async fn run(home: &std::path::Path, eth_rpc_addr: &str) -> Result<()> {
             persistence: Some(Box::new(pcs)),
             evidence_store: None,
             wal: None,
+            pending_epoch: None,
         },
     );
 

@@ -122,6 +122,7 @@ fn spawn_node_with_state(
             persistence: None,
             evidence_store: None,
             wal: None,
+            pending_epoch: None,
         },
     );
 
@@ -580,6 +581,7 @@ async fn test_equivocation_detected_via_injected_votes() {
                 persistence: None,
                 evidence_store: None,
                 wal: None,
+                pending_epoch: None,
             },
         );
         handles.push(tokio::spawn(async move { engine.run().await }));

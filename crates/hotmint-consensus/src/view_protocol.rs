@@ -159,11 +159,15 @@ pub fn propose(
         );
     }
 
-    // BFT Time: proposer sets current Unix timestamp in milliseconds.
-    let timestamp = std::time::SystemTime::now()
+    // BFT Time: proposer sets timestamp = max(now, parent.timestamp + 1).
+    // This ensures an honest proposer never produces a timestamp behind the
+    // chain tip, even if a previous Byzantine proposer inflated the timestamp
+    // up to the drift limit.
+    let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
+    let timestamp = std::cmp::max(now_ms, parent.timestamp.saturating_add(1));
 
     let mut block = Block {
         height,
@@ -471,6 +475,19 @@ pub fn on_prepare(
     signer: &dyn Signer,
     vote_extension: Option<Vec<u8>>,
 ) {
+    // C-1: Guard — only accept Prepare if we have already voted (sent Vote1).
+    // Without this check, a Byzantine leader could cause us to lock a QC and
+    // emit Vote2 for a block we never validated in the first phase.
+    if state.step != ViewStep::Voted {
+        debug!(
+            validator = %state.validator_id,
+            step = ?state.step,
+            view = %state.current_view,
+            "ignoring prepare: not in Voted step"
+        );
+        return;
+    }
+
     // Update lock to this QC
     state.update_locked_qc(&qc);
     state.update_highest_qc(&qc);

@@ -278,6 +278,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
     let mut engine_state_epoch = state.current_epoch.clone();
     let mut engine_state_height = state.last_committed_height;
     let mut engine_state_app_hash = state.last_app_hash;
+    let mut engine_state_pending_epoch: Option<Epoch> = pcs.load_pending_epoch();
 
     if !config.p2p.persistent_peers.is_empty() {
         info!("waiting for peer connection before sync...");
@@ -351,6 +352,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
                     last_committed_height: &mut engine_state_height,
                     last_app_hash: &mut engine_state_app_hash,
                     chain_id_hash: &state.chain_id_hash,
+                    pending_epoch: &mut engine_state_pending_epoch,
                 };
                 match hotmint::consensus::sync::sync_to_tip(
                     &mut sync_state,
@@ -418,6 +420,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
             persistence: Some(Box::new(pcs)),
             evidence_store: None,
             wal: None,
+            pending_epoch: engine_state_pending_epoch,
         },
     );
 

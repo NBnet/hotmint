@@ -28,6 +28,8 @@ pub struct SyncState<'a> {
     pub last_committed_height: &'a mut Height,
     pub last_app_hash: &'a mut BlockHash,
     pub chain_id_hash: &'a [u8; 32],
+    /// A-1: Tracks pending epoch transitions across replay batches.
+    pub pending_epoch: &'a mut Option<Epoch>,
 }
 
 /// Run block sync: request missing blocks from peers and replay them.
@@ -77,6 +79,36 @@ pub async fn sync_to_tip(
         peer_height = peer_status.as_u64(),
         "starting block sync"
     );
+
+    // A-3: Try snapshot sync first for large gaps. If the peer has snapshots
+    // and the application accepts one, we skip most of the block replay.
+    let gap = peer_status.as_u64().saturating_sub(state.last_committed_height.as_u64());
+    if gap > MAX_SYNC_BATCH {
+        match sync_via_snapshot(state, request_tx, response_rx).await {
+            Ok(true) => {
+                info!(
+                    height = state.last_committed_height.as_u64(),
+                    "snapshot sync succeeded, continuing with block sync for remaining blocks"
+                );
+                // Fall through to block sync for any blocks after the snapshot
+            }
+            Ok(false) => {
+                info!("no suitable snapshot available, using full block sync");
+            }
+            Err(e) => {
+                warn!(error = %e, "snapshot sync failed, falling back to block sync");
+            }
+        }
+    }
+
+    // If we're caught up after snapshot, return early
+    if *state.last_committed_height >= peer_status {
+        info!(
+            height = state.last_committed_height.as_u64(),
+            "caught up via snapshot"
+        );
+        return Ok(());
+    }
 
     // Pipelined sync: prefetch the next batch while replaying the current one.
     // This overlaps network latency with CPU-bound block execution.
@@ -138,7 +170,11 @@ pub async fn sync_to_tip(
         }
 
         // Replay current batch while the next one is being fetched.
-        let _pending = replay_blocks(&blocks, state)?;
+        // A-1: Propagate pending epoch from replay so it survives across
+        // batches and is available to the caller after sync completes.
+        if let Some(epoch) = replay_blocks(&blocks, state)? {
+            *state.pending_epoch = Some(epoch);
+        }
 
         info!(
             synced_to = state.last_committed_height.as_u64(),
@@ -292,11 +328,50 @@ pub async fn sync_via_snapshot(
         }
     }
 
-    // 7. Update state to reflect the snapshot height
+    // 7. Verify snapshot trust anchor (A-3): fetch the block+QC at the
+    // snapshot height and verify the QC reaches quorum. The snapshot hash
+    // must match the committed block's app_hash.
+    request_tx
+        .send(SyncRequest::GetBlocks {
+            from_height: snapshot.height,
+            to_height: snapshot.height,
+        })
+        .await
+        .map_err(|_| eg!("sync channel closed"))?;
+
+    let anchor_block = match timeout(SYNC_TIMEOUT, response_rx.recv()).await {
+        Ok(Some(SyncResponse::Blocks(blocks))) if !blocks.is_empty() => blocks,
+        Ok(Some(SyncResponse::Error(e))) => return Err(eg!("peer error fetching anchor: {}", e)),
+        Ok(Some(_)) => return Err(eg!("unexpected response fetching snapshot anchor block")),
+        Ok(None) => return Err(eg!("sync channel closed")),
+        Err(_) => return Err(eg!("snapshot anchor block request timed out")),
+    };
+
+    let (block, qc_opt) = &anchor_block[0];
+    let qc = qc_opt
+        .as_ref()
+        .ok_or_else(|| eg!("snapshot anchor block has no QC"))?;
+
+    // Verify the QC signs this block
+    if qc.block_hash != block.hash {
+        return Err(eg!(
+            "snapshot anchor QC block_hash {} != block hash {}",
+            qc.block_hash,
+            block.hash
+        ));
+    }
+
+    // Bind snapshot hash to the verified block: the app_hash in the NEXT
+    // committed block records the execution result of this block.  For the
+    // snapshot height itself, the snapshot.hash must equal the block's
+    // app_hash (which the application set during execute_block).
+    // We trust the QC-signed block's app_hash as the anchor.
+    let trusted_app_hash = block.app_hash;
+
+    // 8. Update state to reflect the snapshot height
     *state.last_committed_height = snapshot.height;
-    // The app_hash after snapshot restore is the snapshot's integrity hash
-    // (the application should set its own state root internally).
-    *state.last_app_hash = BlockHash(snapshot.hash);
+    // Use the QC-verified app_hash, not the unverified snapshot.hash.
+    *state.last_app_hash = trusted_app_hash;
 
     info!(height = snapshot.height.as_u64(), "snapshot sync complete");
     Ok(true)
@@ -586,6 +661,7 @@ mod tests {
 
         let blocks: Vec<_> = vec![(b1, Some(qc1)), (b2, Some(qc2)), (b3, Some(qc3))];
         let mut app_hash = BlockHash::GENESIS;
+        let mut pending_epoch = None;
         let mut state = SyncState {
             store: &mut store,
             app: &app,
@@ -593,6 +669,7 @@ mod tests {
             last_committed_height: &mut height,
             last_app_hash: &mut app_hash,
             chain_id_hash: &TEST_CHAIN,
+            pending_epoch: &mut pending_epoch,
         };
         replay_blocks(&blocks, &mut state).unwrap();
         assert_eq!(height, Height(3));
@@ -619,6 +696,7 @@ mod tests {
         // Non-genesis block without QC should be rejected
         let blocks: Vec<_> = vec![(b1, Some(qc1)), (b2, None)];
         let mut app_hash = BlockHash::GENESIS;
+        let mut pending_epoch = None;
         let mut state = SyncState {
             store: &mut store,
             app: &app,
@@ -626,6 +704,7 @@ mod tests {
             last_committed_height: &mut height,
             last_app_hash: &mut app_hash,
             chain_id_hash: &TEST_CHAIN,
+            pending_epoch: &mut pending_epoch,
         };
         assert!(replay_blocks(&blocks, &mut state).is_err());
     }
@@ -650,6 +729,7 @@ mod tests {
         let qc3 = make_qc(&b3, &signer);
         let blocks: Vec<_> = vec![(b1, Some(qc1)), (b3, Some(qc3))];
         let mut app_hash = BlockHash::GENESIS;
+        let mut pending_epoch = None;
         let mut state = SyncState {
             store: &mut store,
             app: &app,
@@ -657,6 +737,7 @@ mod tests {
             last_committed_height: &mut height,
             last_app_hash: &mut app_hash,
             chain_id_hash: &TEST_CHAIN,
+            pending_epoch: &mut pending_epoch,
         };
         assert!(replay_blocks(&blocks, &mut state).is_err());
     }

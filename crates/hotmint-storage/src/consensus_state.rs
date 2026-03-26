@@ -11,6 +11,7 @@ const KEY_HIGHEST_QC: u64 = 3;
 const KEY_LAST_COMMITTED_HEIGHT: u64 = 4;
 const KEY_CURRENT_EPOCH: u64 = 5;
 const KEY_LAST_APP_HASH: u64 = 6;
+const KEY_PENDING_EPOCH: u64 = 7;
 
 /// Persisted consensus state fields (serialized as a single blob per key)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +144,25 @@ impl PersistentConsensusState {
         })
     }
 
+    pub fn save_pending_epoch(&mut self, epoch: Option<&Epoch>) {
+        match epoch {
+            Some(e) => {
+                self.store
+                    .insert(&KEY_PENDING_EPOCH, &StateValue::Epoch(e.clone()));
+            }
+            None => {
+                self.store.remove(&KEY_PENDING_EPOCH);
+            }
+        }
+    }
+
+    pub fn load_pending_epoch(&self) -> Option<Epoch> {
+        self.store.get(&KEY_PENDING_EPOCH).and_then(|v| match v {
+            StateValue::Epoch(e) => Some(e),
+            _ => None,
+        })
+    }
+
     pub fn flush(&self) {
         vsdb::vsdb_flush();
     }
@@ -166,6 +186,9 @@ impl hotmint_consensus::engine::StatePersistence for PersistentConsensusState {
     }
     fn save_last_app_hash(&mut self, hash: BlockHash) {
         self.save_last_app_hash(hash);
+    }
+    fn save_pending_epoch(&mut self, epoch: Option<&Epoch>) {
+        self.save_pending_epoch(epoch);
     }
     fn flush(&self) {
         self.flush();

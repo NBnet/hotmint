@@ -19,7 +19,7 @@ use hotmint_types::epoch::Epoch;
 use hotmint_types::vote::VoteType;
 use hotmint_types::*;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Shared block store type used by the engine, RPC, and sync responder.
 pub type SharedBlockStore = Arc<parking_lot::RwLock<Box<dyn BlockStore>>>;
@@ -32,6 +32,7 @@ pub trait StatePersistence: Send {
     fn save_last_committed_height(&mut self, height: Height);
     fn save_current_epoch(&mut self, epoch: &Epoch);
     fn save_last_app_hash(&mut self, hash: BlockHash);
+    fn save_pending_epoch(&mut self, epoch: Option<&Epoch>);
     fn flush(&self);
 }
 
@@ -77,6 +78,8 @@ pub struct EngineConfig {
     pub persistence: Option<Box<dyn StatePersistence>>,
     pub evidence_store: Option<Box<dyn EvidenceStore>>,
     pub wal: Option<Box<dyn Wal>>,
+    /// Restored pending epoch transition (from crash recovery).
+    pub pending_epoch: Option<Epoch>,
 }
 
 impl EngineConfig {
@@ -89,6 +92,7 @@ impl EngineConfig {
             persistence: None,
             evidence_store: None,
             wal: None,
+            pending_epoch: None,
         }
     }
 
@@ -230,6 +234,7 @@ impl ConsensusEngineBuilder {
             persistence: self.persistence,
             evidence_store: self.evidence_store,
             wal: self.wal,
+            pending_epoch: None,
         };
 
         Ok(ConsensusEngine::new(
@@ -268,7 +273,7 @@ impl ConsensusEngine {
             msg_rx,
             status_senders: HashSet::new(),
             current_view_qc: None,
-            pending_epoch: None,
+            pending_epoch: config.pending_epoch,
             persistence: config.persistence,
             evidence_store: config.evidence_store,
             liveness_tracker: LivenessTracker::new(),
@@ -279,16 +284,27 @@ impl ConsensusEngine {
     /// Bootstrap and start the event loop.
     /// If persisted state was restored (current_view > 1), skip genesis bootstrap.
     pub async fn run(mut self) {
-        // Check application info against consensus state for divergence detection.
+        // A-2: Check application info against consensus state for divergence.
+        // On any mismatch (height or app_hash), halt — do not participate with
+        // diverged state.
         let app_info = self.app.info();
-        if app_info.last_block_height.as_u64() > 0
-            && app_info.last_block_height != self.state.last_committed_height
-        {
-            warn!(
-                app_height = app_info.last_block_height.as_u64(),
-                consensus_height = self.state.last_committed_height.as_u64(),
-                "application height differs from consensus state — possible state divergence"
-            );
+        if app_info.last_block_height.as_u64() > 0 {
+            if app_info.last_block_height != self.state.last_committed_height {
+                error!(
+                    app_height = app_info.last_block_height.as_u64(),
+                    consensus_height = self.state.last_committed_height.as_u64(),
+                    "FATAL: application height differs from consensus state — halting"
+                );
+                std::process::exit(1);
+            }
+            if app_info.last_block_app_hash != self.state.last_app_hash {
+                error!(
+                    app_hash = %app_info.last_block_app_hash,
+                    consensus_hash = %self.state.last_app_hash,
+                    "FATAL: application app_hash differs from consensus state — halting"
+                );
+                std::process::exit(1);
+            }
         }
 
         if self.state.current_view.as_u64() <= 1 {
@@ -1618,6 +1634,7 @@ impl ConsensusEngine {
             p.save_last_committed_height(self.state.last_committed_height);
             p.save_current_epoch(&self.state.current_epoch);
             p.save_last_app_hash(self.state.last_app_hash);
+            p.save_pending_epoch(self.pending_epoch.as_ref());
             p.flush();
         }
     }
@@ -1812,6 +1829,7 @@ mod tests {
                 persistence: None,
                 evidence_store: None,
                 wal: None,
+                pending_epoch: None,
             },
         );
         (engine, tx)
