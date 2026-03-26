@@ -200,6 +200,44 @@ impl Database for VsdbStateDb {
     }
 }
 
+impl revm::database_interface::DatabaseRef for VsdbStateDb {
+    type Error = VsdbError;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        Ok(self.accounts.get(address.as_slice()).map(|s: StoredAccount| {
+            let mut info = s.to_info();
+            if info.code_hash != revm::primitives::KECCAK_EMPTY {
+                if let Some(bytes) = self.contracts.get(info.code_hash.as_slice()) {
+                    info.code = Some(Bytecode::new_raw(Bytes::from(bytes)));
+                }
+            }
+            info
+        }))
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        match self.contracts.get(code_hash.as_slice()) {
+            Some(bytes) => Ok(Bytecode::new_raw(Bytes::from(bytes))),
+            None => Ok(Bytecode::default()),
+        }
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        let key = storage_key(&address, &index);
+        match self.storage.get(key.as_slice()) {
+            Some(be_bytes) => Ok(U256::from_be_bytes(be_bytes)),
+            None => Ok(U256::ZERO),
+        }
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        match self.block_hashes.get(&number.to_be_bytes()) {
+            Some(h) => Ok(B256::from(h)),
+            None => Ok(B256::ZERO),
+        }
+    }
+}
+
 /// Build composite storage key: address(20) || slot(32) = 52 bytes.
 fn storage_key(addr: &Address, slot: &U256) -> [u8; 52] {
     let mut key = [0u8; 52];
