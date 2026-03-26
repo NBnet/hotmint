@@ -19,7 +19,7 @@ use hotmint_types::validator_update::EndBlockResponse;
 use alloy_consensus::Transaction;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use revm::context::TxEnv;
-use revm::handler::ExecuteCommitEvm;
+use revm::handler::{ExecuteCommitEvm, ExecuteEvm};
 use revm::primitives::{TxKind, hardfork::SpecId};
 use revm::{Context, MainBuilder, MainContext};
 
@@ -88,6 +88,81 @@ impl EvmExecutor {
     /// Submit a raw signed Ethereum transaction to the pool.
     pub fn submit_raw_tx(&self, raw: &[u8]) -> std::result::Result<B256, String> {
         self.txpool.submit_tx(raw)
+    }
+
+    /// Find a receipt by transaction hash (linear scan over all blocks).
+    pub fn get_receipt_by_tx_hash(&self, tx_hash: &B256) -> Option<EvmReceipt> {
+        let receipts = self.receipts.lock().unwrap_or_else(|e| e.into_inner());
+        for block_receipts in receipts.iter().rev() {
+            for r in block_receipts {
+                if &r.tx_hash == tx_hash {
+                    return Some(r.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Dry-run EVM execution (eth_call) without modifying state.
+    pub fn eth_call(
+        &self,
+        from: Address,
+        to: Option<Address>,
+        data: Bytes,
+        value: U256,
+        gas: Option<u64>,
+    ) -> std::result::Result<Bytes, String> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let config = state.config.clone();
+        let gas_limit = gas.unwrap_or(config.block_gas_limit);
+
+        let tx_env = TxEnv {
+            caller: from,
+            gas_limit,
+            gas_price: config.base_fee_per_gas as u128,
+            kind: match to {
+                Some(addr) => TxKind::Call(addr),
+                None => TxKind::Create,
+            },
+            value,
+            data,
+            ..Default::default()
+        };
+
+        // Use the live db directly — transact() does NOT commit changes.
+        let evm_ctx = Context::mainnet()
+            .with_db(&mut state.db)
+            .modify_cfg_chained(|cfg| {
+                cfg.chain_id = config.chain_id;
+                cfg.set_spec_and_mainnet_gas_params(SpecId::CANCUN);
+            })
+            .modify_block_chained(|block| {
+                block.number = U256::from(self.block_height());
+                block.gas_limit = config.block_gas_limit;
+                block.basefee = config.base_fee_per_gas;
+            });
+
+        let precompiles = HotmintPrecompiles::new(SpecId::CANCUN, Arc::clone(&self.staking));
+        let mut evm = evm_ctx.build_mainnet().with_precompiles(precompiles);
+
+        match evm.transact_one(tx_env) {
+            Ok(result) => match result {
+                revm::context_interface::result::ExecutionResult::Success { output, .. } => {
+                    use revm::context_interface::result::Output;
+                    match output {
+                        Output::Call(data) => Ok(data),
+                        Output::Create(data, _) => Ok(data),
+                    }
+                }
+                revm::context_interface::result::ExecutionResult::Revert { output, .. } => {
+                    Err(format!("execution reverted: 0x{}", hex::encode(&output)))
+                }
+                revm::context_interface::result::ExecutionResult::Halt { reason, .. } => {
+                    Err(format!("execution halted: {reason:?}"))
+                }
+            },
+            Err(e) => Err(format!("EVM error: {e:?}")),
+        }
     }
 
     /// Wire the txpool's nonce lookup to read from the executor's committed state.
