@@ -29,7 +29,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.8.2"
+version = "0.8.3"
 edition = "2024"
 license = "GPL-3.0-only"
 repository = "https://github.com/rust-util-collections/hotmint"
@@ -72,18 +72,18 @@ axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors"] }
 parking_lot = "0.12"
 
-hotmint = { version = "0.8.2", path = "crates/hotmint" }
-hotmint-types = { version = "0.8.2", path = "crates/hotmint-types" }
-hotmint-crypto = { version = "0.8.2", path = "crates/hotmint-crypto" }
-hotmint-consensus = { version = "0.8.2", path = "crates/hotmint-consensus" }
-hotmint-storage = { version = "0.8.2", path = "crates/hotmint-storage" }
-hotmint-network = { version = "0.8.2", path = "crates/hotmint-network" }
-hotmint-mempool = { version = "0.8.2", path = "crates/hotmint-mempool" }
-hotmint-api = { version = "0.8.2", path = "crates/hotmint-api" }
-hotmint-abci = { version = "0.8.2", path = "crates/hotmint-abci" }
-hotmint-abci-proto = { version = "0.8.2", path = "crates/hotmint-abci-proto" }
-hotmint-staking = { version = "0.8.2", path = "crates/hotmint-staking" }
-hotmint-light = { version = "0.8.2", path = "crates/hotmint-light" }
+hotmint = { version = "0.8.3", path = "crates/hotmint" }
+hotmint-types = { version = "0.8.3", path = "crates/hotmint-types" }
+hotmint-crypto = { version = "0.8.3", path = "crates/hotmint-crypto" }
+hotmint-consensus = { version = "0.8.3", path = "crates/hotmint-consensus" }
+hotmint-storage = { version = "0.8.3", path = "crates/hotmint-storage" }
+hotmint-network = { version = "0.8.3", path = "crates/hotmint-network" }
+hotmint-mempool = { version = "0.8.3", path = "crates/hotmint-mempool" }
+hotmint-api = { version = "0.8.3", path = "crates/hotmint-api" }
+hotmint-abci = { version = "0.8.3", path = "crates/hotmint-abci" }
+hotmint-abci-proto = { version = "0.8.3", path = "crates/hotmint-abci-proto" }
+hotmint-staking = { version = "0.8.3", path = "crates/hotmint-staking" }
+hotmint-light = { version = "0.8.3", path = "crates/hotmint-light" }
 hotmint-evm-types = { path = "crates/evm/types" }
 hotmint-evm-state = { path = "crates/evm/state" }
 hotmint-evm-execution = { path = "crates/evm/execution" }

@@ -43,11 +43,11 @@ The result: a consensus framework where **every performance-critical path is wri
 
 Hotmint is not just a consensus engine. It is the foundation for a **next-generation full-stack blockchain framework**.
 
-### Phase 1 — Production-Ready AppChain Engine *(current)*
+### Phase 1 — Production-Ready AppChain Engine *(complete)*
 
 A battle-hardened BFT consensus engine that any Rust developer can embed to build application-specific blockchains, with the same ABCI-style ergonomics that made Tendermint successful — but with lower latency, stronger type safety, and zero C/C++ dependencies in the critical path.
 
-### Phase 2 — EVM-Compatible Chain (Hotmint-EVM)
+### Phase 2 — EVM-Compatible Chain (Hotmint-EVM) *(current)*
 
 Build a production-grade EVM-compatible chain by combining the best-in-class component for each layer:
 
@@ -145,16 +145,24 @@ Enter  →  Propose  →  Vote  →  Prepare (QC)  →  Vote2  →  [DC triggers
 | [hotmint-abci](https://crates.io/crates/hotmint-abci) | IPC proxy for out-of-process apps (Unix socket + protobuf) |
 | [hotmint-staking](https://crates.io/crates/hotmint-staking) | Staking toolkit: validator registration, delegation, slashing, rewards |
 | [hotmint-light](https://crates.io/crates/hotmint-light) | Light client: header verification and validator set tracking |
+| **Hotmint-EVM** | |
+| hotmint-evm-types | Ethereum transaction types, EVM genesis, chain config |
+| hotmint-evm-state | EVM world state (vsdb-backed account/storage database) |
+| hotmint-evm-txpool | Ethereum-compatible tx pool: (sender, nonce) ordering, EIP-1559 fees |
+| hotmint-evm-execution | EVM block executor (revm) + `Application` trait impl |
+| hotmint-evm-rpc | Ethereum JSON-RPC server (eth_*, net_*, web3_*) |
+| hotmint-evm-node | Production EVM node binary + cluster management |
 
 ### Pluggable Traits
 
-The consensus engine is fully decoupled from all I/O through four pluggable traits:
+The consensus engine is fully decoupled from all I/O through pluggable traits:
 
 | Trait | Purpose | Built-in Implementations |
 |:------|:--------|:-------------------------|
-| `Application` | ABCI-like app lifecycle | `NoopApplication`, `IpcApplicationClient` |
+| `Application` | ABCI-like app lifecycle | `NoopApplication`, `IpcApplicationClient`, `EvmExecutor` |
 | `BlockStore` | Block persistence | `MemoryBlockStore`, `VsdbBlockStore` |
 | `NetworkSink` | Message transport | `Litep2pNetworkSink` |
+| `MempoolAdapter` | Pluggable transaction pool | `Mempool` (priority-based), `EvmMempoolAdapter` (sender/nonce) |
 | `Signer` | Cryptographic signing | `Ed25519Signer` |
 
 📖 **[Architecture →](docs/architecture.md)** · **[Core types →](docs/types.md)** · **[Wire protocol →](docs/wire-protocol.md)**
