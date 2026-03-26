@@ -1006,10 +1006,7 @@ impl NetworkService {
                 self.mempool_notif_connected_peers.remove(&peer);
                 self.mempool_peer_rate.remove(&peer);
             }
-            NotificationEvent::NotificationReceived {
-                peer,
-                notification,
-            } => {
+            NotificationEvent::NotificationReceived { peer, notification } => {
                 // C-2: Per-peer tx gossip rate limit — max 500 tx/sec per peer.
                 const MAX_TX_PER_SEC: u32 = 500;
                 let now = Instant::now();

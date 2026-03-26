@@ -463,9 +463,10 @@ async fn run_node(
     let network_handle = tokio::spawn(async move { network_service.run().await });
     let rpc_state = Arc::new(rpc_state);
     let rpc_handle: tokio::task::JoinHandle<()> = if config.node.serve_rpc {
-        let rpc_server = hotmint::api::rpc::RpcServer::bind_arc(&config.rpc.laddr, rpc_state.clone())
-            .await
-            .c(d!("failed to bind RPC server"))?;
+        let rpc_server =
+            hotmint::api::rpc::RpcServer::bind_arc(&config.rpc.laddr, rpc_state.clone())
+                .await
+                .c(d!("failed to bind RPC server"))?;
         info!(rpc_addr = %config.rpc.laddr, "RPC server listening");
         tokio::spawn(async move { rpc_server.run().await })
     } else {
@@ -474,7 +475,7 @@ async fn run_node(
     };
 
     // P0-1: Spawn HTTP/WebSocket RPC server if configured.
-    if !config.rpc.http_laddr.is_empty() {
+    let http_rpc_handle: tokio::task::JoinHandle<()> = if !config.rpc.http_laddr.is_empty() {
         let http_addr: std::net::SocketAddr = config
             .rpc
             .http_laddr
@@ -490,8 +491,10 @@ async fn run_node(
             }
         });
         info!(http_addr = %config.rpc.http_laddr, "HTTP RPC server listening");
-        tokio::spawn(async move { http_rpc.run().await });
-    }
+        tokio::spawn(async move { http_rpc.run().await })
+    } else {
+        tokio::spawn(future::pending())
+    };
 
     let sync_sink = network_sink.clone();
 
@@ -846,6 +849,13 @@ async fn run_node(
             match res {
                 Ok(()) => error!("RPC server exited unexpectedly"),
                 Err(e) => error!("RPC server panicked: {e}"),
+            }
+            process::exit(1);
+        }
+        res = http_rpc_handle => {
+            match res {
+                Ok(()) => error!("HTTP RPC server exited unexpectedly"),
+                Err(e) => error!("HTTP RPC server panicked: {e}"),
             }
             process::exit(1);
         }

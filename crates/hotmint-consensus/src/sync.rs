@@ -82,7 +82,9 @@ pub async fn sync_to_tip(
 
     // A-3: Try snapshot sync first for large gaps. If the peer has snapshots
     // and the application accepts one, we skip most of the block replay.
-    let gap = peer_status.as_u64().saturating_sub(state.last_committed_height.as_u64());
+    let gap = peer_status
+        .as_u64()
+        .saturating_sub(state.last_committed_height.as_u64());
     if gap > MAX_SYNC_BATCH {
         match sync_via_snapshot(state, request_tx, response_rx).await {
             Ok(true) => {
@@ -329,8 +331,8 @@ pub async fn sync_via_snapshot(
     }
 
     // 7. Verify snapshot trust anchor (A-3): fetch the block+QC at the
-    // snapshot height and verify the QC reaches quorum. The snapshot hash
-    // must match the committed block's app_hash.
+    // snapshot height and verify the QC with full aggregate-signature and
+    // quorum checks — identical to the replay path.
     request_tx
         .send(SyncRequest::GetBlocks {
             from_height: snapshot.height,
@@ -352,7 +354,7 @@ pub async fn sync_via_snapshot(
         .as_ref()
         .ok_or_else(|| eg!("snapshot anchor block has no QC"))?;
 
-    // Verify the QC signs this block
+    // Verify QC signs this block
     if qc.block_hash != block.hash {
         return Err(eg!(
             "snapshot anchor QC block_hash {} != block hash {}",
@@ -361,17 +363,54 @@ pub async fn sync_via_snapshot(
         ));
     }
 
-    // Bind snapshot hash to the verified block: the app_hash in the NEXT
-    // committed block records the execution result of this block.  For the
-    // snapshot height itself, the snapshot.hash must equal the block's
-    // app_hash (which the application set during execute_block).
-    // We trust the QC-signed block's app_hash as the anchor.
-    let trusted_app_hash = block.app_hash;
+    // Full QC aggregate-signature verification (same as replay_blocks)
+    let verifier = hotmint_crypto::Ed25519Verifier;
+    let qc_bytes = hotmint_types::vote::Vote::signing_bytes(
+        state.chain_id_hash,
+        qc.epoch,
+        qc.view,
+        &qc.block_hash,
+        hotmint_types::vote::VoteType::Vote,
+    );
+    if !hotmint_types::Verifier::verify_aggregate(
+        &verifier,
+        &state.current_epoch.validator_set,
+        &qc_bytes,
+        &qc.aggregate_signature,
+    ) {
+        return Err(eg!(
+            "snapshot anchor QC signature verification failed at height {}",
+            snapshot.height.as_u64()
+        ));
+    }
+    if !hotmint_crypto::has_quorum(
+        &state.current_epoch.validator_set,
+        &qc.aggregate_signature,
+    ) {
+        return Err(eg!(
+            "snapshot anchor QC below quorum threshold at height {}",
+            snapshot.height.as_u64()
+        ));
+    }
 
-    // 8. Update state to reflect the snapshot height
+    // 8. Update state to reflect the snapshot height.
+    //
+    // Semantics: block.app_hash records the state BEFORE executing this
+    // block (set during propose as state.last_app_hash).  After snapshot
+    // restore the application holds the state AFTER executing block H.
+    // Query the application for the authoritative post-restore app_hash.
     *state.last_committed_height = snapshot.height;
-    // Use the QC-verified app_hash, not the unverified snapshot.hash.
-    *state.last_app_hash = trusted_app_hash;
+    let app_info = state.app.info();
+    if app_info.last_block_height == snapshot.height
+        && app_info.last_block_app_hash != BlockHash::GENESIS
+    {
+        *state.last_app_hash = app_info.last_block_app_hash;
+    } else {
+        // Fallback: the app doesn't track app_hash or didn't update yet.
+        // Use GENESIS so that the next replayed block's app_hash check is
+        // skipped for non-tracking apps (tracks_app_hash() == false).
+        *state.last_app_hash = BlockHash::GENESIS;
+    }
 
     info!(height = snapshot.height.as_u64(), "snapshot sync complete");
     Ok(true)

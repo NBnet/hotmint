@@ -96,10 +96,7 @@ impl RpcServer {
             .await
             .c(d!("failed to bind RPC server"))?;
         info!(addr = addr, "RPC server listening");
-        Ok(Self {
-            state,
-            listener,
-        })
+        Ok(Self { state, listener })
     }
 
     pub fn local_addr(&self) -> SocketAddr {
