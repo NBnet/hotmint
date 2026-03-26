@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 hotmint-evm-types = { workspace = true }
 hotmint-evm-state = { workspace = true }
+hotmint-evm-txpool = { workspace = true }
 hotmint-consensus = { workspace = true }
 hotmint-types = { workspace = true }
 serde = { workspace = true }

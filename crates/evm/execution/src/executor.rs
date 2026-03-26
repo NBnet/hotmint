@@ -1,10 +1,11 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use ruc::*;
 use tracing::{info, warn};
 
 use hotmint_consensus::application::{Application, TxValidationResult};
 use hotmint_evm_state::EvmState;
+use hotmint_evm_txpool::{EvmTxPool, EvmTxPoolConfig};
 use hotmint_evm_types::EvmChainConfig;
 use hotmint_evm_types::genesis::EvmGenesis;
 use hotmint_evm_types::receipt::{EvmLog, EvmReceipt};
@@ -24,6 +25,8 @@ use revm::{Context, MainBuilder, MainContext};
 /// EVM block executor implementing the Hotmint `Application` trait.
 pub struct EvmExecutor {
     state: Mutex<EvmState>,
+    /// EVM transaction pool with (sender, nonce) semantics.
+    pub txpool: Arc<EvmTxPool>,
     /// Accumulated receipts per block (for RPC queries).
     receipts: Mutex<Vec<Vec<EvmReceipt>>>,
 }
@@ -32,14 +35,22 @@ impl EvmExecutor {
     /// Create a new executor from genesis configuration.
     pub fn from_genesis(genesis: &EvmGenesis) -> Self {
         let state = EvmState::from_genesis(genesis);
+        let config = state.config.clone();
         info!(
-            chain_id = state.config.chain_id,
+            chain_id = config.chain_id,
             accounts = genesis.alloc.len(),
-            gas_limit = state.config.block_gas_limit,
+            gas_limit = config.block_gas_limit,
             "EVM executor initialized from genesis"
         );
+
+        let txpool = Arc::new(EvmTxPool::new(EvmTxPoolConfig {
+            base_fee: config.base_fee_per_gas,
+            ..Default::default()
+        }));
+
         Self {
             state: Mutex::new(state),
+            txpool,
             receipts: Mutex::new(Vec::new()),
         }
     }
@@ -60,6 +71,11 @@ impl EvmExecutor {
             .unwrap_or_else(|e| e.into_inner())
             .get(block_index)
             .cloned()
+    }
+
+    /// Submit a raw signed Ethereum transaction to the pool.
+    pub fn submit_raw_tx(&self, raw: &[u8]) -> std::result::Result<B256, String> {
+        self.txpool.submit_tx(raw)
     }
 }
 
@@ -279,8 +295,23 @@ impl Application for EvmExecutor {
         })
     }
 
+    fn create_payload(&self, _ctx: &BlockContext) -> Vec<u8> {
+        let config = self.config();
+        self.txpool.collect_payload(
+            4 * 1024 * 1024, // 4 MB max payload
+            config.block_gas_limit,
+        )
+    }
+
     fn on_commit(&self, _block: &Block, ctx: &BlockContext) -> Result<()> {
-        info!(height = ctx.height.as_u64(), "EVM block committed");
+        // Remove committed transactions from pool and promote queued ones.
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        self.txpool.on_commit(&|addr| state.get_nonce(addr));
+        info!(
+            height = ctx.height.as_u64(),
+            pending = self.txpool.pending_count(),
+            "EVM block committed"
+        );
         Ok(())
     }
 
