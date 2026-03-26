@@ -1,0 +1,13 @@
+[package]
+name = "hotmint-evm-txpool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hotmint-evm-types = { workspace = true }
+alloy-primitives = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+ruc = { workspace = true }

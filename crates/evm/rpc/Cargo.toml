@@ -1,0 +1,16 @@
+[package]
+name = "hotmint-evm-rpc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hotmint-evm-types = { workspace = true }
+hotmint-evm-state = { workspace = true }
+hotmint-evm-execution = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+alloy-primitives = { workspace = true }
+ruc = { workspace = true }
+tracing = { workspace = true }

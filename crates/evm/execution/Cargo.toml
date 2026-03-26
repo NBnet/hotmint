@@ -1,0 +1,18 @@
+[package]
+name = "hotmint-evm-execution"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hotmint-evm-types = { workspace = true }
+hotmint-evm-state = { workspace = true }
+hotmint-consensus = { workspace = true }
+hotmint-types = { workspace = true }
+serde = { workspace = true }
+revm = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-consensus = { workspace = true }
+ruc = { workspace = true }
+tracing = { workspace = true }

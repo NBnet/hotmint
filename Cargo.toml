@@ -20,6 +20,13 @@ members = [
     "examples/utxo-chain",
     "examples/cluster-node",
     "tools/hotmint-mgmt",
+    "crates/evm/types",
+    "crates/evm/state",
+    "crates/evm/execution",
+    "crates/evm/rpc",
+    "crates/evm/txpool",
+    "crates/evm/precompile",
+    "crates/evm/node",
 ]
 
 [workspace.package]
@@ -42,6 +49,9 @@ ed25519-dalek = { version = "2.2", features = ["serde", "rand_core", "batch"] }
 rand = "0.8"
 vsdb = "12.1.1"
 revm = { version = "36", default-features = false, features = ["std"] }
+alloy-primitives = { version = "1.5", features = ["serde"] }
+alloy-rlp = "0.3"
+alloy-consensus = { version = "1.7", default-features = false }
 litep2p = "0.13"
 futures = "0.3"
 prometheus-client = "0.23"
@@ -69,3 +79,10 @@ hotmint-abci = { version = "0.8.1", path = "crates/hotmint-abci" }
 hotmint-abci-proto = { version = "0.8.1", path = "crates/hotmint-abci-proto" }
 hotmint-staking = { version = "0.8.1", path = "crates/hotmint-staking" }
 hotmint-light = { version = "0.8.1", path = "crates/hotmint-light" }
+hotmint-evm-types = { path = "crates/evm/types" }
+hotmint-evm-state = { path = "crates/evm/state" }
+hotmint-evm-execution = { path = "crates/evm/execution" }
+hotmint-evm-rpc = { path = "crates/evm/rpc" }
+hotmint-evm-txpool = { path = "crates/evm/txpool" }
+hotmint-evm-precompile = { path = "crates/evm/precompile" }
+hotmint-evm-node = { path = "crates/evm/node" }
