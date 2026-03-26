@@ -4,6 +4,7 @@ use ruc::*;
 use tracing::{info, warn};
 
 use hotmint_consensus::application::{Application, TxValidationResult};
+use hotmint_evm_precompile::{HotmintPrecompiles, SharedStakingState, StakingState};
 use hotmint_evm_state::EvmState;
 use hotmint_evm_txpool::{EvmTxPool, EvmTxPoolConfig};
 use hotmint_evm_types::EvmChainConfig;
@@ -31,6 +32,8 @@ pub struct EvmExecutor {
     receipts: Mutex<Vec<Vec<EvmReceipt>>>,
     /// Current committed block height.
     block_height: std::sync::atomic::AtomicU64,
+    /// Shared staking state for the Staking precompile.
+    staking: SharedStakingState,
 }
 
 impl EvmExecutor {
@@ -55,6 +58,7 @@ impl EvmExecutor {
             txpool,
             receipts: Mutex::new(Vec::new()),
             block_height: std::sync::atomic::AtomicU64::new(0),
+            staking: Arc::new(Mutex::new(StakingState::new())),
         }
     }
 
@@ -195,7 +199,7 @@ impl Application for EvmExecutor {
                 ..Default::default()
             };
 
-            // Build revm context and execute.
+            // Build revm context and execute with custom precompiles.
             let evm_ctx = Context::mainnet()
                 .with_db(&mut state.db)
                 .modify_cfg_chained(|cfg| {
@@ -210,7 +214,8 @@ impl Application for EvmExecutor {
                     block.basefee = config.base_fee_per_gas;
                 });
 
-            let mut evm = evm_ctx.build_mainnet();
+            let precompiles = HotmintPrecompiles::new(SpecId::CANCUN, Arc::clone(&self.staking));
+            let mut evm = evm_ctx.build_mainnet().with_precompiles(precompiles);
 
             match evm.transact_commit(tx_env) {
                 Ok(result) => {

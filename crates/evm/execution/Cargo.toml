@@ -9,6 +9,7 @@ repository.workspace = true
 hotmint-evm-types = { workspace = true }
 hotmint-evm-state = { workspace = true }
 hotmint-evm-txpool = { workspace = true }
+hotmint-evm-precompile = { workspace = true }
 hotmint-consensus = { workspace = true }
 hotmint-types = { workspace = true }
 serde = { workspace = true }
