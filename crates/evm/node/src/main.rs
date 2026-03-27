@@ -283,8 +283,7 @@ async fn run_node(
 
     // Ethereum JSON-RPC server (conditional on serve_rpc).
     let rpc_handle: tokio::task::JoinHandle<()> = if node_config.node.serve_rpc {
-        let rpc_addr: std::net::SocketAddr =
-            eth_rpc_addr.parse().c(d!("invalid RPC address"))?;
+        let rpc_addr: std::net::SocketAddr = eth_rpc_addr.parse().c(d!("invalid RPC address"))?;
         let rpc_state = Arc::new(EvmRpcState {
             executor: Arc::clone(&shared_executor),
             chain_id: evm_genesis.chain_id,
@@ -345,9 +344,10 @@ async fn run_node(
                         from_height,
                         to_height,
                     } => {
-                        let clamped = Height(to_height.as_u64().min(
-                            from_height.as_u64() + hotmint_types::sync::MAX_SYNC_BATCH - 1,
-                        ));
+                        let clamped =
+                            Height(to_height.as_u64().min(
+                                from_height.as_u64() + hotmint_types::sync::MAX_SYNC_BATCH - 1,
+                            ));
                         let s = store.read();
                         let blocks = s.get_blocks_in_range(from_height, clamped);
                         let blocks_with_qcs: Vec<_> = blocks
@@ -417,8 +417,7 @@ async fn run_node(
             for (vid, peer_id) in &sync_peers {
                 let bridge_sink = sync_sink.clone();
                 let pid = *peer_id;
-                let (sync_tx, mut sync_bridge_rx) =
-                    tokio::sync::mpsc::channel::<SyncRequest>(16);
+                let (sync_tx, mut sync_bridge_rx) = tokio::sync::mpsc::channel::<SyncRequest>(16);
 
                 let bridge = tokio::spawn(async move {
                     while let Some(req) = sync_bridge_rx.recv().await {
@@ -476,8 +475,7 @@ async fn run_node(
         // No persistent peers — wait briefly for connections.
         if !node_config.p2p.persistent_peers.is_empty() {
             info!("waiting for peer connection...");
-            let deadline =
-                tokio::time::Instant::now() + tokio::time::Duration::from_secs(15);
+            let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(15);
             loop {
                 if *notif_count_rx.borrow() > 0 {
                     break;

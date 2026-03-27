@@ -198,16 +198,21 @@ pub fn propose(
         "proposing block"
     );
 
-    // Include uncommitted ancestor blocks so replicas who missed them
-    // (e.g., joined late or skipped a view via TC) can walk the commit chain.
-    // Walk from the parent block (justified by the QC) back to last committed.
+    // Include ancestor blocks so replicas who missed them (e.g., joined late
+    // or skipped a view via TC) can walk the commit chain. We include blocks
+    // the leader has already committed because replicas may not have committed
+    // them yet (the DC in this proposal may reference these blocks).
     let mut ancestor_blocks = Vec::new();
     {
+        // Walk from the parent block back. Include up to 2 blocks beyond
+        // last_committed to cover the DC's target chain even when the leader
+        // is ahead of slow replicas.
+        let depth_limit = state.last_committed_height.as_u64().saturating_sub(1);
         let mut hash = parent_hash;
         while hash != BlockHash::GENESIS {
             match store.get_block(&hash) {
                 Some(b) => {
-                    if b.height <= state.last_committed_height {
+                    if b.height.as_u64() < depth_limit {
                         break;
                     }
                     hash = b.parent_hash;
