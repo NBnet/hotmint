@@ -380,40 +380,40 @@ Parity's (Polkadot) **Substrate FRAME Pallets** represent the industry's most co
 
 | Substrate / Frontier Component | Hotmint-EVM Target Architecture | Core Responsibility |
 |:---|:---|:---|
-| `pallet-timestamp` | `hotmint_evm::Timestamp` | Provides current block time for the EVM `block.timestamp` opcode |
-| `pallet-balances` | `hotmint_evm::Balances` | Manages native token, handles Gas deduction and native transfers (AI-ported from Substrate) |
+| `pallet-timestamp` | `nbnet::Timestamp` | Provides current block time for the EVM `block.timestamp` opcode |
+| `pallet-balances` | `nbnet::Balances` | Manages native token, handles Gas deduction and native transfers (AI-ported from Substrate) |
 | `pallet-evm` (SputnikVM) | ~~Not used~~ → `revm` crate | Direct revm integration, implement `revm::Database` trait for vsdb |
 | `pallet-ethereum` | `alloy-rlp` + `alloy-primitives` | Ethereum RLP transaction decoding (EIP-1559/EIP-2930), `ecrecover` signature recovery |
 | `fc-rpc` (Frontier RPC) | `hotmint_api::Web3Rpc` (`jsonrpsee`) | Standard `eth_*` JSON-RPC interface, MetaMask-compatible |
 | Substrate Storage Trie | `vsdb::MapxOrd` & `Mapx` | Account Nonce/Balance, EVM Code (contract bytecode), EVM Storage (contract state) |
-| `pallet-staking` | `hotmint_evm::Staking` (AI-ported) | DPoS staking/validator election/slashing (native layer, exposed to EVM via Precompile) |
+| `pallet-staking` | `nbnet::Staking` (AI-ported) | DPoS staking/validator election/slashing (native layer, exposed to EVM via Precompile) |
 
 #### 16.5.3 Hybrid Execution Roadmap (5 Phases)
 
 **Phase 1: Underlying Native Economic System (AI-Ported from Substrate)** ✅
-- ~~Use AI to port `pallet-balances` to vsdb~~ → `hotmint-evm-state` (`EvmState`): vsdb-backed account balance, nonce, code, storage
+- ~~Use AI to port `pallet-balances` to vsdb~~ → `nbnet-state` (`EvmState`): vsdb-backed account balance, nonce, code, storage
 - ~~Introduce `U256` safe arithmetic~~ → via `alloy-primitives::U256`
 - ~~Build EVM world state structure~~ → `EvmState` with vsdb `CacheDB` adapter for revm
 - ~~Implement `Timestamp` and `BlockContext`~~ → `BlockContext` carries height, gas_limit, coinbase, timestamp
 
 **Phase 2: Introduce Reth Core Primitives (Alloy)** ✅
-- ~~Introduce `alloy-primitives`, `alloy-rlp`~~ → `hotmint-evm-types` crate
+- ~~Introduce `alloy-primitives`, `alloy-rlp`~~ → `nbnet-types` crate
 - ~~`validate_tx`: RLP decode → ecrecover → ChainID → Nonce → Balance~~ → `tx::decode_and_recover()` + `tx::validate_tx()`
 - ~~Cryptography~~ → `k256` crate for secp256k1 ECDSA recovery
 
 **Phase 3: Integrate the Leading Execution Engine (Revm)** ✅
 - ~~Implement `revm::Database` trait for vsdb~~ → `EvmState` provides `CacheDB` for revm
-- ~~`execute_block`: revm → batch-write~~ → `EvmExecutor::execute_block()` in `hotmint-evm-execution`
+- ~~`execute_block`: revm → batch-write~~ → `EvmExecutor::execute_block()` in `nbnet-execution`
 - ~~Gas settlement~~ → max fee deducted pre-execution, refund after, proposer reward
 - ~~Events and logs~~ → `EvmReceipt` with logs persisted per block
 - ~~app_hash determinism~~ → `BTreeMap` + vsdb `MapxOrd` for state root
 
 **Phase 4: Cross-Layer Bridging (Precompile Interoperability)** ✅
-- ~~Implement `revm::Precompile` interface~~ → `hotmint-evm-precompile` crate
+- ~~Implement `revm::Precompile` interface~~ → `nbnet-precompile` crate
 - ~~Address `0x0800` → Staking module~~ → `SharedStakingState` bridging EVM to `hotmint-staking`
 
 **Phase 5: Expose Web3 API (Alloy/Reth RPC)** ✅ (Basic)
-- ~~Build HTTP server~~ → `hotmint-evm-rpc` (axum-based)
+- ~~Build HTTP server~~ → `nbnet-rpc` (axum-based)
 - ~~Standard Ethereum APIs~~ → `eth_chainId`, `eth_blockNumber`, `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode`, `eth_getStorageAt`, `eth_gasPrice`, `eth_estimateGas`, `eth_sendRawTransaction`, `eth_getBlockByNumber`, `eth_feeHistory`, `eth_syncing`, `net_version`, `web3_clientVersion`
 - ~~Compatible with MetaMask, Hardhat, Foundry~~ → basic compatibility achieved
 - **Remaining:** `eth_call` (dry-run), `eth_getLogs`, `eth_getTransactionReceipt` (full), `eth_getTransactionByHash` (full) — currently return stubs
@@ -429,7 +429,7 @@ Parity's (Polkadot) **Substrate FRAME Pallets** represent the industry's most co
 
 MetaMask successfully connects to Hotmint-EVM and completes a transfer or contract deployment — this serves as the minimum validation that Phases 1–4 are functional end-to-end.
 
-> **Status:** E2E test (`crates/evm/node/tests/e2e_rpc.rs`) validates a 4-node cluster with EIP-1559 transfer submission via JSON-RPC. The benchmark (`bench-evm`) measures confirmed-on-chain TPS. MetaMask basic connectivity is possible but full wallet workflow (receipt tracking, block explorer) requires completing `eth_call`, `eth_getLogs`, and full receipt/tx-by-hash responses.
+> **Status:** E2E test (`nbnet/crates/node/tests/e2e_rpc.rs`) validates a 4-node cluster with EIP-1559 transfer submission via JSON-RPC. The benchmark (`bench-nbnet`) measures confirmed-on-chain TPS. MetaMask basic connectivity is possible but full wallet workflow (receipt tracking, block explorer) requires completing `eth_call`, `eth_getLogs`, and full receipt/tx-by-hash responses.
 
 ---
 
@@ -454,16 +454,16 @@ Post-completion Hotmint ecosystem position:
 
 | Feature | Implementation | Crate |
 |:--------|:--------------|:------|
-| EVM execution via revm | `EvmExecutor` implements `Application` trait | `hotmint-evm-execution` |
-| EIP-1559 transaction pool | `EvmTxPool` with sender/nonce ordering, RBF, tip priority | `hotmint-evm-txpool` |
-| Pluggable mempool | `MempoolAdapter` trait, `EvmMempoolAdapter` wraps `EvmTxPool` | `hotmint-mempool`, `hotmint-evm-execution` |
-| Transaction gossip | `NetworkSink::broadcast_tx()` on RPC submit + gossip receive loop | `hotmint-consensus`, `hotmint-evm-rpc`, `hotmint-evm-node` |
-| Nonce-fn wiring | `EvmExecutor::setup_nonce_fn()` connects txpool to committed state | `hotmint-evm-execution` |
-| Ethereum JSON-RPC | 22 methods (eth_*, net_*, web3_*) via axum | `hotmint-evm-rpc` |
-| Staking precompile | `0x0800` → `hotmint-staking` via `SharedStakingState` | `hotmint-evm-precompile` |
-| Cluster management | `init_evm_cluster()`, `start_evm_nodes()`, `kill_stale_nodes()` | `hotmint-evm-node`, `hotmint-mgmt` |
-| TPS benchmark | Nonce-confirmed on-chain throughput measurement | `hotmint-evm-node` (bench-evm) |
-| State persistence | vsdb-backed EVM state with MPT state root | `hotmint-evm-state` |
+| EVM execution via revm | `EvmExecutor` implements `Application` trait | `nbnet-execution` |
+| EIP-1559 transaction pool | `EvmTxPool` with sender/nonce ordering, RBF, tip priority | `nbnet-txpool` |
+| Pluggable mempool | `MempoolAdapter` trait, `EvmMempoolAdapter` wraps `EvmTxPool` | `hotmint-mempool`, `nbnet-execution` |
+| Transaction gossip | `NetworkSink::broadcast_tx()` on RPC submit + gossip receive loop | `hotmint-consensus`, `nbnet-rpc`, `nbnet-node` |
+| Nonce-fn wiring | `EvmExecutor::setup_nonce_fn()` connects txpool to committed state | `nbnet-execution` |
+| Ethereum JSON-RPC | 22 methods (eth_*, net_*, web3_*) via axum | `nbnet-rpc` |
+| Staking precompile | `0x0800` → `hotmint-staking` via `SharedStakingState` | `nbnet-precompile` |
+| Cluster management | `init_evm_cluster()`, `start_evm_nodes()`, `kill_stale_nodes()` | `nbnet-node`, `hotmint-mgmt` |
+| TPS benchmark | Nonce-confirmed on-chain throughput measurement | `nbnet-node` (bench-nbnet) |
+| State persistence | vsdb-backed EVM state with MPT state root | `nbnet-state` |
 
 ### 17.2 EVM Node Infrastructure — All Resolved
 
@@ -472,7 +472,7 @@ Post-completion Hotmint ecosystem position:
 | E-1 | Fullnode mode | Nodes not in genesis auto-detect as fullnode (`ValidatorId(u64::MAX)` sentinel) |
 | E-2 | Block sync on startup | `sync_to_tip()` runs from peers before consensus starts |
 | E-3 | Sync responder | Returns real height/view/epoch via `ConsensusStatus` watch channel |
-| E-4 | `init` subcommand | `hotmint-evm init --home ...` generates keys + config + evm-genesis.json |
+| E-4 | `init` subcommand | `nb init --home ...` generates keys + config + evm-genesis.json |
 | E-5 | Graceful shutdown | `tokio::select!` supervisor with ctrl_c + SIGTERM handlers |
 | E-6 | WAL | `ConsensusWal::open()` for crash-safe commit recovery |
 | E-7 | Evidence store | `PersistentEvidenceStore::open()` for equivocation proof persistence |

@@ -28,7 +28,7 @@ pub trait MempoolAdapter: Send + Sync {
 }
 ```
 
-The built-in `Mempool` struct implements this trait. EVM chains use `EvmMempoolAdapter` (in `hotmint-evm-execution`) which wraps `EvmTxPool` with sender/nonce semantics.
+The built-in `Mempool` struct implements this trait. EVM chains use `EvmMempoolAdapter` (in [`nbnet-execution`](https://github.com/rust-util-collections/nbnet)) which wraps `EvmTxPool` with sender/nonce semantics.
 
 ## Usage
 
