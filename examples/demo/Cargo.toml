@@ -5,5 +5,5 @@ edition = "2024"
 publish = false
 
 [dependencies]
-hotmint-mgmt = { path = "../../tools/hotmint-mgmt" }
+hotmint-mgmt = { workspace = true }
 serde_json = { workspace = true }

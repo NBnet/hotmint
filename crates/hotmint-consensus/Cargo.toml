@@ -22,7 +22,7 @@ prometheus-client = { workspace = true }
 tracing-subscriber = { workspace = true }
 rand = { workspace = true }
 criterion = { workspace = true }
-hotmint-mgmt = { path = "../../tools/hotmint-mgmt" }
+hotmint-mgmt = { workspace = true }
 serde_json = { workspace = true }
 
 [[bench]]

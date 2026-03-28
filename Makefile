@@ -13,9 +13,10 @@ CRATES := \
 	hotmint-storage \
 	hotmint-light \
 	hotmint-api \
-	hotmint
+	hotmint \
+	hotmint-mgmt
 
-.PHONY: all fmt lint build test bench bench-e2e bench-consensus bench-evm bench-utxo bench-all run clean check doc update publish
+.PHONY: all fmt lint build test bench bench-e2e bench-consensus bench-utxo bench-all run clean check doc update publish
 
 all: fmt lint build test _doc
 
@@ -35,13 +36,10 @@ bench:
 	$(CARGO) bench --workspace
 
 bench-e2e:
-	@echo "bench-e2e has been replaced by bench-consensus and bench-evm"
+	@echo "bench-e2e has been replaced by bench-consensus (see nbnet for bench-nbnet)"
 
 bench-consensus:
 	$(CARGO) run --release -p bench-consensus
-
-bench-evm:
-	$(CARGO) run --release -p hotmint-evm-node --bin bench-evm
 
 bench-ipc:
 	$(CARGO) run --release -p bench-ipc
@@ -49,7 +47,7 @@ bench-ipc:
 bench-utxo:
 	$(CARGO) run --release -p utxo-chain-example --bin bench-utxo
 
-bench-all: bench-consensus bench-evm bench-utxo bench-ipc
+bench-all: bench-consensus bench-utxo bench-ipc
 
 run:
 	$(CARGO) run --bin hotmint-node -- node

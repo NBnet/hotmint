@@ -7,6 +7,6 @@ publish = false
 [dependencies]
 hotmint-types = { workspace = true }
 hotmint-abci = { workspace = true }
-hotmint-mgmt = { path = "../../tools/hotmint-mgmt" }
+hotmint-mgmt = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }

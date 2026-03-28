@@ -3,6 +3,10 @@ name = "hotmint-mgmt"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Cluster management library and CLI for Hotmint consensus nodes: init, deploy, and control multi-node BFT clusters."
+keywords = ["consensus", "hotstuff2", "bft", "cluster", "management"]
+categories = ["command-line-utilities", "network-programming"]
 
 [lib]
 name = "hotmint_mgmt"
