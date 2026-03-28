@@ -1,8 +1,8 @@
 # hotmint-mgmt
 
-Cluster deployment and management tool for [Hotmint](https://github.com/rust-util-collections/hotmint).
+Cluster management library for [Hotmint](https://github.com/rust-util-collections/hotmint).
 
-A reusable library + CLI for initializing, starting, stopping, and deploying multi-node Hotmint clusters — both locally and on remote machines via SSH.
+A reusable library for initializing, starting, stopping, and deploying multi-node Hotmint clusters — both locally and on remote machines via SSH.
 
 ## Library API
 
@@ -22,22 +22,6 @@ A reusable library + CLI for initializing, starting, stopping, and deploying mul
 | `cluster` | `init_cluster()`, `clean()`, `destroy()`, `info()`, `ClusterState` |
 | `local` | `start()`, `stop()`, `status()` — PID-based local process management |
 | `remote` | `deploy()`, `exec_all()`, `push_all()`, `pull_all()`, `logs()` — SSH-based remote ops |
-
-## CLI
-
-```bash
-hotmint-mgmt init --validators 4          # Generate cluster config
-hotmint-mgmt start                        # Start all nodes
-hotmint-mgmt stop                         # Stop all nodes
-hotmint-mgmt status                       # Show cluster status
-hotmint-mgmt clean                        # Clean data dirs
-hotmint-mgmt destroy                      # Remove everything
-
-# Remote deployment (SSH + git sync)
-hotmint-mgmt deploy --hosts hosts.toml
-hotmint-mgmt exec --hosts hosts.toml -- CMD
-hotmint-mgmt logs --hosts hosts.toml
-```
 
 ## License
 

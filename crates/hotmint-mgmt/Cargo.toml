@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Cluster management library and CLI for Hotmint consensus nodes: init, deploy, and control multi-node BFT clusters."
+description = "Cluster management library for Hotmint consensus nodes: init, deploy, and control multi-node BFT clusters."
 keywords = ["consensus", "hotstuff2", "bft", "cluster", "management"]
 categories = ["command-line-utilities", "network-programming"]
 
@@ -12,12 +12,7 @@ categories = ["command-line-utilities", "network-programming"]
 name = "hotmint_mgmt"
 path = "src/lib.rs"
 
-[[bin]]
-name = "hotmint-mgmt"
-path = "src/main.rs"
-
 [dependencies]
-clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
