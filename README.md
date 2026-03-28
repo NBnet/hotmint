@@ -2,7 +2,7 @@
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-2024_edition-orange.svg)](https://www.rust-lang.org/)
-[![CI](https://github.com/rust-util-collections/hotmint/actions/workflows/ci.yml/badge.svg)](https://github.com/rust-util-collections/hotmint/actions/workflows/ci.yml)
+[![CI](https://github.com/NBnet/hotmint/actions/workflows/ci.yml/badge.svg)](https://github.com/NBnet/hotmint/actions/workflows/ci.yml)
 [![HotStuff-2](https://img.shields.io/badge/protocol-HotStuff--2-purple.svg)](https://arxiv.org/abs/2301.03253)
 [![crates.io](https://img.shields.io/crates/v/hotmint.svg)](https://crates.io/crates/hotmint)
 

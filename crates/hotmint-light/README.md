@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/hotmint-light.svg)](https://crates.io/crates/hotmint-light)
 [![docs.rs](https://docs.rs/hotmint-light/badge.svg)](https://docs.rs/hotmint-light)
 
-Light client verification library for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
+Light client verification library for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
 Verifies block headers and validator set transitions without replaying every block. A light client tracks the current validator set and verifies each new block's quorum certificate (QC) against it.
 

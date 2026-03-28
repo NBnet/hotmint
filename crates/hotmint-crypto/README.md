@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/hotmint-crypto.svg)](https://crates.io/crates/hotmint-crypto)
 [![docs.rs](https://docs.rs/hotmint-crypto/badge.svg)](https://docs.rs/hotmint-crypto)
 
-Cryptographic implementations for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
+Cryptographic implementations for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
 Provides concrete implementations of the `Signer` and `Verifier` traits defined in `hotmint-types`, using Ed25519 for digital signatures and Blake3 for block hashing.
 

@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/hotmint-storage.svg)](https://crates.io/crates/hotmint-storage)
 [![docs.rs](https://docs.rs/hotmint-storage/badge.svg)](https://docs.rs/hotmint-storage)
 
-Persistent storage backends for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
+Persistent storage backends for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
 Implements the `BlockStore` trait from `hotmint-consensus` using [vsdb](https://crates.io/crates/vsdb) (a high-performance embedded KV database backed by MMDB), and provides `PersistentConsensusState` for crash recovery of critical consensus state.
 

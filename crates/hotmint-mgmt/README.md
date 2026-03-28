@@ -1,6 +1,6 @@
 # hotmint-mgmt
 
-Cluster management library for [Hotmint](https://github.com/rust-util-collections/hotmint).
+Cluster management library for [Hotmint](https://github.com/NBnet/hotmint).
 
 A reusable library for initializing, starting, stopping, and deploying multi-node Hotmint clusters — both locally and on remote machines via SSH.
 

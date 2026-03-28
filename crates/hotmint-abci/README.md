@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/hotmint-abci.svg)](https://crates.io/crates/hotmint-abci)
 [![docs.rs](https://docs.rs/hotmint-abci/badge.svg)](https://docs.rs/hotmint-abci)
 
-IPC proxy layer (Application Binary Consensus Interface) for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
+IPC proxy layer (Application Binary Consensus Interface) for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
 Enables running the application logic in a separate process from the consensus engine, communicating over Unix domain sockets with length-prefixed CBOR frames.
 

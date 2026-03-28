@@ -1,6 +1,6 @@
 # utxo-chain
 
-Bitcoin-style UTXO chain example for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
+Bitcoin-style UTXO chain example for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
 A complete working example of a UTXO chain with ed25519 signatures, persistent state via vsdb (`VerMapWithProof` + SMT proofs), and address-indexed queries via `SlotDex`.
 

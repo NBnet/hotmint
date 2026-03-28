@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/hotmint-types.svg)](https://crates.io/crates/hotmint-types)
 [![docs.rs](https://docs.rs/hotmint-types/badge.svg)](https://docs.rs/hotmint-types)
 
-Core data types for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
+Core data types for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
 This crate defines all shared primitives used across the Hotmint ecosystem with minimal dependencies (only `serde` and `ruc`). It is the foundation that every other Hotmint crate depends on.
 

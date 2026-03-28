@@ -10,7 +10,7 @@ Add `hotmint` as a dependency:
 
 ```toml
 [dependencies]
-hotmint = { git = "https://github.com/rust-util-collections/hotmint" }
+hotmint = { git = "https://github.com/NBnet/hotmint" }
 tokio = { version = "1", features = ["full"] }
 ruc = "9.3"
 ```
@@ -19,7 +19,7 @@ ruc = "9.3"
 
 ```bash
 # clone the repository
-git clone https://github.com/rust-util-collections/hotmint.git
+git clone https://github.com/NBnet/hotmint.git
 cd hotmint
 
 # build all crates

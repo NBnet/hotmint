@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/hotmint-mempool.svg)](https://crates.io/crates/hotmint-mempool)
 [![docs.rs](https://docs.rs/hotmint-mempool/badge.svg)](https://docs.rs/hotmint-mempool)
 
-Transaction mempool for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
+Transaction mempool for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
 A thread-safe, async transaction pool with **priority-based ordering**, Blake3-based deduplication, replace-by-fee (RBF), gas-aware selection, and configurable size limits. Provides a pluggable `MempoolAdapter` trait so chains can supply their own pool implementation.
 

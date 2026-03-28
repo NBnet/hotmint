@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/hotmint-network.svg)](https://crates.io/crates/hotmint-network)
 [![docs.rs](https://docs.rs/hotmint-network/badge.svg)](https://docs.rs/hotmint-network)
 
-P2P networking layer for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
+P2P networking layer for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
 Implements the `NetworkSink` trait from `hotmint-consensus` using [litep2p](https://crates.io/crates/litep2p) for real multi-process / multi-machine deployments. Messages are serialized with CBOR, with optional zstd compression for large frames.
 

@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/hotmint-consensus.svg)](https://crates.io/crates/hotmint-consensus)
 [![docs.rs](https://docs.rs/hotmint-consensus/badge.svg)](https://docs.rs/hotmint-consensus)
 
-HotStuff-2 consensus state machine and engine for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT framework.
+HotStuff-2 consensus state machine and engine for the [Hotmint](https://github.com/NBnet/hotmint) BFT framework.
 
 This is the core crate of Hotmint. It implements the full HotStuff-2 protocol — two-chain commit, five-step view protocol, pacemaker with exponential backoff — and is completely decoupled from I/O through pluggable trait interfaces.
 

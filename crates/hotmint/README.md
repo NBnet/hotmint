@@ -35,7 +35,7 @@ use hotmint::prelude::*;
 
 ```toml
 [dependencies]
-hotmint = { git = "https://github.com/rust-util-collections/hotmint" }
+hotmint = { git = "https://github.com/NBnet/hotmint" }
 tokio = { version = "1", features = ["full"] }
 ruc = "9.3"
 ```
@@ -84,12 +84,12 @@ cargo run -p hotmint-demo
 
 ## Documentation
 
-See the [docs/](https://github.com/rust-util-collections/hotmint/tree/main/docs) directory for comprehensive guides:
+See the [docs/](https://github.com/NBnet/hotmint/tree/main/docs) directory for comprehensive guides:
 
-- [Getting Started](https://github.com/rust-util-collections/hotmint/blob/main/docs/getting-started.md)
-- [Protocol](https://github.com/rust-util-collections/hotmint/blob/main/docs/protocol.md)
-- [Architecture](https://github.com/rust-util-collections/hotmint/blob/main/docs/architecture.md)
-- [Application](https://github.com/rust-util-collections/hotmint/blob/main/docs/application.md)
+- [Getting Started](https://github.com/NBnet/hotmint/blob/main/docs/getting-started.md)
+- [Protocol](https://github.com/NBnet/hotmint/blob/main/docs/protocol.md)
+- [Architecture](https://github.com/NBnet/hotmint/blob/main/docs/architecture.md)
+- [Application](https://github.com/NBnet/hotmint/blob/main/docs/application.md)
 
 ## License
 

@@ -1,6 +1,6 @@
 # bench-consensus
 
-Consensus throughput benchmark for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
+Consensus throughput benchmark for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
 Measures raw consensus throughput (blocks/sec) using 4 in-process validators with 1 KB fixed payloads, isolating consensus overhead from application execution.
 

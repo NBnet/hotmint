@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/hotmint-staking.svg)](https://crates.io/crates/hotmint-staking)
 [![docs.rs](https://docs.rs/hotmint-staking/badge.svg)](https://docs.rs/hotmint-staking)
 
-Staking toolkit for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
+Staking toolkit for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
 Provides validator registration, delegation, slashing, unbonding, and reward distribution with a pluggable storage backend.
 

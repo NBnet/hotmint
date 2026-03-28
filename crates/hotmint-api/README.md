@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/hotmint-api.svg)](https://crates.io/crates/hotmint-api)
 [![docs.rs](https://docs.rs/hotmint-api/badge.svg)](https://docs.rs/hotmint-api)
 
-JSON-RPC API server for the [Hotmint](https://github.com/rust-util-collections/hotmint) BFT consensus framework.
+JSON-RPC API server for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
 Provides a TCP-based newline-delimited JSON-RPC server and an HTTP/WebSocket server for querying node status, submitting transactions, and subscribing to chain events.
 
