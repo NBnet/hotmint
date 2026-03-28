@@ -289,6 +289,14 @@ Three deployment modes — all interoperable in the same cluster:
 
 ---
 
+## Known Users
+
+| Project | Description |
+|:--------|:------------|
+| [nbnet](https://github.com/NBnet/nbnet) | EVM-compatible blockchain built on Hotmint — revm execution, Ethereum JSON-RPC, EIP-1559 tx pool |
+
+---
+
 ## References
 
 | Paper | Link |
