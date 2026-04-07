@@ -11,7 +11,7 @@ fn query_height(host: &str, port: u16) -> Option<u64> {
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
-    let addr = format!("{host}:{port}");
+    let addr = hotmint_mgmt::format_host_port(host, port);
     let mut stream =
         TcpStream::connect_timeout(&addr.parse().ok()?, Duration::from_secs(2)).ok()?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
@@ -52,7 +52,7 @@ fn setup_cluster() -> (Vec<Child>, cluster::ClusterState, std::path::PathBuf) {
         &chain_id,
         p2p_base,
         rpc_base,
-        "127.0.0.1",
+        hotmint_mgmt::loopback_addr(),
     )
     .unwrap();
 
@@ -69,7 +69,7 @@ fn test_four_node_consensus_commits_blocks() {
     // Wait for ALL nodes to be ready before measuring.
     for v in &state.validators {
         assert!(
-            hotmint_mgmt::wait_for_rpc("127.0.0.1", v.rpc_port, 20),
+            hotmint_mgmt::wait_for_rpc(hotmint_mgmt::loopback_addr(), v.rpc_port, 20),
             "V{} did not start within 20s",
             v.id
         );
@@ -80,7 +80,7 @@ fn test_four_node_consensus_commits_blocks() {
 
     // All validators should have committed blocks.
     for v in &state.validators {
-        let height = query_height("127.0.0.1", v.rpc_port).unwrap_or(0);
+        let height = query_height(hotmint_mgmt::loopback_addr(), v.rpc_port).unwrap_or(0);
         assert!(
             height >= 1,
             "V{} committed {} blocks, expected >= 1",
@@ -93,7 +93,7 @@ fn test_four_node_consensus_commits_blocks() {
     let max_height = state
         .validators
         .iter()
-        .filter_map(|v| query_height("127.0.0.1", v.rpc_port))
+        .filter_map(|v| query_height(hotmint_mgmt::loopback_addr(), v.rpc_port))
         .max()
         .unwrap_or(0);
     assert!(max_height >= 2, "max height is {max_height}, expected >= 2");
@@ -112,7 +112,7 @@ fn test_consensus_tolerates_one_silent_validator() {
     // Wait for ALL nodes to be ready before killing one.
     for v in &state.validators {
         assert!(
-            hotmint_mgmt::wait_for_rpc("127.0.0.1", v.rpc_port, 20),
+            hotmint_mgmt::wait_for_rpc(hotmint_mgmt::loopback_addr(), v.rpc_port, 20),
             "V{} did not start within 20s",
             v.id
         );
@@ -130,7 +130,7 @@ fn test_consensus_tolerates_one_silent_validator() {
 
     // The first 3 active validators should commit blocks.
     for v in state.validators.iter().take(3) {
-        let height = query_height("127.0.0.1", v.rpc_port).unwrap_or(0);
+        let height = query_height(hotmint_mgmt::loopback_addr(), v.rpc_port).unwrap_or(0);
         assert!(
             height >= 1,
             "active V{} committed {} blocks, expected >= 1",

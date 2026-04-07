@@ -10,7 +10,8 @@
 //! use hotmint_mgmt::cluster;
 //!
 //! let base_dir = std::path::Path::new("/tmp/my-cluster");
-//! cluster::init_cluster(base_dir, 4, "test-chain", 20000, 21000, "127.0.0.1").unwrap();
+//! let ip = hotmint_mgmt::loopback_addr();
+//! cluster::init_cluster(base_dir, 4, "test-chain", 20000, 21000, ip).unwrap();
 //!
 //! let state = cluster::ClusterState::load(base_dir).unwrap();
 //! // state.validators contains port info for RPC connections
@@ -22,15 +23,44 @@ pub mod remote;
 
 use std::path::{Path, PathBuf};
 
-/// Find N free TCP ports on 127.0.0.1 by binding to port 0.
+/// Detect the available loopback address (IPv4 preferred, IPv6 fallback).
+///
+/// Returns `"127.0.0.1"` on most systems. On hosts where the loopback
+/// interface has no IPv4 address (e.g. FreeBSD jails with IPv6-only lo0)
+/// returns `"::1"`.
+pub fn loopback_addr() -> &'static str {
+    use std::sync::OnceLock;
+    static ADDR: OnceLock<&str> = OnceLock::new();
+    ADDR.get_or_init(|| {
+        if std::net::TcpListener::bind("127.0.0.1:0").is_ok() {
+            "127.0.0.1"
+        } else {
+            "::1"
+        }
+    })
+}
+
+/// Format a host:port pair as a socket address string.
+///
+/// IPv6 addresses are wrapped in brackets: `[::1]:8080`.
+pub fn format_host_port(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+/// Find N free TCP ports on the loopback interface by binding to port 0.
 ///
 /// Returns the ports after releasing the listeners. There is a small
 /// race window, but it is acceptable for tests and benchmarks.
 pub fn find_free_ports(n: usize) -> Vec<u16> {
+    let bind = format_host_port(loopback_addr(), 0);
     let mut ports = Vec::with_capacity(n);
     let mut listeners = Vec::with_capacity(n);
     for _ in 0..n {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind to ephemeral port");
+        let listener = std::net::TcpListener::bind(&bind).expect("bind to ephemeral port");
         ports.push(listener.local_addr().unwrap().port());
         listeners.push(listener);
     }
@@ -111,7 +141,7 @@ pub fn wait_for_rpc(host: &str, port: u16, timeout_secs: u64) -> bool {
     use std::net::TcpStream;
     use std::time::{Duration, Instant};
 
-    let addr = format!("{host}:{port}");
+    let addr = format_host_port(host, port);
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
 
     while Instant::now() < deadline {

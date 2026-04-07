@@ -27,7 +27,7 @@ fn main() {
         "utxo-demo",
         p2p_base,
         rpc_base,
-        "127.0.0.1",
+        hotmint_mgmt::loopback_addr(),
     )
     .unwrap();
 
@@ -39,7 +39,7 @@ fn main() {
     }
 
     let rpc_port = state.validators[0].rpc_port;
-    if !hotmint_mgmt::wait_for_rpc("127.0.0.1", rpc_port, 15) {
+    if !hotmint_mgmt::wait_for_rpc(hotmint_mgmt::loopback_addr(), rpc_port, 15) {
         eprintln!("ERROR: cluster did not start");
     }
 

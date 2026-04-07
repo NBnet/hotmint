@@ -23,3 +23,6 @@ tower-http = { workspace = true }
 blake3 = { workspace = true }
 hotmint-light = { workspace = true }
 hotmint-crypto = { workspace = true }
+
+[dev-dependencies]
+hotmint-mgmt = { workspace = true }

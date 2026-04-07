@@ -27,14 +27,9 @@ async fn setup_server() -> (String, tokio::task::JoinHandle<()>) {
         chain_id_hash: [0u8; 32],
     };
 
-    // Probe IPv4 loopback; fall back to IPv6 (e.g. FreeBSD without IPv4 on lo0)
-    let bind_addr = if tokio::net::TcpListener::bind("127.0.0.1:0").await.is_ok() {
-        "127.0.0.1:0"
-    } else {
-        "[::1]:0"
-    };
+    let bind_addr = hotmint_mgmt::format_host_port(hotmint_mgmt::loopback_addr(), 0);
 
-    let server = RpcServer::bind(bind_addr, state).await.unwrap();
+    let server = RpcServer::bind(&bind_addr, state).await.unwrap();
     let addr = format!("{}", server.local_addr());
     let handle = tokio::spawn(async move { server.run().await });
 

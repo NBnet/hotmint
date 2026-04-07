@@ -86,6 +86,13 @@ fn generate_config(
         .collect();
     let peers_str = peers_toml.join(", ");
 
+    let rpc_laddr = super::format_host_port(bind_ip, rpc_port);
+    let p2p_listen = if bind_ip.contains(':') {
+        format!("/ip6/::/tcp/{p2p_port}")
+    } else {
+        format!("/ip4/0.0.0.0/tcp/{p2p_port}")
+    };
+
     format!(
         r#"proxy_app = ""
 
@@ -97,10 +104,10 @@ serve_rpc = true
 serve_sync = true
 
 [rpc]
-laddr = "{bind_ip}:{rpc_port}"
+laddr = "{rpc_laddr}"
 
 [p2p]
-laddr = "/ip4/0.0.0.0/tcp/{p2p_port}"
+laddr = "{p2p_listen}"
 persistent_peers = [{peers_str}]
 private_peer_ids = []
 
@@ -173,13 +180,14 @@ pub fn init_cluster(
     };
     let genesis_json = serde_json::to_string_pretty(&genesis).c(d!("serialize genesis"))?;
 
-    // Build persistent_peers list: "id@/ip4/<ip>/tcp/<port>"
+    // Build persistent_peers list: "id@/ip4/<ip>/tcp/<port>" (or /ip6/ for IPv6)
+    let ip_proto = if bind_ip.contains(':') { "ip6" } else { "ip4" };
     let mut persistent_peers: Vec<String> = Vec::with_capacity(keys.len());
     for (id, _, _, _) in &keys {
         let port = p2p_base_port
             .checked_add(*id as u16)
             .ok_or_else(|| eg!("port calculation overflow"))?;
-        persistent_peers.push(format!("{}@/ip4/{}/tcp/{}", id, bind_ip, port));
+        persistent_peers.push(format!("{}@/{}/{}/tcp/{}", id, ip_proto, bind_ip, port));
     }
 
     // Create per-validator home directories

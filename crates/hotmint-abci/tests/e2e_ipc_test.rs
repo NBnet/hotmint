@@ -46,7 +46,7 @@ async fn ipc_consensus_e2e() {
         "ipc-e2e",
         p2p_base,
         rpc_base,
-        "127.0.0.1",
+        hotmint_mgmt::loopback_addr(),
     )
     .unwrap();
 
@@ -90,7 +90,7 @@ async fn ipc_consensus_e2e() {
 
     let rpc_port = state.validators[0].rpc_port;
     assert!(
-        hotmint_mgmt::wait_for_rpc("127.0.0.1", rpc_port, 20),
+        hotmint_mgmt::wait_for_rpc(hotmint_mgmt::loopback_addr(), rpc_port, 20),
         "cluster did not start within 20s"
     );
 
