@@ -1,8 +1,9 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use hotmint_crypto::{Ed25519Signer, Ed25519Verifier, compute_block_hash};
 use hotmint_types::epoch::EpochNumber;
 use hotmint_types::validator::{ValidatorId, ValidatorInfo, ValidatorSet};
 use hotmint_types::{Block, BlockHash, Height, Signer, Verifier, ViewNumber};
+use std::hint::black_box;
 
 fn make_signer() -> Ed25519Signer {
     Ed25519Signer::generate(ValidatorId(0))

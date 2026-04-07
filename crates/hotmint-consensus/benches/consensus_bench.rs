@@ -1,4 +1,4 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use hotmint_consensus::store::MemoryBlockStore;
 use hotmint_consensus::vote_collector::VoteCollector;
 use hotmint_crypto::Ed25519Signer;
@@ -7,6 +7,7 @@ use hotmint_types::validator::{ValidatorId, ValidatorInfo, ValidatorSet};
 use hotmint_types::view::ViewNumber;
 use hotmint_types::vote::{Vote, VoteType};
 use hotmint_types::{BlockHash, Signer};
+use std::hint::black_box;
 
 fn make_env(n: u64) -> (ValidatorSet, Vec<Ed25519Signer>) {
     let signers: Vec<Ed25519Signer> = (0..n)
