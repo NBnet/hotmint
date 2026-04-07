@@ -1563,6 +1563,7 @@ impl ConsensusEngine {
                     }
                 }
             }
+            ev_store.flush();
         }
         self.liveness_tracker.record_commit(
             &self.state.validator_set,
@@ -1631,6 +1632,10 @@ impl ConsensusEngine {
     fn validate_double_cert(&self, dc: &DoubleCertificate) -> bool {
         if dc.inner_qc.block_hash != dc.outer_qc.block_hash {
             warn!("double cert inner/outer block_hash mismatch");
+            return false;
+        }
+        if dc.outer_qc.view < dc.inner_qc.view {
+            warn!("double cert outer_qc.view < inner_qc.view");
             return false;
         }
         let vs = &self.state.validator_set;

@@ -321,14 +321,12 @@ fn bytes_to_hash(bytes: &[u8]) -> BlockHash {
     if bytes.is_empty() {
         return BlockHash::GENESIS;
     }
-    if bytes.len() != 32 {
-        eprintln!(
-            "bytes_to_hash: expected 32 bytes, got {}; padding/truncating",
-            bytes.len()
-        );
-    }
+    assert!(
+        bytes.len() == 32,
+        "bytes_to_hash: expected 32 bytes, got {}",
+        bytes.len()
+    );
     let mut hash = [0u8; 32];
-    let len = bytes.len().min(32);
-    hash[..len].copy_from_slice(&bytes[..len]);
+    hash.copy_from_slice(bytes);
     BlockHash(hash)
 }

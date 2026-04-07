@@ -30,6 +30,8 @@ impl Default for MemoryEvidenceStore {
 }
 
 impl EvidenceStore for MemoryEvidenceStore {
+    fn flush(&self) {}
+
     fn put_evidence(&mut self, proof: EquivocationProof) {
         // Deduplicate: skip if we already have evidence for this (view, validator).
         let dominated = self
@@ -142,12 +144,23 @@ impl PersistentEvidenceStore {
         {
             let mut meta = bytes;
             meta[16..24].copy_from_slice(&self.next_id.to_le_bytes());
-            let _ = std::fs::write(&self.meta_path, &meta);
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&self.meta_path)
+            {
+                use std::io::Write;
+                let _ = file.write_all(&meta).and_then(|_| file.sync_all());
+            }
         }
     }
 }
 
 impl EvidenceStore for PersistentEvidenceStore {
+    fn flush(&self) {
+        vsdb::vsdb_flush();
+    }
+
     fn put_evidence(&mut self, proof: EquivocationProof) {
         if self.is_duplicate(&proof) {
             return;

@@ -78,7 +78,9 @@ fn write_pid(base_dir: &Path, id: u64, pid: u32) {
 
 /// Check if a process is running.
 fn is_running(pid: u32) -> bool {
-    // Use kill(pid, 0) to check existence
+    // SAFETY: kill(pid, 0) sends no signal — it only checks whether the process
+    // exists. The pid originates from a trusted pid file and the cast to i32 is
+    // always valid for OS-assigned PIDs.
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
@@ -169,6 +171,9 @@ pub fn stop(base_dir: &Path, node: Option<u32>) -> Result<()> {
     for v in &nodes {
         if let Some(pid) = read_pid(base_dir, v.id) {
             if is_running(pid) && is_cluster_node(pid) {
+                // SAFETY: The pid has been validated by is_running() (process exists)
+                // and is_cluster_node() (confirmed to be a hotmint/cluster-node process).
+                // Signal 15 (SIGTERM) is a standard, catchable termination signal.
                 unsafe {
                     libc::kill(pid as i32, 15); // SIGTERM
                 }

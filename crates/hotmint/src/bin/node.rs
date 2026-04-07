@@ -229,6 +229,24 @@ async fn run_node(
         GenesisDoc::load(&config_dir.join("genesis.json")).c(d!("failed to load genesis.json"))?;
     let validator_set = genesis.to_validator_set()?;
 
+    // Validate genesis: no duplicate IDs or public keys.
+    {
+        let mut seen_ids = std::collections::HashSet::new();
+        let mut seen_pks = std::collections::HashSet::new();
+        for gv in &genesis.validators {
+            assert!(
+                seen_ids.insert(gv.id),
+                "genesis contains duplicate validator ID: {}",
+                gv.id
+            );
+            assert!(
+                seen_pks.insert(&gv.public_key),
+                "genesis contains duplicate public key: {}",
+                gv.public_key
+            );
+        }
+    }
+
     // 4. Find our validator ID.
     // If not in genesis, assign a sentinel ID — the node runs as a fullnode
     // (observes consensus, syncs blocks, serves RPC) but does not vote or propose.

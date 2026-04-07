@@ -134,10 +134,15 @@ async fn ws_upgrade_handler(
     State(state): State<Arc<HttpRpcState>>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    let current = state
+    // Atomically increment first, then check — avoids TOCTOU race where
+    // multiple concurrent upgrades could all pass a load-then-check.
+    let prev = state
         .ws_connection_count
-        .load(std::sync::atomic::Ordering::Relaxed);
-    if current >= MAX_WS_CONNECTIONS {
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if prev >= MAX_WS_CONNECTIONS {
+        state
+            .ws_connection_count
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         return (
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
             "too many WebSocket connections",
@@ -230,9 +235,8 @@ impl Drop for WsCountGuard {
 
 /// WebSocket connection handler: subscribe to chain events and forward them.
 async fn handle_ws(mut socket: WebSocket, state: Arc<HttpRpcState>) {
-    state
-        .ws_connection_count
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Counter was already incremented in ws_upgrade_handler; the WsCountGuard
+    // RAII guard will decrement it when this handler exits.
     let _guard = WsCountGuard(state.clone());
     let mut rx = state.event_tx.subscribe();
     let mut filter = SubscribeFilter::default();

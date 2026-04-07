@@ -65,7 +65,9 @@ impl PeerMap {
     }
 
     pub fn insert(&mut self, vid: ValidatorId, pid: PeerId) {
-        self.validator_to_peer.insert(vid, pid);
+        if let Some(old_pid) = self.validator_to_peer.insert(vid, pid) {
+            self.peer_to_validator.remove(&old_pid);
+        }
         self.peer_to_validator.insert(pid, vid);
     }
 
@@ -173,8 +175,8 @@ pub struct NetworkService {
     /// checked against both sets, so recent history is always preserved across
     /// rotations. This avoids the brief relay-window that a single-set clear
     /// would create.
-    seen_active: HashSet<u64>,
-    seen_backup: HashSet<u64>,
+    seen_active: HashSet<[u8; 32]>,
+    seen_backup: HashSet<[u8; 32]>,
     /// Reliable channel for epoch changes (F-02).
     epoch_rx: watch::Receiver<EpochUpdate>,
     /// Per-peer rate limiting for PEX requests (F-09).
@@ -506,11 +508,7 @@ impl NetworkService {
                                 self.current_epoch,
                             )
                         {
-                            let msg_hash = u64::from_le_bytes(
-                                blake3::hash(&notification).as_bytes()[..8]
-                                    .try_into()
-                                    .unwrap(),
-                            );
+                            let msg_hash: [u8; 32] = *blake3::hash(&notification).as_bytes();
 
                             // Check both sets to avoid re-relay across rotations
                             if !self.seen_active.contains(&msg_hash)

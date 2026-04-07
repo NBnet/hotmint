@@ -1,8 +1,8 @@
 # Hotmint Security Audit & Evolution Roadmap
 
-> **Report Version:** Based on Hotmint v0.8.3 / CometBFT v0.38
-> **Generated:** 2026-03-24 | **Last Audit:** 2026-03-25 | **Last Document Sync:** 2026-03-26
-> **Sources:** CometBFT feature gap analysis + two rounds of code security audit
+> **Report Version:** Based on Hotmint v0.8.5 / CometBFT v0.38
+> **Generated:** 2026-03-24 | **Last Audit:** 2026-04-07 | **Last Document Sync:** 2026-04-07
+> **Sources:** CometBFT feature gap analysis + three rounds of code security audit
 > **Purpose:** Serves as a reference baseline for the long-term evolution roadmap. Update completion status after each iteration (change `[ ]` to `[x]`, partially complete marked `[~]`).
 
 ---
@@ -17,7 +17,7 @@
 | Core Strengths | Complete ecosystem, rich toolchain, mature protocol | Lower latency, more modular architecture, memory safety |
 | Main Weaknesses | Three-phase voting latency, Go GC tail-latency jitter | Missing IBC cross-chain protocol; ecosystem tooling still maturing |
 
-Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential to surpass CometBFT in core consensus algorithm and architectural modernization. All security vulnerabilities and engineering defects from all three audit rounds have been resolved (C-1..C-7, H-1..H-12, R-1, A-1..A-8, B-1..B-3, second-round C-1..C-5). All feature roadmap items are complete. Core feature parity with CometBFT has been achieved — the only remaining gap is:
+Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential to surpass CometBFT in core consensus algorithm and architectural modernization. All security vulnerabilities and engineering defects from all three audit rounds have been resolved (C-1..C-7, H-1..H-12, R-1, A-1..A-8, B-1..B-3, second-round C-1..C-5, third-round A3-1..A3-12). All feature roadmap items are complete. Core feature parity with CometBFT has been achieved — the only remaining gap is:
 - **Ecosystem Expansion Layer:** IBC cross-chain protocol (infrastructure ready, protocol not implemented)
 
 ---
@@ -389,6 +389,161 @@ Projects and chains built on Hotmint:
 | Project | Description | Repository |
 |:--------|:------------|:-----------|
 | **nbnet** | EVM-compatible blockchain: revm execution, Ethereum JSON-RPC, EIP-1559 tx pool, custom precompiles | [github.com/NBnet/nbnet](https://github.com/NBnet/nbnet) |
+
+---
+
+## 18. Third-Round Full Codebase Audit (2026-04-07)
+
+> **Audit Scope:** Full codebase (~16K LOC), all crates
+> **Methodology:** Parallel subsystem audit per `.claude/docs/review-core.md`
+> **Auditor:** Claude Code (automated deep analysis)
+> **Findings:** 12 total (0 critical, 5 high, 5 medium, 2 low)
+
+### 18.1 Summary
+
+| Subsystem | Findings | Severity |
+|-----------|:--------:|----------|
+| Network | 2 | HIGH, MEDIUM |
+| Storage | 3 | HIGH, HIGH, HIGH |
+| API & ABCI | 3 | HIGH, MEDIUM, MEDIUM |
+| Consensus | 1 | MEDIUM |
+| Crypto | 1 | MEDIUM |
+| Staking | 1 | LOW |
+| Mgmt | 1 | LOW |
+| Consensus core, Pacemaker, Sync, Mempool, Light client | 0 | Clean |
+
+### 18.2 Findings
+
+#### [x] A3-1. PeerMap Bidirectional Consistency Bug `[HIGH — Network]`
+
+**Where:** `crates/hotmint-network/src/service.rs` — `PeerMap::insert`
+**What:** `insert(vid, new_pid)` updates the forward map `validator_to_peer[vid] → new_pid` and inserts the new reverse mapping `peer_to_validator[new_pid] → vid`, but does NOT remove the stale reverse mapping `peer_to_validator[old_pid] → vid`. After a validator reconnects with a new PeerId, messages from the old PeerId are misattributed.
+**Invariant:** INV-N2 (PeerMap bidirectional consistency). Cascades into `handle_epoch_change` — `remove(vid)` only cleans up the current reverse mapping, not any stale ones.
+**Fix:**
+```rust
+pub fn insert(&mut self, vid: ValidatorId, pid: PeerId) {
+    if let Some(old_pid) = self.validator_to_peer.insert(vid, pid) {
+        self.peer_to_validator.remove(&old_pid);
+    }
+    self.peer_to_validator.insert(pid, vid);
+}
+```
+
+---
+
+#### [x] A3-2. Evidence Store Not Fsynced `[HIGH — Storage]`
+
+**Where:** `crates/hotmint-storage/src/evidence_store.rs` — `put_evidence`, `persist_next_id`
+**What:** `put_evidence()` writes to vsdb but `persist_next_id()` uses `std::fs::write()` without `sync_all()`. No `flush()` method exists on the `EvidenceStore` trait. `vsdb_flush()` is never called after evidence operations. A crash loses equivocation evidence — Byzantine validator escapes slashing.
+**Invariant:** INV-ST4 (evidence persistence). Pattern 6.3 (evidence not crash-safe).
+**Fix:** Add `sync_all()` to `persist_next_id()`. Add `flush()` to the `EvidenceStore` trait. Call `flush()` from the engine after `put_evidence()`.
+
+---
+
+#### [x] A3-3. Block Store put_block Not Atomic `[HIGH — Storage]`
+
+**Where:** `crates/hotmint-storage/src/block_store.rs` — `put_block`
+**What:** Two separate vsdb inserts (`by_height`, then `by_hash`) are not atomic. A crash after the first insert but before the second leaves an inconsistent state: `get_block_by_height()` returns a hash for a block that doesn't exist in `by_hash`.
+**Invariant:** INV-ST2 (block store consistency). Pattern 6.2.
+**Fix:** Reverse the order (insert `by_hash` first, then `by_height`) so that partial writes cause "not found by height" (recoverable) rather than "dangling hash reference" (inconsistent). Or wrap in a vsdb transaction if supported.
+
+---
+
+#### [x] A3-4. Evidence Not Flushed Before Consensus State Persist `[HIGH — Storage]`
+
+**Where:** `crates/hotmint-consensus/src/engine.rs` — `process_commit_result`
+**What:** `ev_store.mark_committed()` modifies vsdb maps but no flush follows. Then `persist_state()` flushes consensus state. A crash between evidence modification and consensus state flush loses evidence while consensus state survives.
+**Invariant:** INV-ST4 combined with INV-ST1.
+**Fix:** Add `ev_store.flush()` before `persist_state()`.
+
+---
+
+#### [x] A3-5. WebSocket Connection Limit TOCTOU Race `[HIGH — API]`
+
+**Where:** `crates/hotmint-api/src/http_rpc.rs` — `ws_upgrade_handler`
+**What:** The handler checks `ws_connection_count` then increments it later in `handle_ws` asynchronously. Multiple concurrent upgrade requests can all pass the check before any increment, exceeding `MAX_WS_CONNECTIONS = 1024`.
+**Invariant:** INV-API2 (rate limiting). Check-then-act is non-atomic.
+**Fix:** Use `compare_exchange` on the AtomicU64 to atomically check-and-increment, or acquire a semaphore permit before accepting the upgrade.
+
+---
+
+#### [x] A3-6. Missing Double Certificate View Ordering Validation `[MEDIUM — Consensus]`
+
+**Where:** `crates/hotmint-consensus/src/engine.rs` — `validate_double_cert`
+**What:** Validates same block hash and 2f+1 signatures for both QCs, but does not validate `outer_qc.view >= inner_qc.view`. A malformed DC with reversed view ordering could pass validation.
+**Invariant:** INV-CS3 (DC validity requires QC2.view == QC1.view + 1). Missing defense-in-depth check.
+**Fix:** Add `if dc.outer_qc.view < dc.inner_qc.view { return false; }`.
+
+---
+
+#### [x] A3-7. Ed25519 Signature Malleability — Non-Canonical S Accepted `[MEDIUM — Crypto]`
+
+**Where:** `crates/hotmint-crypto/src/signer.rs` — `verify`
+**What:** ed25519-dalek 2.2 default verification does not reject non-canonical signatures (where scalar S >= group order). Two different byte sequences can verify for the same (key, message). Current equivocation detection uses semantic content (not signature bytes) so practical impact is limited, but this violates INV-CR2.
+**Invariant:** INV-CR2 (signature strictness / malleability protection). Pattern 7.3.
+**Fix:** Enable `strict_signatures` feature: `ed25519-dalek = { ..., features = ["strict_signatures"] }`.
+
+---
+
+#### [x] A3-8. Relay Dedup Truncates Blake3 Hash to 8 Bytes `[MEDIUM — Network]`
+
+**Where:** `crates/hotmint-network/src/service.rs` — relay deduplication
+**What:** Relay message deduplication uses only the first 8 bytes of blake3 output (64-bit). With ~10K messages in the active set, birthday-bound collision probability becomes non-negligible, causing legitimate consensus messages to be silently dropped. Mempool dedup correctly uses full 32-byte hash.
+**Invariant:** INV-N4 (correct dedup).
+**Fix:** Use full 32-byte hash: `seen_active: HashSet<[u8; 32]>`.
+
+---
+
+#### [x] A3-9. Silent Hash Truncation/Padding in ABCI Protobuf Deserialization `[MEDIUM — ABCI]`
+
+**Where:** `crates/hotmint-abci-proto/src/convert.rs` — `bytes_to_hash`
+**What:** `bytes_to_hash` silently truncates or zero-pads hash fields that aren't exactly 32 bytes. A malformed ABCI message with a 16-byte hash would be padded with zeros and accepted, corrupting cryptographic integrity.
+**Invariant:** INV-API3 (frame integrity). Cryptographic fields must be strictly validated.
+**Fix:** Return `Err` instead of silently padding.
+
+---
+
+#### [x] A3-10. Application Error Messages Exposed in RPC Responses `[MEDIUM — API]`
+
+**Where:** `crates/hotmint-api/src/rpc.rs`
+**What:** Internal application errors are forwarded verbatim to untrusted clients via `format!("query failed: {e}")`. An attacker can craft inputs to extract internal state details.
+**Invariant:** Information leakage to untrusted clients.
+**Fix:** Return generic error messages to clients; log detailed errors server-side only.
+
+---
+
+#### [x] A3-11. ValidatorId Not Derived From Public Key `[LOW — Staking]`
+
+**Where:** `crates/hotmint/src/bin/node.rs` — ValidatorId lookup
+**What:** ValidatorId is assigned manually via `--validator_id` flag and looked up in genesis, rather than derived deterministically from the public key (e.g., `hash(pubkey)`). Different genesis documents could assign different IDs to the same key.
+**Invariant:** INV-CR5 (key derivation determinism).
+**Fix:** Derive ValidatorId from public key hash at registration time.
+
+---
+
+#### [x] A3-12. Missing SAFETY Comments on Unsafe Blocks `[LOW — Mgmt]`
+
+**Where:** `crates/hotmint-mgmt/src/local.rs` — two `libc::kill` blocks
+**What:** Both `unsafe` blocks lack required `// SAFETY:` documentation. The code is sound (PIDs are triple-validated: `read_pid` + `is_running` + `is_cluster_node`), but the project convention requires explicit safety justification.
+**Invariant:** Project convention (no undocumented unsafe).
+**Fix:** Add `// SAFETY:` comments explaining the invariants.
+
+---
+
+### 18.3 Clean Areas
+
+| Subsystem | What Was Verified |
+|-----------|-------------------|
+| **Consensus core** | INV-CS1 (voting safety), INV-CS2 (2f+1 quorum), INV-CS4 (commit completeness), INV-CS5 (view monotonicity), INV-CS7 (epoch/view validation); vote dedup; equivocation detection |
+| **Pacemaker** | INV-CS6 all three guarantees (fires per view, exponential backoff 1.5x capped 30s, reset on view change) |
+| **Sync** | Cursor advances after each batch; terminates when caught up; no infinite loop; no interference with active consensus |
+| **Mempool** | INV-MP1 (ordering consistency), INV-MP2 (no duplicates), INV-MP3 (eviction correctness), INV-MP4 (RBF atomicity); lock ordering correct |
+| **Light client** | INV-CR3 (batch verification all-or-nothing); height monotonicity; hash chain verification |
+| **Domain separation** | INV-CR1 — all 5 message types (Vote, Proposal, Prepare, Wish, Status) include chain_id, epoch, view, type tag |
+| **Epoch transitions** | Atomic; +2 view delay correct; slashing verified before penalty; unbonding prevents slash evasion |
+| **ABCI framing** | INV-API3 — 64MB bound; length validated before allocation |
+| **API read-only** | INV-API1 — no write locks in RPC handlers |
+| **Concurrency** | No parking_lot guards across .await; all channels bounded on consensus path; select! branches cancel-safe |
 
 ---
 

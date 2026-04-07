@@ -250,7 +250,8 @@ pub(crate) async fn handle_request(
     let req: RpcRequest = match serde_json::from_str(line) {
         Ok(r) => r,
         Err(e) => {
-            return RpcResponse::err(0, -32700, format!("parse error: {e}"));
+            warn!(error = %e, "RPC: request parse error");
+            return RpcResponse::err(0, -32700, "parse error".to_string());
         }
     };
 
@@ -581,7 +582,10 @@ pub(crate) async fn handle_request(
                         };
                         json_ok(req.id, &info)
                     }
-                    Err(e) => RpcResponse::err(req.id, -32602, format!("query failed: {e}")),
+                    Err(e) => {
+                        warn!(error = %e, "RPC query failed");
+                        RpcResponse::err(req.id, -32602, "query failed".to_string())
+                    }
                 },
                 None => RpcResponse::err(
                     req.id,
@@ -614,14 +618,16 @@ pub(crate) async fn handle_request(
                 match serde_json::from_value(header_val.clone()) {
                     Ok(h) => h,
                     Err(e) => {
-                        return RpcResponse::err(req.id, -32602, format!("invalid header: {e}"));
+                        warn!(error = %e, "RPC verify_header: invalid header");
+                        return RpcResponse::err(req.id, -32602, "invalid header".to_string());
                     }
                 };
             let qc: hotmint_types::QuorumCertificate = match serde_json::from_value(qc_val.clone())
             {
                 Ok(q) => q,
                 Err(e) => {
-                    return RpcResponse::err(req.id, -32602, format!("invalid qc: {e}"));
+                    warn!(error = %e, "RPC verify_header: invalid qc");
+                    return RpcResponse::err(req.id, -32602, "invalid qc".to_string());
                 }
             };
             // Build a LightClient from the current validator set.
@@ -657,13 +663,16 @@ pub(crate) async fn handle_request(
                         error: None,
                     },
                 ),
-                Err(e) => json_ok(
-                    req.id,
-                    &VerifyHeaderResult {
-                        valid: false,
-                        error: Some(e.to_string()),
-                    },
-                ),
+                Err(e) => {
+                    warn!(error = %e, "RPC verify_header: verification failed");
+                    json_ok(
+                        req.id,
+                        &VerifyHeaderResult {
+                            valid: false,
+                            error: Some("verification failed".to_string()),
+                        },
+                    )
+                }
             }
         }
 
@@ -674,7 +683,10 @@ pub(crate) async fn handle_request(
 fn json_ok<T: serde::Serialize>(id: u64, val: &T) -> RpcResponse {
     match serde_json::to_value(val) {
         Ok(v) => RpcResponse::ok(id, v),
-        Err(e) => RpcResponse::err(id, -32603, format!("serialization error: {e}")),
+        Err(e) => {
+            warn!(error = %e, "RPC: response serialization error");
+            RpcResponse::err(id, -32603, "internal error".to_string())
+        }
     }
 }
 

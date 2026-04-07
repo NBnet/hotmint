@@ -141,8 +141,10 @@ impl Default for VsdbBlockStore {
 impl BlockStore for VsdbBlockStore {
     fn put_block(&mut self, block: Block) {
         debug!(height = block.height.as_u64(), hash = %block.hash, "storing block to vsdb");
-        self.by_height.insert(&block.height.as_u64(), &block.hash.0);
+        // Insert by_hash first so a crash between the two inserts leaves the
+        // block data present (recoverable) rather than a dangling height index.
         self.by_hash.insert(&block.hash.0, &block);
+        self.by_height.insert(&block.height.as_u64(), &block.hash.0);
     }
 
     fn get_block(&self, hash: &BlockHash) -> Option<Block> {

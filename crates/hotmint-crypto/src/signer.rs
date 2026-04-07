@@ -1,4 +1,3 @@
-use ed25519_dalek::Verifier as DalekVerifier;
 use ed25519_dalek::{Signer as DalekSigner, SigningKey, VerifyingKey};
 use hotmint_types::crypto::{PublicKey, Signature};
 use hotmint_types::validator::{ValidatorId, ValidatorSet};
@@ -62,7 +61,7 @@ impl Verifier for Ed25519Verifier {
             Err(_) => return false,
         };
         let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-        vk.verify(msg, &signature).is_ok()
+        vk.verify_strict(msg, &signature).is_ok()
     }
 
     fn verify_aggregate(&self, vs: &ValidatorSet, msg: &[u8], agg: &AggregateSignature) -> bool {

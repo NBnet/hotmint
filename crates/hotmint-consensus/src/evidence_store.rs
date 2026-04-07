@@ -19,4 +19,7 @@ pub trait EvidenceStore: Send + Sync {
 
     /// Return every stored proof (committed or not).
     fn all(&self) -> Vec<EquivocationProof>;
+
+    /// Flush pending writes to durable storage.
+    fn flush(&self);
 }
