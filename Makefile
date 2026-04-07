@@ -5,6 +5,7 @@ CRATES := \
 	hotmint-types \
 	hotmint-mempool \
 	hotmint-crypto \
+	hotmint-mgmt \
 	hotmint-consensus \
 	hotmint-abci-proto \
 	hotmint-abci \
@@ -13,8 +14,7 @@ CRATES := \
 	hotmint-storage \
 	hotmint-light \
 	hotmint-api \
-	hotmint \
-	hotmint-mgmt
+	hotmint
 
 .PHONY: all fmt lint build test bench bench-e2e bench-consensus bench-utxo bench-all run clean check doc update publish
 
