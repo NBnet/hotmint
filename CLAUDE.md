@@ -70,7 +70,7 @@ Supporting documentation in `.claude/docs/`:
 
 - All clippy warnings are errors (CI enforced: `-D warnings`)
 - **No `#[allow(...)]`** — fix warnings at the source, never suppress them
-- **No inline paths** — use `use` imports at file top
+- **No inline paths** — use `use` imports at file top. **Exception**: a single-use reference in a file is allowed to stay inline. For multi-use, prefer `use std::mem;` + `mem::take(..)` style (import parent module, not leaf item)
 - **Grouped imports** — merge common prefixes: `use std::sync::{Arc, Mutex};`
 - **Doc-code alignment** — public API changes must update corresponding docs
 - `parking_lot` for RwLock/Mutex (non-poisoning, fast uncontended)

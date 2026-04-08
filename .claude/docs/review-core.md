@@ -119,7 +119,7 @@ If the change touches commit, state persistence, or WAL:
 ### 4.4 Code Style Rules
 Enforced project conventions — violations are findings (severity LOW):
 - **No lint suppression**: `#[allow(...)]` is forbidden. Fix warnings at source.
-- **No inline paths**: Use `use` imports at file top.
+- **No inline paths**: Use `use` imports at file top. **Exception**: a single-use reference in a file is allowed to stay inline. For multi-use, prefer `use std::mem;` + `mem::take(..)` style (import parent module, not leaf item).
 - **Grouped imports**: Merge common prefixes.
 - **Doc-code alignment**: Public API changes must update corresponding docs.
 
