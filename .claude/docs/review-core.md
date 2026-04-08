@@ -121,7 +121,11 @@ Enforced project conventions — violations are findings (severity LOW):
 - **No lint suppression**: `#[allow(...)]` is forbidden. Fix warnings at source.
 - **No inline paths**: Use `use` imports at file top. **Exception**: a single-use reference in a file is allowed to stay inline. For multi-use, prefer `use std::mem;` + `mem::take(..)` style (import parent module, not leaf item).
 - **Grouped imports**: Merge common prefixes.
-- **Doc-code alignment**: Public API changes must update corresponding docs.
+- **Doc-code alignment**: Public API changes must update corresponding docs. When a change adds, removes, or renames a public type, module, or subsystem path, also verify:
+  - `CLAUDE.md` architecture table (paths, type names, dependency info)
+  - `.claude/docs/review-core.md` subsystem path mappings
+  - `.claude/commands/hm-review.md` full-audit subsystem partitioning table
+  - `.claude/docs/patterns/` guides — referenced file lists and invariants
 
 ## Phase 5: Reporting
 

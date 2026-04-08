@@ -66,7 +66,12 @@ For each finding: cross-reference with `technical-patterns.md` and `false-positi
 1. **No lint suppression** — `#[allow(...)]` is forbidden.
 2. **No inline paths** — use `use` imports at file top.
 3. **Import grouping** — merge common prefixes.
-4. **Doc-code alignment** — public API changes must update docs.
+4. **Doc-code alignment** — If the change modifies a public function signature, struct field, module structure, or adds/removes/renames a public type or module, verify docs still match. Specifically check:
+   - `CLAUDE.md` architecture table (subsystem paths, type names, dependency info)
+   - `.claude/docs/review-core.md` subsystem path mappings
+   - `.claude/commands/hm-review.md` full-audit subsystem partitioning table
+   - `.claude/docs/patterns/` guides — referenced file lists and invariants
+   - Doc comments and README
 
 ### Task 5: Unsafe Code Audit
 
