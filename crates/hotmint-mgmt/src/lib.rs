@@ -22,6 +22,7 @@ pub mod local;
 pub mod remote;
 
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 
 /// Detect the available loopback address (IPv4 preferred, IPv6 fallback).
 ///
@@ -75,13 +76,13 @@ pub fn find_free_ports(n: usize) -> Vec<u16> {
 ///
 /// Returns `None` if the build fails.
 pub fn build_binary(package: &str, bin_name: Option<&str>) -> Option<PathBuf> {
-    let mut cmd = std::process::Command::new("cargo");
+    let mut cmd = Command::new("cargo");
     cmd.args(["build", "--release", "-p", package]);
     if let Some(name) = bin_name {
         cmd.args(["--bin", name]);
     }
-    cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     match cmd.status() {
         Ok(s) if s.success() => {
@@ -98,10 +99,10 @@ pub fn build_binary(package: &str, bin_name: Option<&str>) -> Option<PathBuf> {
 /// Locate the workspace root by walking up from CARGO_MANIFEST_DIR.
 fn find_workspace_root() -> Option<PathBuf> {
     // Try using `cargo metadata` for accuracy
-    let output = std::process::Command::new("cargo")
+    let output = Command::new("cargo")
         .args(["metadata", "--no-deps", "--format-version=1"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
         .output()
         .ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
@@ -120,8 +121,8 @@ pub fn start_node_process(
     binary: &Path,
     home_dir: &Path,
     log_path: Option<&Path>,
-) -> std::io::Result<std::process::Child> {
-    let mut cmd = std::process::Command::new(binary);
+) -> std::io::Result<Child> {
+    let mut cmd = Command::new(binary);
     cmd.arg("--home").arg(home_dir);
 
     if let Some(log) = log_path {
@@ -171,10 +172,10 @@ pub fn wait_for_rpc(host: &str, port: u16, timeout_secs: u64) -> bool {
 /// without proper cleanup. Best-effort: silently ignores errors.
 pub fn kill_stale_nodes(base_dir: &Path) {
     let pattern = format!("--home {}", base_dir.display());
-    let _ = std::process::Command::new("pkill")
+    let _ = Command::new("pkill")
         .args(["-9", "-f", &pattern])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status();
     // Brief pause to let OS reclaim resources.
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -190,7 +191,7 @@ pub fn start_cluster_nodes(
     state: &cluster::ClusterState,
     base_dir: &Path,
     extra_args: &[&str],
-) -> Vec<std::process::Child> {
+) -> Vec<Child> {
     use std::time::Duration;
 
     // Clean up orphaned nodes from previous runs.
@@ -201,7 +202,7 @@ pub fn start_cluster_nodes(
         let log = std::fs::File::create(base_dir.join(format!("v{}.log", v.id)))
             .expect("create log file");
         let log_err = log.try_clone().expect("clone log file");
-        let mut cmd = std::process::Command::new(binary);
+        let mut cmd = Command::new(binary);
         for arg in extra_args {
             cmd.arg(arg);
         }

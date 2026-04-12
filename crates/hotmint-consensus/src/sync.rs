@@ -425,7 +425,9 @@ pub fn replay_blocks(
     // H-7: Track pending epoch separately, matching the runtime's deferred
     // activation semantics. The new epoch only takes effect when we reach
     // its start_view, preventing validator set mismatches during replay.
-    let mut pending_epoch: Option<Epoch> = None;
+    // A4-1: Load any pending epoch from a prior batch so cross-batch
+    // epoch transitions are not lost.
+    let mut pending_epoch: Option<Epoch> = state.pending_epoch.take();
 
     for (i, (block, qc)) in blocks.iter().enumerate() {
         // H-7: Apply pending epoch transition at exactly start_view, matching

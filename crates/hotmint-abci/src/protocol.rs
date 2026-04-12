@@ -110,7 +110,7 @@ pub fn decode_request(buf: &[u8]) -> Result<Request, prost::DecodeError> {
             block: r
                 .block
                 .ok_or_else(|| prost::DecodeError::new("missing block"))?
-                .into(),
+                .try_into()?,
             ctx: r
                 .ctx
                 .ok_or_else(|| prost::DecodeError::new("missing ctx"))?
@@ -131,13 +131,13 @@ pub fn decode_request(buf: &[u8]) -> Result<Request, prost::DecodeError> {
             block: r
                 .block
                 .ok_or_else(|| prost::DecodeError::new("missing block"))?
-                .into(),
+                .try_into()?,
             ctx: r
                 .ctx
                 .ok_or_else(|| prost::DecodeError::new("missing ctx"))?
                 .into(),
         },
-        pb::request::Request::OnEvidence(proof) => Request::OnEvidence(proof.into()),
+        pb::request::Request::OnEvidence(proof) => Request::OnEvidence(proof.try_into()?),
         pb::request::Request::Query(r) => Request::Query {
             path: r.path,
             data: r.data,
@@ -226,7 +226,11 @@ pub fn decode_response(buf: &[u8]) -> Result<Response, prost::DecodeError> {
         },
         pb::response::Response::ExecuteBlock(r) => {
             if r.error.is_empty() {
-                let ebr = r.result.map(Into::into).unwrap_or_default();
+                let ebr = r
+                    .result
+                    .map(TryInto::try_into)
+                    .transpose()?
+                    .unwrap_or_default();
                 Response::ExecuteBlock(Ok(ebr))
             } else {
                 Response::ExecuteBlock(Err(r.error))

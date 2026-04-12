@@ -14,6 +14,7 @@ use tracing::{Level, error, info};
 
 use hotmint::abci::client::IpcApplicationClient;
 use hotmint::api::rpc::ConsensusStatus;
+use hotmint::api::types::ValidatorInfoResponse;
 use hotmint::config::{self, GenesisDoc, NodeConfig, NodeKey, NodeMode, PrivValidatorKey};
 use hotmint::consensus::application::{Application, NoopApplication, TxValidationResult};
 use hotmint::consensus::engine::{ConsensusEngine, EngineConfig};
@@ -429,10 +430,10 @@ async fn run_node(
     let watcher_status_rx = status_tx.subscribe();
 
     // Validator set watch channel (updated on epoch transitions via on_commit)
-    let initial_vs: Vec<hotmint::api::types::ValidatorInfoResponse> = validator_set
+    let initial_vs: Vec<ValidatorInfoResponse> = validator_set
         .validators()
         .iter()
-        .map(|v| hotmint::api::types::ValidatorInfoResponse {
+        .map(|v| ValidatorInfoResponse {
             id: v.id.0,
             power: v.power,
             public_key: hex::encode(&v.public_key.0),
@@ -905,7 +906,7 @@ async fn run_node(
 struct AppWithStatus {
     inner: Arc<dyn Application>,
     status_tx: watch::Sender<ConsensusStatus>,
-    vs_tx: watch::Sender<Vec<hotmint::api::types::ValidatorInfoResponse>>,
+    vs_tx: watch::Sender<Vec<ValidatorInfoResponse>>,
     epoch_tx: watch::Sender<hotmint_types::epoch::Epoch>,
     mempool: Arc<Mempool>,
     event_tx: Option<broadcast::Sender<ChainEvent>>,
@@ -942,11 +943,11 @@ impl Application for AppWithStatus {
             ctx.epoch_start_view.as_u64(),
         ));
         // Update validator set for RPC
-        let vs: Vec<hotmint::api::types::ValidatorInfoResponse> = ctx
+        let vs: Vec<ValidatorInfoResponse> = ctx
             .validator_set
             .validators()
             .iter()
-            .map(|v| hotmint::api::types::ValidatorInfoResponse {
+            .map(|v| ValidatorInfoResponse {
                 id: v.id.0,
                 power: v.power,
                 public_key: hex::encode(&v.public_key.0),

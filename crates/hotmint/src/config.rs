@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use hotmint_types::crypto::PublicKey;
 use hotmint_types::validator::{ValidatorId, ValidatorInfo, ValidatorSet};
+use litep2p::crypto::ed25519 as l2p_ed25519;
 
 // ── config.toml ────────────────────────────────────────────────────
 
@@ -226,7 +227,7 @@ impl PrivValidatorKey {
         Ok(SigningKey::from_bytes(&seed))
     }
 
-    pub fn to_litep2p_keypair(&self) -> Result<litep2p::crypto::ed25519::Keypair> {
+    pub fn to_litep2p_keypair(&self) -> Result<l2p_ed25519::Keypair> {
         litep2p_keypair_from_hex(&self.private_key)
     }
 
@@ -248,19 +249,19 @@ impl std::fmt::Debug for PrivValidatorKey {
 
 // ── Shared litep2p key helpers ─────────────────────────────────────
 
-fn litep2p_keypair_from_hex(private_key_hex: &str) -> Result<litep2p::crypto::ed25519::Keypair> {
+fn litep2p_keypair_from_hex(private_key_hex: &str) -> Result<l2p_ed25519::Keypair> {
     let bytes = hex::decode(private_key_hex).c(d!("decode private key hex"))?;
     let seed: [u8; 32] = bytes
         .try_into()
         .map_err(|_| eg!("private key must be 32 bytes"))?;
-    let secret = litep2p::crypto::ed25519::SecretKey::try_from_bytes(seed)
+    let secret = l2p_ed25519::SecretKey::try_from_bytes(seed)
         .c(d!("create litep2p secret key"))?;
-    Ok(litep2p::crypto::ed25519::Keypair::from(secret))
+    Ok(l2p_ed25519::Keypair::from(secret))
 }
 
 fn peer_id_from_hex(public_key_hex: &str) -> Result<litep2p::PeerId> {
     let pk_bytes = hex::decode(public_key_hex).c(d!("decode public key hex"))?;
-    let lpk = litep2p::crypto::ed25519::PublicKey::try_from_bytes(&pk_bytes)
+    let lpk = l2p_ed25519::PublicKey::try_from_bytes(&pk_bytes)
         .c(d!("invalid ed25519 public key"))?;
     Ok(lpk.to_peer_id())
 }
@@ -310,7 +311,7 @@ impl NodeKey {
     }
 
     /// Convert to a litep2p Ed25519 keypair for P2P networking.
-    pub fn to_litep2p_keypair(&self) -> Result<litep2p::crypto::ed25519::Keypair> {
+    pub fn to_litep2p_keypair(&self) -> Result<l2p_ed25519::Keypair> {
         litep2p_keypair_from_hex(&self.private_key)
     }
 
@@ -451,7 +452,7 @@ pub fn parse_persistent_peers(peers: &[String], genesis: &GenesisDoc) -> Result<
             .ok_or_else(|| eg!("validator {} not found in genesis", vid))?;
 
         let pk_bytes = hex::decode(&gv.public_key).c(d!("decode peer public key"))?;
-        let pk = litep2p::crypto::ed25519::PublicKey::try_from_bytes(&pk_bytes)
+        let pk = l2p_ed25519::PublicKey::try_from_bytes(&pk_bytes)
             .c(d!("invalid ed25519 public key for validator {}", vid))?;
         let peer_id = pk.to_peer_id();
 

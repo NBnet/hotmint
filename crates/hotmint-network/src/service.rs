@@ -68,7 +68,13 @@ impl PeerMap {
         if let Some(old_pid) = self.validator_to_peer.insert(vid, pid) {
             self.peer_to_validator.remove(&old_pid);
         }
-        self.peer_to_validator.insert(pid, vid);
+        // A4-3: Clean stale forward mapping when a PeerId is reused by
+        // a different validator (bidirectional consistency).
+        if let Some(old_vid) = self.peer_to_validator.insert(pid, vid)
+            && old_vid != vid
+        {
+            self.validator_to_peer.remove(&old_vid);
+        }
     }
 
     pub fn remove(&mut self, vid: ValidatorId) -> Option<PeerId> {
@@ -516,7 +522,9 @@ impl NetworkService {
                             {
                                 self.seen_active.insert(msg_hash);
                                 let raw = notification.to_vec();
-                                for &other in &self.connected_peers {
+                                // A4-6: Use notif_connected_peers (peers with open substream)
+                                // instead of connected_peers (all TCP-connected).
+                                for &other in &self.notif_connected_peers {
                                     if other != peer {
                                         let _ = self
                                             .notif_handle
@@ -844,6 +852,11 @@ impl NetworkService {
 
     /// C-1: Pick a non-validator connected peer to evict, giving validators
     /// priority access to connection slots.
+    fn remove_mempool_peer(&mut self, peer: &PeerId) {
+        self.mempool_notif_connected_peers.remove(peer);
+        self.mempool_peer_rate.remove(peer);
+    }
+
     fn pick_non_validator_to_evict(&self) -> Option<PeerId> {
         self.connected_peers
             .iter()
@@ -881,6 +894,8 @@ impl NetworkService {
                     );
                     self.connected_peers.remove(&evict_peer);
                     self.notif_connected_peers.remove(&evict_peer);
+                    // A4-4: Also clean mempool peer tracking on eviction.
+                    self.remove_mempool_peer(&evict_peer);
                     // litep2p doesn't expose disconnect — closing the notification
                     // substream will cause the peer to be cleaned up eventually.
                 }
@@ -910,6 +925,9 @@ impl NetworkService {
                         .notif_connected_count_tx
                         .send(self.notif_connected_peers.len());
                 }
+                // A4-5: Also eagerly clean mempool peer tracking (same
+                // rationale as consensus notif cleanup above).
+                self.remove_mempool_peer(&peer);
             }
             Litep2pEvent::DialFailure { address, error, .. } => {
                 warn!(address = %address, error = ?error, "dial failed");
@@ -1001,8 +1019,7 @@ impl NetworkService {
             }
             NotificationEvent::NotificationStreamClosed { peer } => {
                 trace!(peer = %peer, "mempool notif stream closed");
-                self.mempool_notif_connected_peers.remove(&peer);
-                self.mempool_peer_rate.remove(&peer);
+                self.remove_mempool_peer(&peer);
             }
             NotificationEvent::NotificationReceived { peer, notification } => {
                 // C-2: Per-peer tx gossip rate limit — max 500 tx/sec per peer.

@@ -44,19 +44,24 @@ impl From<Block> for pb::Block {
     }
 }
 
-impl From<pb::Block> for Block {
-    fn from(b: pb::Block) -> Self {
-        Self {
+impl TryFrom<pb::Block> for Block {
+    type Error = prost::DecodeError;
+    fn try_from(b: pb::Block) -> Result<Self, Self::Error> {
+        Ok(Self {
             height: Height(b.height),
-            parent_hash: bytes_to_hash(&b.parent_hash),
+            parent_hash: bytes_to_hash(&b.parent_hash)?,
             view: ViewNumber(b.view),
             proposer: ValidatorId(b.proposer),
             timestamp: b.timestamp,
             payload: b.payload,
-            app_hash: bytes_to_hash(&b.app_hash),
-            evidence: b.evidence.into_iter().map(|e| e.into()).collect(),
-            hash: bytes_to_hash(&b.hash),
-        }
+            app_hash: bytes_to_hash(&b.app_hash)?,
+            evidence: b
+                .evidence
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<Result<_, _>>()?,
+            hash: bytes_to_hash(&b.hash)?,
+        })
     }
 }
 
@@ -202,9 +207,10 @@ impl From<EquivocationProof> for pb::EquivocationProof {
     }
 }
 
-impl From<pb::EquivocationProof> for EquivocationProof {
-    fn from(e: pb::EquivocationProof) -> Self {
-        Self {
+impl TryFrom<pb::EquivocationProof> for EquivocationProof {
+    type Error = prost::DecodeError;
+    fn try_from(e: pb::EquivocationProof) -> Result<Self, Self::Error> {
+        Ok(Self {
             validator: ValidatorId(e.validator),
             view: ViewNumber(e.view),
             vote_type: if e.vote_type == 1 {
@@ -213,11 +219,11 @@ impl From<pb::EquivocationProof> for EquivocationProof {
                 VoteType::Vote
             },
             epoch: EpochNumber(e.epoch),
-            block_hash_a: bytes_to_hash(&e.block_hash_a),
+            block_hash_a: bytes_to_hash(&e.block_hash_a)?,
             signature_a: Signature(e.signature_a),
-            block_hash_b: bytes_to_hash(&e.block_hash_b),
+            block_hash_b: bytes_to_hash(&e.block_hash_b)?,
             signature_b: Signature(e.signature_b),
-        }
+        })
     }
 }
 
@@ -305,28 +311,29 @@ impl From<EndBlockResponse> for pb::EndBlockResponse {
     }
 }
 
-impl From<pb::EndBlockResponse> for EndBlockResponse {
-    fn from(r: pb::EndBlockResponse) -> Self {
-        Self {
+impl TryFrom<pb::EndBlockResponse> for EndBlockResponse {
+    type Error = prost::DecodeError;
+    fn try_from(r: pb::EndBlockResponse) -> Result<Self, Self::Error> {
+        Ok(Self {
             validator_updates: r.validator_updates.into_iter().map(Into::into).collect(),
             events: r.events.into_iter().map(Into::into).collect(),
-            app_hash: bytes_to_hash(&r.app_hash),
-        }
+            app_hash: bytes_to_hash(&r.app_hash)?,
+        })
     }
 }
 
 // ---- Helpers ----
 
-fn bytes_to_hash(bytes: &[u8]) -> BlockHash {
+// A4-7: Return an error instead of panicking on malformed hash bytes.
+fn bytes_to_hash(bytes: &[u8]) -> Result<BlockHash, prost::DecodeError> {
     if bytes.is_empty() {
-        return BlockHash::GENESIS;
+        return Ok(BlockHash::GENESIS);
     }
-    assert!(
-        bytes.len() == 32,
-        "bytes_to_hash: expected 32 bytes, got {}",
-        bytes.len()
-    );
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(bytes);
-    BlockHash(hash)
+    let hash: [u8; 32] = bytes.try_into().map_err(|_| {
+        prost::DecodeError::new(format!(
+            "bytes_to_hash: expected 32 bytes, got {}",
+            bytes.len()
+        ))
+    })?;
+    Ok(BlockHash(hash))
 }

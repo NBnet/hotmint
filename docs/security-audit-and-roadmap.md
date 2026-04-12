@@ -17,7 +17,7 @@
 | Core Strengths | Complete ecosystem, rich toolchain, mature protocol | Lower latency, more modular architecture, memory safety |
 | Main Weaknesses | Three-phase voting latency, Go GC tail-latency jitter | Missing IBC cross-chain protocol; ecosystem tooling still maturing |
 
-Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential to surpass CometBFT in core consensus algorithm and architectural modernization. All security vulnerabilities and engineering defects from the first three audit rounds have been resolved (C-1..C-7, H-1..H-12, R-1, A-1..A-8, B-1..B-3, second-round C-1..C-5, third-round A3-1..A3-12). The fourth-round audit (2026-04-12) found 8 new findings (0 critical, 1 high, 7 low). All feature roadmap items are complete. Core feature parity with CometBFT has been achieved — the only remaining gap is:
+Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential to surpass CometBFT in core consensus algorithm and architectural modernization. All security vulnerabilities and engineering defects from all four audit rounds have been resolved (C-1..C-7, H-1..H-12, R-1, A-1..A-8, B-1..B-3, second-round C-1..C-5, third-round A3-1..A3-12, fourth-round A4-1..A4-8). All feature roadmap items are complete. Core feature parity with CometBFT has been achieved — the only remaining gap is:
 - **Ecosystem Expansion Layer:** IBC cross-chain protocol (infrastructure ready, protocol not implemented)
 
 ---
@@ -568,7 +568,7 @@ pub fn insert(&mut self, vid: ValidatorId, pid: PeerId) {
 
 ### 19.2 Findings
 
-#### [ ] A4-1. `replay_blocks` Drops Pending Epoch From Prior Batch — Cross-Epoch Sync Broken `[HIGH — Sync]`
+#### [x] A4-1. `replay_blocks` Drops Pending Epoch From Prior Batch — Cross-Epoch Sync Broken `[HIGH — Sync]`
 
 **Where:** `crates/hotmint-consensus/src/sync.rs:428`
 **What:** `replay_blocks()` initializes its local `pending_epoch` to `None` instead of reading from `state.pending_epoch`. When an epoch transition is triggered in batch N (e.g., block at view 99 sets `start_view=101`) but the activation view falls in batch N+1, the pending epoch stored by `sync_to_tip` at line 178 into `state.pending_epoch` is never loaded by the next `replay_blocks` call. Batch N+1's blocks in the new epoch are then verified against the OLD validator set, causing spurious QC verification failures and sync abort.
@@ -583,7 +583,7 @@ let mut pending_epoch: Option<Epoch> = state.pending_epoch.take();
 
 ---
 
-#### [ ] A4-2. Equivocation Evidence Not Flushed Immediately After Detection `[LOW — Engine]`
+#### [x] A4-2. Equivocation Evidence Not Flushed Immediately After Detection `[LOW — Engine]`
 
 **Where:** `crates/hotmint-consensus/src/engine.rs:1340-1354`
 **What:** `handle_equivocation()` calls `evidence_store.put_evidence()` but never calls `evidence_store.flush()`. The next `flush()` only occurs inside `process_commit_result` (line 1566). If the node crashes between detecting equivocation and the next block commit, the evidence is lost from durable storage. Note: A3-2 fixed the missing `flush()` method on the trait and A3-4 fixed the commit-path flush ordering; this is the *detection-path* gap that remained.
@@ -592,7 +592,7 @@ let mut pending_epoch: Option<Epoch> = state.pending_epoch.take();
 
 ---
 
-#### [ ] A4-3. PeerMap.insert Does Not Clean Stale Reverse Mapping When PeerId Is Reused `[LOW — Network]`
+#### [x] A4-3. PeerMap.insert Does Not Clean Stale Reverse Mapping When PeerId Is Reused `[LOW — Network]`
 
 **Where:** `crates/hotmint-network/src/service.rs:67-72`
 **What:** When `insert(vid, pid)` is called and `pid` already maps to a different ValidatorId in `peer_to_validator`, the old ValidatorId's forward entry in `validator_to_peer` is left dangling. A `send_to(old_vid)` would route to `pid`, which now belongs to a different validator. Note: A3-1 fixed the old_pid forward cleanup; this is the symmetric reverse-direction case.
@@ -608,7 +608,7 @@ if let Some(old_vid) = self.peer_to_validator.insert(pid, vid) {
 
 ---
 
-#### [ ] A4-4. Eviction Does Not Clean Mempool Peer Tracking `[LOW — Network]`
+#### [x] A4-4. Eviction Does Not Clean Mempool Peer Tracking `[LOW — Network]`
 
 **Where:** `crates/hotmint-network/src/service.rs:882-886`
 **What:** When a non-validator peer is evicted (C-1 eviction to make room for a validator), it is removed from `connected_peers` and `notif_connected_peers` but NOT from `mempool_notif_connected_peers` or `mempool_peer_rate`. Evicted peers remain in the mempool broadcast set and the rate-limit HashMap leaks entries.
@@ -617,7 +617,7 @@ if let Some(old_vid) = self.peer_to_validator.insert(pid, vid) {
 
 ---
 
-#### [ ] A4-5. ConnectionClosed Does Not Clean Mempool Peer Tracking `[LOW — Network]`
+#### [x] A4-5. ConnectionClosed Does Not Clean Mempool Peer Tracking `[LOW — Network]`
 
 **Where:** `crates/hotmint-network/src/service.rs:902-913`
 **What:** Same issue as A4-4 but for normal TCP disconnects. Consensus notification peers are eagerly cleaned on `ConnectionClosed`, but mempool notification peers and rate-limit entries are not. The code explicitly handles the "TCP drops before `NotificationStreamClosed`" race for consensus (lines 906-912) but not for mempool.
@@ -626,7 +626,7 @@ if let Some(old_vid) = self.peer_to_validator.insert(pid, vid) {
 
 ---
 
-#### [ ] A4-6. Relay Broadcasts to `connected_peers` Instead of `notif_connected_peers` `[LOW — Network]`
+#### [x] A4-6. Relay Broadcasts to `connected_peers` Instead of `notif_connected_peers` `[LOW — Network]`
 
 **Where:** `crates/hotmint-network/src/service.rs:519`
 **What:** Message relay iterates `self.connected_peers` (all TCP-connected peers) rather than `self.notif_connected_peers` (peers with an open notification substream). The handle_command `Broadcast` path (line 941) correctly uses `notif_connected_peers`. `send_sync_notification` to peers without an open substream fails silently (`let _ =`), generating unnecessary failed attempts per relayed message.
@@ -635,7 +635,7 @@ if let Some(old_vid) = self.peer_to_validator.insert(pid, vid) {
 
 ---
 
-#### [ ] A4-7. `assert!` Panic in `bytes_to_hash` on Malformed ABCI Protobuf Input `[LOW — ABCI Proto]`
+#### [x] A4-7. `assert!` Panic in `bytes_to_hash` on Malformed ABCI Protobuf Input `[LOW — ABCI Proto]`
 
 **Where:** `crates/hotmint-abci-proto/src/convert.rs:324-328`
 **What:** `bytes_to_hash()` calls `assert!(bytes.len() == 32)` which panics on non-32-byte non-empty input. Reachable from any protobuf decode path (`Block`, `EquivocationProof`, `EndBlockResponse`) when the remote ABCI application sends a malformed hash field. Note: A3-9 fixed silent truncation/padding; the remaining case is non-empty input of wrong length, which now panics instead of returning an error.
@@ -644,7 +644,7 @@ if let Some(old_vid) = self.peer_to_validator.insert(pid, vid) {
 
 ---
 
-#### [ ] A4-8. Inline-Path Rule Violations Across 3 Files `[LOW — Style]`
+#### [x] A4-8. Inline-Path Rule Violations Across 3 Files `[LOW — Style]`
 
 **Where:**
 - `crates/hotmint-mgmt/src/lib.rs` — `std::process::{Command, Stdio}` used 11 times without import

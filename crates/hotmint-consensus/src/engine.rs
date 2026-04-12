@@ -1350,6 +1350,9 @@ impl ConsensusEngine {
             self.network.broadcast_evidence(proof);
             if let Some(ref mut store) = self.evidence_store {
                 store.put_evidence(proof.clone());
+                // A4-2: Flush immediately so evidence survives crashes
+                // between detection and the next block commit.
+                store.flush();
             }
         }
     }
