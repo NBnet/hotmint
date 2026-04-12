@@ -1,8 +1,8 @@
 # Hotmint Security Audit & Evolution Roadmap
 
-> **Report Version:** Based on Hotmint v0.8.5 / CometBFT v0.38
-> **Generated:** 2026-03-24 | **Last Audit:** 2026-04-07 | **Last Document Sync:** 2026-04-07
-> **Sources:** CometBFT feature gap analysis + three rounds of code security audit
+> **Report Version:** Based on Hotmint v0.8.6 / CometBFT v0.38
+> **Generated:** 2026-03-24 | **Last Audit:** 2026-04-12 | **Last Document Sync:** 2026-04-12
+> **Sources:** CometBFT feature gap analysis + four rounds of code security audit
 > **Purpose:** Serves as a reference baseline for the long-term evolution roadmap. Update completion status after each iteration (change `[ ]` to `[x]`, partially complete marked `[~]`).
 
 ---
@@ -17,7 +17,7 @@
 | Core Strengths | Complete ecosystem, rich toolchain, mature protocol | Lower latency, more modular architecture, memory safety |
 | Main Weaknesses | Three-phase voting latency, Go GC tail-latency jitter | Missing IBC cross-chain protocol; ecosystem tooling still maturing |
 
-Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential to surpass CometBFT in core consensus algorithm and architectural modernization. All security vulnerabilities and engineering defects from all three audit rounds have been resolved (C-1..C-7, H-1..H-12, R-1, A-1..A-8, B-1..B-3, second-round C-1..C-5, third-round A3-1..A3-12). All feature roadmap items are complete. Core feature parity with CometBFT has been achieved — the only remaining gap is:
+Hotmint's combination of **Rust + HotStuff-2 + litep2p** gives it the potential to surpass CometBFT in core consensus algorithm and architectural modernization. All security vulnerabilities and engineering defects from the first three audit rounds have been resolved (C-1..C-7, H-1..H-12, R-1, A-1..A-8, B-1..B-3, second-round C-1..C-5, third-round A3-1..A3-12). The fourth-round audit (2026-04-12) found 8 new findings (0 critical, 1 high, 7 low). All feature roadmap items are complete. Core feature parity with CometBFT has been achieved — the only remaining gap is:
 - **Ecosystem Expansion Layer:** IBC cross-chain protocol (infrastructure ready, protocol not implemented)
 
 ---
@@ -544,6 +544,135 @@ pub fn insert(&mut self, vid: ValidatorId, pid: PeerId) {
 | **ABCI framing** | INV-API3 — 64MB bound; length validated before allocation |
 | **API read-only** | INV-API1 — no write locks in RPC handlers |
 | **Concurrency** | No parking_lot guards across .await; all channels bounded on consensus path; select! branches cancel-safe |
+
+---
+
+## 19. Fourth-Round Full Codebase Audit (2026-04-12)
+
+> **Audit Scope:** Full codebase (~16K LOC), all crates
+> **Base Commit:** `4044a24` (v0.8.6)
+> **Methodology:** Parallel subsystem audit per `.claude/docs/review-core.md`
+> **Auditor:** Claude Code (automated deep analysis)
+> **Findings:** 8 total (0 critical, 1 high, 0 medium, 7 low)
+
+### 19.1 Summary
+
+| Subsystem | Findings | Severity |
+|-----------|:--------:|----------|
+| Sync | 1 | HIGH |
+| Engine | 1 | LOW |
+| Network | 4 | LOW, LOW, LOW, LOW |
+| ABCI Proto | 1 | LOW |
+| Facade & Mgmt | 1 | LOW (style) |
+| Consensus core, Pacemaker, Types, Crypto, Storage, Mempool, Light client, Staking, API | 0 | Clean |
+
+### 19.2 Findings
+
+#### [ ] A4-1. `replay_blocks` Drops Pending Epoch From Prior Batch — Cross-Epoch Sync Broken `[HIGH — Sync]`
+
+**Where:** `crates/hotmint-consensus/src/sync.rs:428`
+**What:** `replay_blocks()` initializes its local `pending_epoch` to `None` instead of reading from `state.pending_epoch`. When an epoch transition is triggered in batch N (e.g., block at view 99 sets `start_view=101`) but the activation view falls in batch N+1, the pending epoch stored by `sync_to_tip` at line 178 into `state.pending_epoch` is never loaded by the next `replay_blocks` call. Batch N+1's blocks in the new epoch are then verified against the OLD validator set, causing spurious QC verification failures and sync abort.
+**Invariant:** Sync convergence invariant. Pattern 2.3 (sync loop). The infrastructure to fix this exists (`SyncState.pending_epoch` field, A-1 comments) but the load side was never wired up.
+**Fix:**
+```rust
+// sync.rs line 428 — change:
+let mut pending_epoch: Option<Epoch> = None;
+// to:
+let mut pending_epoch: Option<Epoch> = state.pending_epoch.take();
+```
+
+---
+
+#### [ ] A4-2. Equivocation Evidence Not Flushed Immediately After Detection `[LOW — Engine]`
+
+**Where:** `crates/hotmint-consensus/src/engine.rs:1340-1354`
+**What:** `handle_equivocation()` calls `evidence_store.put_evidence()` but never calls `evidence_store.flush()`. The next `flush()` only occurs inside `process_commit_result` (line 1566). If the node crashes between detecting equivocation and the next block commit, the evidence is lost from durable storage. Note: A3-2 fixed the missing `flush()` method on the trait and A3-4 fixed the commit-path flush ordering; this is the *detection-path* gap that remained.
+**Invariant:** INV-ST4 (evidence persistence). Pattern 6.3.
+**Fix:** Add `self.evidence_store.as_ref().map(|s| s.flush());` after `put_evidence` in `handle_equivocation()`.
+
+---
+
+#### [ ] A4-3. PeerMap.insert Does Not Clean Stale Reverse Mapping When PeerId Is Reused `[LOW — Network]`
+
+**Where:** `crates/hotmint-network/src/service.rs:67-72`
+**What:** When `insert(vid, pid)` is called and `pid` already maps to a different ValidatorId in `peer_to_validator`, the old ValidatorId's forward entry in `validator_to_peer` is left dangling. A `send_to(old_vid)` would route to `pid`, which now belongs to a different validator. Note: A3-1 fixed the old_pid forward cleanup; this is the symmetric reverse-direction case.
+**Invariant:** INV-N2 (PeerMap bidirectional consistency). Requires PeerId collision or misconfiguration to trigger — very low practical risk.
+**Fix:**
+```rust
+if let Some(old_vid) = self.peer_to_validator.insert(pid, vid) {
+    if old_vid != vid {
+        self.validator_to_peer.remove(&old_vid);
+    }
+}
+```
+
+---
+
+#### [ ] A4-4. Eviction Does Not Clean Mempool Peer Tracking `[LOW — Network]`
+
+**Where:** `crates/hotmint-network/src/service.rs:882-886`
+**What:** When a non-validator peer is evicted (C-1 eviction to make room for a validator), it is removed from `connected_peers` and `notif_connected_peers` but NOT from `mempool_notif_connected_peers` or `mempool_peer_rate`. Evicted peers remain in the mempool broadcast set and the rate-limit HashMap leaks entries.
+**Invariant:** Peer tracking consistency. Not a consensus correctness bug — sends to evicted peers fail silently at litep2p layer.
+**Fix:** Add to eviction block: `self.mempool_notif_connected_peers.remove(&evict_peer); self.mempool_peer_rate.remove(&evict_peer);`
+
+---
+
+#### [ ] A4-5. ConnectionClosed Does Not Clean Mempool Peer Tracking `[LOW — Network]`
+
+**Where:** `crates/hotmint-network/src/service.rs:902-913`
+**What:** Same issue as A4-4 but for normal TCP disconnects. Consensus notification peers are eagerly cleaned on `ConnectionClosed`, but mempool notification peers and rate-limit entries are not. The code explicitly handles the "TCP drops before `NotificationStreamClosed`" race for consensus (lines 906-912) but not for mempool.
+**Invariant:** Peer tracking consistency (asymmetry with consensus notification cleanup).
+**Fix:** Add to ConnectionClosed handler: `self.mempool_notif_connected_peers.remove(&peer); self.mempool_peer_rate.remove(&peer);`
+
+---
+
+#### [ ] A4-6. Relay Broadcasts to `connected_peers` Instead of `notif_connected_peers` `[LOW — Network]`
+
+**Where:** `crates/hotmint-network/src/service.rs:519`
+**What:** Message relay iterates `self.connected_peers` (all TCP-connected peers) rather than `self.notif_connected_peers` (peers with an open notification substream). The handle_command `Broadcast` path (line 941) correctly uses `notif_connected_peers`. `send_sync_notification` to peers without an open substream fails silently (`let _ =`), generating unnecessary failed attempts per relayed message.
+**Invariant:** Consistency between relay and broadcast paths. Not a correctness bug.
+**Fix:** Change `for &other in &self.connected_peers` to `for &other in &self.notif_connected_peers`.
+
+---
+
+#### [ ] A4-7. `assert!` Panic in `bytes_to_hash` on Malformed ABCI Protobuf Input `[LOW — ABCI Proto]`
+
+**Where:** `crates/hotmint-abci-proto/src/convert.rs:324-328`
+**What:** `bytes_to_hash()` calls `assert!(bytes.len() == 32)` which panics on non-32-byte non-empty input. Reachable from any protobuf decode path (`Block`, `EquivocationProof`, `EndBlockResponse`) when the remote ABCI application sends a malformed hash field. Note: A3-9 fixed silent truncation/padding; the remaining case is non-empty input of wrong length, which now panics instead of returning an error.
+**Invariant:** Defense-in-depth. The ABCI socket is local-only (Unix domain socket), so exploitation requires a co-located buggy application. The consensus engine should never panic on wire input.
+**Fix:** Replace `assert!` with a fallible conversion returning `Result<BlockHash, DecodeError>` and propagate the error.
+
+---
+
+#### [ ] A4-8. Inline-Path Rule Violations Across 3 Files `[LOW — Style]`
+
+**Where:**
+- `crates/hotmint-mgmt/src/lib.rs` — `std::process::{Command, Stdio}` used 11 times without import
+- `crates/hotmint/src/bin/node.rs` — `hotmint::api::types::ValidatorInfoResponse` used 5 times without import
+- `crates/hotmint/src/config.rs` — `litep2p::crypto::ed25519::*` used 7 times without import
+
+**What:** Multiple files use fully-qualified paths 5-11 times without a top-level `use` import.
+**Invariant:** Project convention — 3+ inline uses of the same path should be imported.
+**Fix:** Add appropriate `use` imports at the top of each file.
+
+---
+
+### 19.3 Clean Areas
+
+| Subsystem | What Was Verified |
+|-----------|-------------------|
+| **Consensus core** | INV-CS1 (voting safety via justify QC rank), INV-CS2 (2f+1 quorum with `ceil(2n/3)` weighted), INV-CS3 (DC validity: same block hash + view ordering + dual QC verification), INV-CS4 (commit walks full ancestor chain), INV-CS5 (view monotonicity via `advance_view_to` guard), INV-CS7 (epoch/view filtering before dispatch); duplicate vote prevention at collector + aggregate level; equivocation detection |
+| **Pacemaker** | INV-CS6 all three guarantees (timeout fires per view via dedicated select! branch, exponential backoff `1.5^n` capped at `max_timeout`, reset on DC/TC); no lock-across-await |
+| **Types & crypto** | INV-CR1 (domain separation complete: all 5 message types with chain_id, epoch, view, type tag), INV-CR2 (`verify_strict` enabled), INV-CR3 (batch verify all-or-nothing via `ed25519_dalek::verify_batch`), INV-CR4 (no Blake3 truncation for identity), INV-CR5 (ValidatorId deterministic within genesis) |
+| **Storage** | INV-ST1 (crash atomicity via WAL fsync), INV-ST2 (block store consistency: by_hash before by_height), INV-ST3 (WAL fsynced before app commit), INV-ST5 (recovery reads persisted state correctly); no parking_lot across await; correct read/write lock separation |
+| **Mempool** | INV-MP1 (BTreeSet/HashMap always updated in sync), INV-MP2 (no duplicates: `seen` checked before insert), INV-MP3 (eviction removes lowest-priority from both structures), INV-MP4 (RBF atomic: both locks held throughout); lock ordering `entries` before `seen`; pool size accurate |
+| **API** | INV-API1 (zero `.write()` calls in API crate), INV-API2 (per-IP rate limiting at 100 req/s + 100K IP cap), INV-API4 (WS count via AtomicUsize RAII guard); TCP connection limit 256 via Semaphore; 1MB line-length limit; 30s read timeout; WS backpressure via `Lagged` drop |
+| **ABCI** | INV-API3 (64MB frame cap on all 4 read/write paths); no sensitive data in error messages |
+| **Light client** | INV-CR3 (batch verify soundness); quorum + aggregate signature verification + height monotonicity; forged headers cannot pass without 2f+1 valid signatures |
+| **Staking** | Delegation uses `checked_add` / `saturating_sub`; evidence cryptographically verified before slash; unbonding logic correct; epoch transitions applied at +2 view delay |
+| **Engine** | Message dispatch validates epoch/view before processing; signature verification before state mutation; rate limiting at 100 msg/s per sender; `SharedBlockStore` lock never held across `.await`; all select! branches cancel-safe; bounded channels (8192 consensus, 4096 commands) |
+| **Unsafe blocks** | Both `libc::kill` in mgmt: SAFETY comments present and accurate; PID validated via `is_running` + `is_cluster_node`; TOCTOU inherent to POSIX PID management, mitigated as well as possible |
+| **Concurrency (global)** | No parking_lot guards across `.await` in any crate; all channels on consensus path bounded; tokio::select! branches cancel-safe; consistent lock ordering across all subsystems |
 
 ---
 
