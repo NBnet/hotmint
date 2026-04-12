@@ -119,7 +119,7 @@ If the change touches commit, state persistence, or WAL:
 ### 4.4 Code Style Rules
 Enforced project conventions — violations are findings (severity LOW):
 - **No lint suppression**: `#[allow(...)]` is forbidden. Fix warnings at source.
-- **No inline paths**: Use `use` imports at file top. **Exception**: a single-use reference in a file is allowed to stay inline. For multi-use, prefer `use std::mem;` + `mem::take(..)` style (import parent module, not leaf item).
+- **Prefer imports over inline paths**: Avoid `std::foo::Bar::new()` inline in function bodies when the same path appears 3+ times in a file; add a `use` import at file top instead. Function-body `use` statements (scoped imports) are fine. 1-2 inline uses of common `std::` items are acceptable.
 - **Grouped imports**: Merge common prefixes.
 - **Doc-code alignment**: Public API changes must update corresponding docs. When a change adds, removes, or renames a public type, module, or subsystem path, also verify:
   - `CLAUDE.md` architecture table (paths, type names, dependency info)

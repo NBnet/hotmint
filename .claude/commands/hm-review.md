@@ -64,7 +64,7 @@ For each finding: cross-reference with `technical-patterns.md` and `false-positi
 ### Task 4: Code Style Enforcement
 
 1. **No lint suppression** — `#[allow(...)]` is forbidden.
-2. **No inline paths** — use `use` imports at file top.
+2. **Prefer imports over inline paths** — Avoid inline `std::foo::Bar::new()` when the same path appears 3+ times in a file. Function-body `use` (scoped imports) are fine. 1-2 inline uses are acceptable.
 3. **Import grouping** — merge common prefixes.
 4. **Doc-code alignment** — If the change modifies a public function signature, struct field, module structure, or adds/removes/renames a public type or module, verify docs still match. Specifically check:
    - `CLAUDE.md` architecture table (subsystem paths, type names, dependency info)
