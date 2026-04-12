@@ -254,15 +254,14 @@ fn litep2p_keypair_from_hex(private_key_hex: &str) -> Result<l2p_ed25519::Keypai
     let seed: [u8; 32] = bytes
         .try_into()
         .map_err(|_| eg!("private key must be 32 bytes"))?;
-    let secret = l2p_ed25519::SecretKey::try_from_bytes(seed)
-        .c(d!("create litep2p secret key"))?;
+    let secret = l2p_ed25519::SecretKey::try_from_bytes(seed).c(d!("create litep2p secret key"))?;
     Ok(l2p_ed25519::Keypair::from(secret))
 }
 
 fn peer_id_from_hex(public_key_hex: &str) -> Result<litep2p::PeerId> {
     let pk_bytes = hex::decode(public_key_hex).c(d!("decode public key hex"))?;
-    let lpk = l2p_ed25519::PublicKey::try_from_bytes(&pk_bytes)
-        .c(d!("invalid ed25519 public key"))?;
+    let lpk =
+        l2p_ed25519::PublicKey::try_from_bytes(&pk_bytes).c(d!("invalid ed25519 public key"))?;
     Ok(lpk.to_peer_id())
 }
 

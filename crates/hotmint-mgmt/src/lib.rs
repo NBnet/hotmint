@@ -81,8 +81,7 @@ pub fn build_binary(package: &str, bin_name: Option<&str>) -> Option<PathBuf> {
     if let Some(name) = bin_name {
         cmd.args(["--bin", name]);
     }
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     match cmd.status() {
         Ok(s) if s.success() => {
