@@ -57,9 +57,8 @@ System dependency: `protobuf-compiler` (for proto code generation)
 ## Commands
 
 - `/x-review` — deep regression analysis (supports: N commits, `all`, hash, range)
-- `/x-fix` — resolve all open findings in `.claude/audit.md`
-- `/x-commit` — self-reviewing commit (review, fix, format, commit)
-- `/x-auto` — full pipeline: review → fix → commit (incremental, uncommitted changes only)
+- `/x-fix` — fix audit backlog: resolve `.claude/audit.md` → self-review → commit
+- `/x-commit` — self-reviewing commit: review uncommitted changes → fix → commit
 - `/x-overhaul` — full codebase overhaul: review all → fix → commit
 
 Supporting documentation in `.claude/docs/`:
