@@ -58,13 +58,15 @@ For EVERY finding from Task 1 (CRITICAL, HIGH, MEDIUM, or LOW):
 
 1. Run `make fmt` to apply code formatting.
 
-### Task 4: Bump Patch Version
+### Task 4: Bump Patch Version — MANDATORY
 
-If `git diff HEAD` shows actual code changes (not just version bumps):
+**You MUST complete every step below before proceeding to Task 5. Do NOT skip this task.**
 
-1. Read the current version from `Cargo.toml` (the workspace `version = "x.y.z"` line under `[workspace.package]`).
-2. Increment `z` by 1 (e.g., `0.8.7` → `0.8.8`).
-3. Update `Cargo.toml` — `version = "x.y.z+1"`.
+1. Run `git diff HEAD --name-only` — if it lists any `.rs` file, a version bump is required. Skip this task ONLY if every changed file is a non-code file (`.md`, `.toml` version-only, etc.).
+2. Read `Cargo.toml` to get the current `version = "X.Y.Z"` line under `[workspace.package]`.
+3. Compute `NEW = X.Y.(Z+1)` (e.g., `0.8.7` → `0.8.8`).
+4. Update `Cargo.toml` — `version = "NEW"` under `[workspace.package]`.
+5. **Verify**: grep the file for the NEW version string — it must match. If mismatch, fix it before continuing.
 
 ### Task 5: Commit
 
