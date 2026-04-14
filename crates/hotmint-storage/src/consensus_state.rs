@@ -56,8 +56,14 @@ impl PersistentConsensusState {
         } else {
             let store: MapxOrd<u64, StateValue> = MapxOrd::new();
             let store_id = store.save_meta().c(d!())?;
-            std::fs::write(&meta_path, store_id.to_le_bytes())
-                .c(d!("write consensus_state.meta"))?;
+            {
+                use std::io::Write;
+                let mut f =
+                    std::fs::File::create(&meta_path).c(d!("create consensus_state.meta"))?;
+                f.write_all(&store_id.to_le_bytes())
+                    .c(d!("write consensus_state.meta"))?;
+                f.sync_all().c(d!("fsync consensus_state.meta"))?;
+            }
             Ok(Self { store })
         }
     }

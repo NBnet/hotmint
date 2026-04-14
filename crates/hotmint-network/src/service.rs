@@ -3,6 +3,7 @@ use ruc::*;
 use std::collections::{HashMap, HashSet};
 use std::iter;
 use std::mem;
+use std::sync::Arc;
 use std::time::Instant;
 
 use futures::StreamExt;
@@ -21,8 +22,9 @@ use litep2p::transport::tcp::config::Config as TcpConfig;
 use litep2p::types::RequestId;
 use litep2p::types::multiaddr::Multiaddr;
 use litep2p::{Litep2p, Litep2pEvent, PeerId};
+use postcard::{from_bytes as postcard_decode, to_allocvec as postcard_encode};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{RwLock, mpsc, watch};
 use tracing::{debug, info, trace, warn};
 
 /// Type alias for the epoch update payload: (EpochNumber, validator public keys).
@@ -30,10 +32,6 @@ type EpochUpdate = Option<(
     EpochNumber,
     Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>,
 )>;
-
-use std::sync::Arc;
-
-use tokio::sync::RwLock;
 
 use crate::codec;
 use crate::peer::{PeerBook, PeerInfo, PeerRole};
@@ -685,7 +683,7 @@ impl NetworkService {
                     return;
                 }
                 self.pex_rate_limit.insert(peer, now);
-                match postcard::from_bytes::<PexRequest>(&request) {
+                match postcard_decode::<PexRequest>(&request) {
                     Ok(PexRequest::GetPeers) => {
                         let book = self.peer_book.read().await;
                         let private = &self.pex_config.private_peer_ids;
@@ -698,7 +696,7 @@ impl NetworkService {
                             .cloned()
                             .collect();
                         let resp = PexResponse::Peers(peers);
-                        if let Ok(bytes) = postcard::to_allocvec(&resp) {
+                        if let Ok(bytes) = postcard_encode(&resp) {
                             self.pex_handle.send_response(request_id, bytes);
                         }
                     }
@@ -738,7 +736,7 @@ impl NetworkService {
                             info = info.with_validator(ValidatorId(vid));
                         }
                         self.peer_book.write().await.add_peer(info);
-                        if let Ok(bytes) = postcard::to_allocvec(&PexResponse::Ack) {
+                        if let Ok(bytes) = postcard_encode(&PexResponse::Ack) {
                             self.pex_handle.send_response(request_id, bytes);
                         }
                     }
@@ -749,7 +747,7 @@ impl NetworkService {
                 }
             }
             RequestResponseEvent::ResponseReceived { response, .. } => {
-                if let Ok(PexResponse::Peers(peers)) = postcard::from_bytes(&response) {
+                if let Ok(PexResponse::Peers(peers)) = postcard_decode(&response) {
                     let mut book = self.peer_book.write().await;
                     for peer in peers {
                         if !peer.is_banned() {
@@ -842,7 +840,7 @@ impl NetworkService {
         let idx = rand::random::<usize>() % peers.len();
         let target = peers[idx];
 
-        if let Ok(bytes) = postcard::to_allocvec(&PexRequest::GetPeers) {
+        if let Ok(bytes) = postcard_encode(&PexRequest::GetPeers) {
             let _ = self
                 .pex_handle
                 .send_request(target, bytes, DialOptions::Reject)
@@ -1046,7 +1044,7 @@ impl NetworkService {
                 // Two-set rotation: swap active→backup when full, preserving
                 // recent history (same approach as relay dedup).
                 if self.mempool_seen_active.len() > 100_000 {
-                    std::mem::swap(&mut self.mempool_seen_active, &mut self.mempool_seen_backup);
+                    mem::swap(&mut self.mempool_seen_active, &mut self.mempool_seen_backup);
                     self.mempool_seen_active.clear();
                 }
                 let _ = self.mempool_tx_tx.try_send(notification.freeze().to_vec());

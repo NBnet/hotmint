@@ -1,3 +1,4 @@
+use ruc::*;
 use serde::{Deserialize, Serialize};
 
 use hotmint_types::crypto::PublicKey;
@@ -95,22 +96,20 @@ pub struct StakingConfig {
 }
 
 impl StakingConfig {
-    pub fn validate(&self) -> ruc::Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.max_validators == 0 {
-            return Err(ruc::eg!("max_validators must be > 0"));
+            return Err(eg!("max_validators must be > 0"));
         }
         if self.slash_rate_double_sign > 10_000 {
-            return Err(ruc::eg!(
+            return Err(eg!(
                 "slash_rate_double_sign must be <= 10000 (basis points)"
             ));
         }
         if self.slash_rate_downtime > 10_000 {
-            return Err(ruc::eg!(
-                "slash_rate_downtime must be <= 10000 (basis points)"
-            ));
+            return Err(eg!("slash_rate_downtime must be <= 10000 (basis points)"));
         }
         if self.initial_score > self.max_score {
-            return Err(ruc::eg!("initial_score must be <= max_score"));
+            return Err(eg!("initial_score must be <= max_score"));
         }
         Ok(())
     }

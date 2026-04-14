@@ -226,7 +226,9 @@ impl<S: StakingStore> StakingManager<S> {
         // The last staker absorbs any rounding remainder so that
         // sum(staker.amount) == vs.delegated_stake after slashing.
         if del_slash > 0 {
-            let stakers = self.store.stakers_of(id);
+            let mut stakers = self.store.stakers_of(id);
+            // Sort by address for deterministic remainder distribution across replicas.
+            stakers.sort_by(|(a, _), (b, _)| a.cmp(b));
             let total_del: u64 = stakers.iter().map(|(_, e)| e.amount).sum();
             if total_del > 0 {
                 let count = stakers.len();

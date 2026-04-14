@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -136,13 +137,9 @@ async fn ws_upgrade_handler(
 ) -> impl IntoResponse {
     // Atomically increment first, then check — avoids TOCTOU race where
     // multiple concurrent upgrades could all pass a load-then-check.
-    let prev = state
-        .ws_connection_count
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let prev = state.ws_connection_count.fetch_add(1, Ordering::Relaxed);
     if prev >= MAX_WS_CONNECTIONS {
-        state
-            .ws_connection_count
-            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        state.ws_connection_count.fetch_sub(1, Ordering::Relaxed);
         return (
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
             "too many WebSocket connections",
@@ -227,9 +224,7 @@ impl SubscribeFilter {
 struct WsCountGuard(Arc<HttpRpcState>);
 impl Drop for WsCountGuard {
     fn drop(&mut self) {
-        self.0
-            .ws_connection_count
-            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        self.0.ws_connection_count.fetch_sub(1, Ordering::Relaxed);
     }
 }
 

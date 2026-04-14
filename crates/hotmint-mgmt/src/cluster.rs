@@ -2,6 +2,7 @@
 
 use ruc::*;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use ed25519_dalek::SigningKey;
@@ -59,17 +60,36 @@ struct GenesisValidator {
     power: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct PrivValidatorKey {
     validator_id: u64,
     public_key: String,
     private_key: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl std::fmt::Debug for PrivValidatorKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PrivValidatorKey")
+            .field("validator_id", &self.validator_id)
+            .field("public_key", &self.public_key)
+            .field("private_key", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 struct NodeKey {
     public_key: String,
     private_key: String,
+}
+
+impl std::fmt::Debug for NodeKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NodeKey")
+            .field("public_key", &self.public_key)
+            .field("private_key", &"[REDACTED]")
+            .finish()
+    }
 }
 
 // ── Config template ─────────────────────────────────────────────
@@ -204,7 +224,10 @@ pub fn init_cluster(
             private_key: sk_hex.clone(),
         };
         let key_json = serde_json::to_string_pretty(&priv_key).c(d!("serialize key"))?;
-        fs::write(config_dir.join("priv_validator_key.json"), &key_json).c(d!("write key"))?;
+        let key_path = config_dir.join("priv_validator_key.json");
+        fs::write(&key_path, &key_json).c(d!("write key"))?;
+        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))
+            .c(d!("set key permissions"))?;
 
         // Node key is the same as validator key for hotmint (PeerId = validator pubkey)
         let node_key = NodeKey {
@@ -212,7 +235,10 @@ pub fn init_cluster(
             private_key: sk_hex.clone(),
         };
         let node_key_json = serde_json::to_string_pretty(&node_key).c(d!("serialize node key"))?;
-        fs::write(config_dir.join("node_key.json"), &node_key_json).c(d!("write node key"))?;
+        let node_key_path = config_dir.join("node_key.json");
+        fs::write(&node_key_path, &node_key_json).c(d!("write node key"))?;
+        fs::set_permissions(&node_key_path, fs::Permissions::from_mode(0o600))
+            .c(d!("set node key permissions"))?;
 
         // Write genesis
         fs::write(config_dir.join("genesis.json"), &genesis_json).c(d!("write genesis"))?;

@@ -225,11 +225,15 @@ pub fn deploy(
                 let local_file = local_config.join(file);
                 if local_file.exists() {
                     let content = fs::read_to_string(&local_file).c(d!("read config file"))?;
-                    ssh_write_file(
-                        &host.ssh,
-                        &format!("{}/config/{}", remote_home, file),
-                        &content,
-                    )?;
+                    let remote_path = format!("{}/config/{}", remote_home, file);
+                    ssh_write_file(&host.ssh, &remote_path, &content)?;
+                    // Restrict permissions on key files
+                    if file.contains("key") {
+                        ssh_exec(
+                            &host.ssh,
+                            &format!("chmod 600 {}", shell_escape(&remote_path)),
+                        )?;
+                    }
                 }
             }
         }

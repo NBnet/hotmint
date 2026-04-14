@@ -15,10 +15,13 @@ use crate::store::BlockStore;
 use crate::view_protocol::{self, ViewEntryTrigger};
 use crate::vote_collector::VoteCollector;
 
+use crate::pacemaker::wish_signing_bytes;
+use hotmint_crypto::has_quorum;
 use hotmint_types::epoch::Epoch;
 use hotmint_types::vote::VoteType;
 use hotmint_types::*;
 use tokio::sync::mpsc;
+use tokio::task::block_in_place;
 use tracing::{error, info, warn};
 
 /// Shared block store type used by the engine, RPC, and sync responder.
@@ -530,12 +533,7 @@ pub fn verify_relay_sender(
             let Some(pk) = validator_keys.get(validator) else {
                 return false;
             };
-            let bytes = crate::pacemaker::wish_signing_bytes(
-                chain_id_hash,
-                epoch,
-                *target_view,
-                highest_qc.as_ref(),
-            );
+            let bytes = wish_signing_bytes(chain_id_hash, epoch, *target_view, highest_qc.as_ref());
             Verifier::verify(&verifier, pk, &bytes, signature)
         }
         ConsensusMessage::TimeoutCert(tc) => {
@@ -559,8 +557,7 @@ pub fn verify_relay_sender(
                     return false;
                 };
                 let hqc = tc.highest_qcs.get(i).and_then(|h| h.as_ref());
-                let bytes =
-                    crate::pacemaker::wish_signing_bytes(chain_id_hash, epoch, target_view, hqc);
+                let bytes = wish_signing_bytes(chain_id_hash, epoch, target_view, hqc);
                 if sig_idx >= tc.aggregate_signature.signatures.len() {
                     return false;
                 }
@@ -634,12 +631,7 @@ impl ConsensusEngine {
             }
             let mut tc_sig_ok = false;
             for epoch in self.verification_epochs() {
-                let bytes = crate::pacemaker::wish_signing_bytes(
-                    &self.state.chain_id_hash,
-                    epoch,
-                    target_view,
-                    hqc,
-                );
+                let bytes = wish_signing_bytes(&self.state.chain_id_hash, epoch, target_view, hqc);
                 if self.verifier.verify(
                     &vi.public_key,
                     &bytes,
@@ -679,7 +671,7 @@ impl ConsensusEngine {
     /// Messages from past views are skipped (they'll be dropped by handle_message anyway).
     ///
     /// Crypto-heavy paths (aggregate signature verification) are run via
-    /// `tokio::task::block_in_place` so the async event loop remains responsive
+    /// `block_in_place` so the async event loop remains responsive
     /// while Ed25519 batch verification runs on the current OS thread.
     fn verify_message(&self, msg: &ConsensusMessage) -> bool {
         // Skip verification for non-Propose past-view messages — these may have
@@ -748,7 +740,7 @@ impl ConsensusEngine {
                         return false;
                     }
                     if justify.epoch == self.state.current_epoch.number
-                        && !hotmint_crypto::has_quorum(vs, &justify.aggregate_signature)
+                        && !has_quorum(vs, &justify.aggregate_signature)
                     {
                         warn!(proposer = %block.proposer, "justify QC below quorum threshold");
                         return false;
@@ -824,7 +816,7 @@ impl ConsensusEngine {
                     return false;
                 }
                 if certificate.epoch == self.state.current_epoch.number
-                    && !hotmint_crypto::has_quorum(vs, &certificate.aggregate_signature)
+                    && !has_quorum(vs, &certificate.aggregate_signature)
                 {
                     warn!(view = %certificate.view, "Prepare QC below quorum threshold");
                     return false;
@@ -849,7 +841,7 @@ impl ConsensusEngine {
                 // Signing bytes bind both target_view and highest_qc to prevent replay.
                 let mut wish_ok = false;
                 for epoch in self.verification_epochs() {
-                    let bytes = crate::pacemaker::wish_signing_bytes(
+                    let bytes = wish_signing_bytes(
                         &self.state.chain_id_hash,
                         epoch,
                         *target_view,
@@ -942,7 +934,7 @@ impl ConsensusEngine {
         // event loop is not stalled by CPU-intensive Ed25519 batch operations.
         // block_in_place yields the current thread to the scheduler while the
         // blocking work runs, keeping timers and I/O tasks responsive.
-        let verified = tokio::task::block_in_place(|| self.verify_message(&msg));
+        let verified = block_in_place(|| self.verify_message(&msg));
         if !verified {
             return Ok(());
         }
@@ -979,7 +971,7 @@ impl ConsensusEngine {
                 // If proposal is from a future view, advance to it first
                 if block.view > self.state.current_view {
                     if let Some(ref dc) = double_cert {
-                        if !tokio::task::block_in_place(|| self.validate_double_cert(dc)) {
+                        if !block_in_place(|| self.validate_double_cert(dc)) {
                             return Ok(());
                         }
 
@@ -1015,7 +1007,7 @@ impl ConsensusEngine {
                 // passes the DC straight to on_proposal → try_commit without verification.
                 // A Byzantine leader could inject a forged DC to trigger incorrect commits.
                 if let Some(ref dc) = double_cert
-                    && !tokio::task::block_in_place(|| self.validate_double_cert(dc))
+                    && !block_in_place(|| self.validate_double_cert(dc))
                 {
                     return Ok(());
                 }
@@ -1187,6 +1179,9 @@ impl ConsensusEngine {
                 highest_qc,
                 signature,
             } => {
+                if target_view < self.state.current_view {
+                    return Ok(());
+                }
                 // Validate carried highest_qc (C4 mitigation).
                 // Both signature authenticity and 2f+1 quorum weight must pass.
                 if let Some(ref qc) = highest_qc
@@ -1199,7 +1194,7 @@ impl ConsensusEngine {
                         &qc.block_hash,
                         VoteType::Vote,
                     );
-                    if !tokio::task::block_in_place(|| {
+                    if !block_in_place(|| {
                         self.verifier.verify_aggregate(
                             &self.state.validator_set,
                             &qc_bytes,
@@ -1215,10 +1210,7 @@ impl ConsensusEngine {
                     // validator power change), but its signatures were already verified
                     // above, so it remains a valid proof of finality in its own epoch.
                     if qc.epoch == self.state.current_epoch.number
-                        && !hotmint_crypto::has_quorum(
-                            &self.state.validator_set,
-                            &qc.aggregate_signature,
-                        )
+                        && !has_quorum(&self.state.validator_set, &qc.aggregate_signature)
                     {
                         warn!(validator = %validator, "wish carries highest_qc without quorum");
                         return Ok(());
@@ -1260,8 +1252,26 @@ impl ConsensusEngine {
                 signature: _,
             } => {
                 if self.state.is_leader() && self.state.step == ViewStep::WaitingForStatus {
-                    if let Some(ref qc) = locked_qc {
-                        self.state.update_highest_qc(qc);
+                    if let Some(ref qc) = locked_qc
+                        && qc.aggregate_signature.count() > 0
+                    {
+                        let qc_bytes = Vote::signing_bytes(
+                            &self.state.chain_id_hash,
+                            qc.epoch,
+                            qc.view,
+                            &qc.block_hash,
+                            VoteType::Vote,
+                        );
+                        let vs = &self.state.validator_set;
+                        if block_in_place(|| {
+                            self.verifier
+                                .verify_aggregate(vs, &qc_bytes, &qc.aggregate_signature)
+                        }) && has_quorum(vs, &qc.aggregate_signature)
+                        {
+                            self.state.update_highest_qc(qc);
+                        } else {
+                            warn!(validator = %validator, "status cert carries invalid locked_qc");
+                        }
                     }
                     self.status_senders.insert(validator);
                     let status_power: u64 = self
@@ -1637,8 +1647,8 @@ impl ConsensusEngine {
             warn!("double cert inner/outer block_hash mismatch");
             return false;
         }
-        if dc.outer_qc.view < dc.inner_qc.view {
-            warn!("double cert outer_qc.view < inner_qc.view");
+        if dc.outer_qc.view != dc.inner_qc.view {
+            warn!("double cert outer_qc.view != inner_qc.view");
             return false;
         }
         let vs = &self.state.validator_set;
@@ -1656,7 +1666,7 @@ impl ConsensusEngine {
             warn!("double cert inner QC signature invalid");
             return false;
         }
-        if !hotmint_crypto::has_quorum(vs, &dc.inner_qc.aggregate_signature) {
+        if !has_quorum(vs, &dc.inner_qc.aggregate_signature) {
             warn!("double cert inner QC below quorum threshold");
             return false;
         }
@@ -1674,7 +1684,7 @@ impl ConsensusEngine {
             warn!("double cert outer QC signature invalid");
             return false;
         }
-        if !hotmint_crypto::has_quorum(vs, &dc.outer_qc.aggregate_signature) {
+        if !has_quorum(vs, &dc.outer_qc.aggregate_signature) {
             warn!("double cert outer QC below quorum threshold");
             return false;
         }
@@ -2038,7 +2048,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            !hotmint_crypto::has_quorum(&vs, &agg),
+            !has_quorum(&vs, &agg),
             "R-32 regression: 1-of-4 signed QC must not satisfy has_quorum"
         );
 
@@ -2050,7 +2060,7 @@ mod tests {
                 .unwrap();
         }
         assert!(
-            hotmint_crypto::has_quorum(&vs, &agg_full),
+            has_quorum(&vs, &agg_full),
             "R-32: 3-of-4 signed QC must satisfy has_quorum"
         );
     }

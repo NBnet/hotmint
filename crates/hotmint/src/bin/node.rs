@@ -235,16 +235,15 @@ async fn run_node(
         let mut seen_ids = std::collections::HashSet::new();
         let mut seen_pks = std::collections::HashSet::new();
         for gv in &genesis.validators {
-            assert!(
-                seen_ids.insert(gv.id),
-                "genesis contains duplicate validator ID: {}",
-                gv.id
-            );
-            assert!(
-                seen_pks.insert(&gv.public_key),
-                "genesis contains duplicate public key: {}",
-                gv.public_key
-            );
+            if !seen_ids.insert(gv.id) {
+                return Err(eg!("genesis contains duplicate validator ID: {}", gv.id));
+            }
+            if !seen_pks.insert(&gv.public_key) {
+                return Err(eg!(
+                    "genesis contains duplicate public key: {}",
+                    gv.public_key
+                ));
+            }
         }
     }
 
@@ -267,10 +266,11 @@ async fn run_node(
         // Sentinel ID for fullnodes — they never sign votes or propose blocks.
         // Verify no real validator uses this ID to prevent confusion.
         let sentinel = ValidatorId(u64::MAX);
-        assert!(
-            !validator_set.validators().iter().any(|v| v.id == sentinel),
-            "genesis contains a validator with ID u64::MAX which collides with the fullnode sentinel"
-        );
+        if validator_set.validators().iter().any(|v| v.id == sentinel) {
+            return Err(eg!(
+                "genesis contains a validator with ID u64::MAX which collides with the fullnode sentinel"
+            ));
+        }
         sentinel
     };
 

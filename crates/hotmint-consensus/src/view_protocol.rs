@@ -29,6 +29,10 @@ pub fn enter_view(
     network: &dyn NetworkSink,
     signer: &dyn Signer,
 ) {
+    // INV-CS5: View monotonicity — only Genesis may enter view 0 or re-enter.
+    if !matches!(trigger, ViewEntryTrigger::Genesis) && view <= state.current_view {
+        return;
+    }
     state.current_view = view;
     state.step = ViewStep::Entered;
 
@@ -307,7 +311,7 @@ pub fn on_proposal(
     }
 
     // Verify block hash integrity
-    let expected_hash = hotmint_crypto::compute_block_hash(&block);
+    let expected_hash = compute_block_hash(&block);
     if block.hash != expected_hash {
         return Err(eg!(
             "block hash mismatch: declared {} != computed {}",

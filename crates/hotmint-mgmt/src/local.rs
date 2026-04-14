@@ -78,9 +78,13 @@ fn write_pid(base_dir: &Path, id: u64, pid: u32) {
 
 /// Check if a process is running.
 fn is_running(pid: u32) -> bool {
+    // Reject invalid PIDs: 0 signals the entire process group, and
+    // values > i32::MAX wrap to negative (process-group signals).
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
     // SAFETY: kill(pid, 0) sends no signal — it only checks whether the process
-    // exists. The pid originates from a trusted pid file and the cast to i32 is
-    // always valid for OS-assigned PIDs.
+    // exists. The pid is validated above to be a valid positive i32 range.
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
@@ -174,10 +178,13 @@ pub fn stop(base_dir: &Path, node: Option<u32>) -> Result<()> {
                 // SAFETY: The pid has been validated by is_running() (process exists)
                 // and is_cluster_node() (confirmed to be a hotmint/cluster-node process).
                 // Signal 15 (SIGTERM) is a standard, catchable termination signal.
-                unsafe {
-                    libc::kill(pid as i32, 15); // SIGTERM
+                let rc = unsafe { libc::kill(pid as i32, 15) }; // SIGTERM
+                if rc == 0 {
+                    println!("V{}: stopped (pid {})", v.id, pid);
+                } else {
+                    let err = std::io::Error::last_os_error();
+                    eprintln!("V{}: failed to stop pid {}: {}", v.id, pid, err);
                 }
-                println!("V{}: stopped (pid {})", v.id, pid);
             } else if is_running(pid) {
                 println!(
                     "V{}: pid {} is not a cluster-node (stale pid file?)",

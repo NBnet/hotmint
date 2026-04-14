@@ -48,7 +48,13 @@ impl VsdbBlockStore {
                 meta[16..24].copy_from_slice(&commit_qcs_id.to_le_bytes());
                 meta[24..32].copy_from_slice(&tx_index_id.to_le_bytes());
                 meta[32..40].copy_from_slice(&block_results_id.to_le_bytes());
-                std::fs::write(&meta_path, meta).c(d!("write block_store.meta v2"))?;
+                {
+                    use std::io::Write;
+                    let mut f =
+                        std::fs::File::create(&meta_path).c(d!("create block_store.meta v2"))?;
+                    f.write_all(&meta).c(d!("write block_store.meta v2"))?;
+                    f.sync_all().c(d!("fsync block_store.meta v2"))?;
+                }
                 Ok(Self {
                     by_hash: MapxOrd::from_meta(by_hash_id).c(d!("restore by_hash"))?,
                     by_height: MapxOrd::from_meta(by_height_id).c(d!("restore by_height"))?,
@@ -95,7 +101,12 @@ impl VsdbBlockStore {
             meta[16..24].copy_from_slice(&commit_qcs_id.to_le_bytes());
             meta[24..32].copy_from_slice(&tx_index_id.to_le_bytes());
             meta[32..40].copy_from_slice(&block_results_id.to_le_bytes());
-            std::fs::write(&meta_path, meta).c(d!("write block_store.meta"))?;
+            {
+                use std::io::Write;
+                let mut f = std::fs::File::create(&meta_path).c(d!("create block_store.meta"))?;
+                f.write_all(&meta).c(d!("write block_store.meta"))?;
+                f.sync_all().c(d!("fsync block_store.meta"))?;
+            }
 
             let mut store = Self {
                 by_hash,

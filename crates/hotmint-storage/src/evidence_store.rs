@@ -113,7 +113,13 @@ impl PersistentEvidenceStore {
             meta.extend_from_slice(&proofs_id.to_le_bytes());
             meta.extend_from_slice(&committed_id.to_le_bytes());
             meta.extend_from_slice(&next_id.to_le_bytes());
-            std::fs::write(&meta_path, &meta).c(d!("write evidence_store.meta"))?;
+            {
+                use std::io::Write;
+                let mut f =
+                    std::fs::File::create(&meta_path).c(d!("create evidence_store.meta"))?;
+                f.write_all(&meta).c(d!("write evidence_store.meta"))?;
+                f.sync_all().c(d!("fsync evidence_store.meta"))?;
+            }
             Ok(Self {
                 proofs,
                 committed,
@@ -139,18 +145,35 @@ impl PersistentEvidenceStore {
 
     /// A-4: Write the updated next_id back to the meta file so it survives restarts.
     fn persist_next_id(&self) {
-        if let Ok(bytes) = std::fs::read(&self.meta_path)
-            && bytes.len() == 24
+        let bytes = match std::fs::read(&self.meta_path) {
+            Ok(b) if b.len() == 24 => b,
+            Ok(b) => {
+                tracing::warn!(
+                    "evidence_store.meta corrupt: expected 24 bytes, got {}",
+                    b.len()
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::warn!("failed to read evidence_store.meta: {e}");
+                return;
+            }
+        };
+        let mut meta = bytes;
+        meta[16..24].copy_from_slice(&self.next_id.to_le_bytes());
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&self.meta_path)
         {
-            let mut meta = bytes;
-            meta[16..24].copy_from_slice(&self.next_id.to_le_bytes());
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .open(&self.meta_path)
-            {
+            Ok(mut file) => {
                 use std::io::Write;
-                let _ = file.write_all(&meta).and_then(|_| file.sync_all());
+                if let Err(e) = file.write_all(&meta).and_then(|_| file.sync_all()) {
+                    tracing::warn!("failed to persist evidence next_id: {e}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("failed to open evidence_store.meta for write: {e}");
             }
         }
     }
@@ -169,6 +192,8 @@ impl EvidenceStore for PersistentEvidenceStore {
         self.next_id += 1;
         // A-4: Persist next_id so it survives restarts.
         self.persist_next_id();
+        // Flush vsdb so proof data reaches disk — not just the meta counter.
+        vsdb::vsdb_flush();
     }
 
     fn get_pending(&self) -> Vec<EquivocationProof> {
