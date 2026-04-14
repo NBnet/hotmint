@@ -54,11 +54,12 @@ System dependency: `protobuf-compiler` (for proto code generation)
 | Staking | `staking/src/` | Validator registration, delegation, slashing |
 | Crypto | `crypto/src/lib.rs` | Ed25519 domain-separated signing, Blake3 hashing |
 
-## Code Review Commands
+## Commands
 
-- `/hm-review` — deep regression analysis (supports: N commits, `all`, hash, range)
-- `/hm-debug` — crash/liveness/safety issue investigation
-- `/hm-verify` — validate whether a reported finding is true bug or false positive
+- `/x-review` — deep regression analysis (supports: N commits, `all`, hash, range)
+- `/x-fix` — resolve all open findings in `.claude/audit.md`
+- `/x-commit` — self-reviewing commit (review, fix, format, commit)
+- `/x-auto` — full pipeline: review → fix → commit
 
 Supporting documentation in `.claude/docs/`:
 - `technical-patterns.md` — cataloged bug patterns for BFT consensus
