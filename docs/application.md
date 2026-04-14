@@ -315,7 +315,7 @@ fn offer_snapshot(&self, snapshot: &SnapshotInfo) -> SnapshotOfferResult;
 fn apply_snapshot_chunk(&self, chunk: Vec<u8>, chunk_index: u32) -> ChunkApplyResult;
 ```
 
-See [P1-1 in the roadmap](security-audit-and-roadmap.md) for implementation details.
+See `crates/hotmint-consensus/src/sync.rs` (`sync_via_snapshot`) for implementation details.
 
 ## EndBlockResponse and Epoch Transitions
 
