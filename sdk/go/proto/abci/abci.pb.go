@@ -455,6 +455,10 @@ type EquivocationProof struct {
 	BlockHashB    []byte                 `protobuf:"bytes,6,opt,name=block_hash_b,json=blockHashB,proto3" json:"block_hash_b,omitempty"`
 	SignatureB    []byte                 `protobuf:"bytes,7,opt,name=signature_b,json=signatureB,proto3" json:"signature_b,omitempty"`
 	Epoch         uint64                 `protobuf:"varint,8,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	ExtensionA    []byte                 `protobuf:"bytes,9,opt,name=extension_a,json=extensionA,proto3" json:"extension_a,omitempty"`
+	ExtensionB    []byte                 `protobuf:"bytes,10,opt,name=extension_b,json=extensionB,proto3" json:"extension_b,omitempty"`
+	HasExtensionA bool                   `protobuf:"varint,11,opt,name=has_extension_a,json=hasExtensionA,proto3" json:"has_extension_a,omitempty"`
+	HasExtensionB bool                   `protobuf:"varint,12,opt,name=has_extension_b,json=hasExtensionB,proto3" json:"has_extension_b,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -543,6 +547,34 @@ func (x *EquivocationProof) GetEpoch() uint64 {
 		return x.Epoch
 	}
 	return 0
+}
+
+func (x *EquivocationProof) GetExtensionA() []byte {
+	if x != nil {
+		return x.ExtensionA
+	}
+	return nil
+}
+
+func (x *EquivocationProof) GetExtensionB() []byte {
+	if x != nil {
+		return x.ExtensionB
+	}
+	return nil
+}
+
+func (x *EquivocationProof) GetHasExtensionA() bool {
+	if x != nil {
+		return x.HasExtensionA
+	}
+	return false
+}
+
+func (x *EquivocationProof) GetHasExtensionB() bool {
+	if x != nil {
+		return x.HasExtensionB
+	}
+	return false
 }
 
 type ValidatorUpdate struct {
@@ -780,6 +812,16 @@ type Request struct {
 	//	*Request_OnCommit
 	//	*Request_OnEvidence
 	//	*Request_Query
+	//	*Request_Info
+	//	*Request_InitChain
+	//	*Request_OnOfflineValidators
+	//	*Request_ExtendVote
+	//	*Request_VerifyVoteExtension
+	//	*Request_ListSnapshots
+	//	*Request_LoadSnapshotChunk
+	//	*Request_OfferSnapshot
+	//	*Request_ApplySnapshotChunk
+	//	*Request_TracksAppHash
 	Request       isRequest_Request `protobuf_oneof:"request"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -885,6 +927,96 @@ func (x *Request) GetQuery() *QueryRequest {
 	return nil
 }
 
+func (x *Request) GetInfo() *InfoRequest {
+	if x != nil {
+		if x, ok := x.Request.(*Request_Info); ok {
+			return x.Info
+		}
+	}
+	return nil
+}
+
+func (x *Request) GetInitChain() *InitChainRequest {
+	if x != nil {
+		if x, ok := x.Request.(*Request_InitChain); ok {
+			return x.InitChain
+		}
+	}
+	return nil
+}
+
+func (x *Request) GetOnOfflineValidators() *OnOfflineValidatorsRequest {
+	if x != nil {
+		if x, ok := x.Request.(*Request_OnOfflineValidators); ok {
+			return x.OnOfflineValidators
+		}
+	}
+	return nil
+}
+
+func (x *Request) GetExtendVote() *ExtendVoteRequest {
+	if x != nil {
+		if x, ok := x.Request.(*Request_ExtendVote); ok {
+			return x.ExtendVote
+		}
+	}
+	return nil
+}
+
+func (x *Request) GetVerifyVoteExtension() *VerifyVoteExtensionRequest {
+	if x != nil {
+		if x, ok := x.Request.(*Request_VerifyVoteExtension); ok {
+			return x.VerifyVoteExtension
+		}
+	}
+	return nil
+}
+
+func (x *Request) GetListSnapshots() *ListSnapshotsRequest {
+	if x != nil {
+		if x, ok := x.Request.(*Request_ListSnapshots); ok {
+			return x.ListSnapshots
+		}
+	}
+	return nil
+}
+
+func (x *Request) GetLoadSnapshotChunk() *LoadSnapshotChunkRequest {
+	if x != nil {
+		if x, ok := x.Request.(*Request_LoadSnapshotChunk); ok {
+			return x.LoadSnapshotChunk
+		}
+	}
+	return nil
+}
+
+func (x *Request) GetOfferSnapshot() *OfferSnapshotRequest {
+	if x != nil {
+		if x, ok := x.Request.(*Request_OfferSnapshot); ok {
+			return x.OfferSnapshot
+		}
+	}
+	return nil
+}
+
+func (x *Request) GetApplySnapshotChunk() *ApplySnapshotChunkRequest {
+	if x != nil {
+		if x, ok := x.Request.(*Request_ApplySnapshotChunk); ok {
+			return x.ApplySnapshotChunk
+		}
+	}
+	return nil
+}
+
+func (x *Request) GetTracksAppHash() *TracksAppHashRequest {
+	if x != nil {
+		if x, ok := x.Request.(*Request_TracksAppHash); ok {
+			return x.TracksAppHash
+		}
+	}
+	return nil
+}
+
 type isRequest_Request interface {
 	isRequest_Request()
 }
@@ -917,6 +1049,46 @@ type Request_Query struct {
 	Query *QueryRequest `protobuf:"bytes,7,opt,name=query,proto3,oneof"`
 }
 
+type Request_Info struct {
+	Info *InfoRequest `protobuf:"bytes,8,opt,name=info,proto3,oneof"`
+}
+
+type Request_InitChain struct {
+	InitChain *InitChainRequest `protobuf:"bytes,9,opt,name=init_chain,json=initChain,proto3,oneof"`
+}
+
+type Request_OnOfflineValidators struct {
+	OnOfflineValidators *OnOfflineValidatorsRequest `protobuf:"bytes,10,opt,name=on_offline_validators,json=onOfflineValidators,proto3,oneof"`
+}
+
+type Request_ExtendVote struct {
+	ExtendVote *ExtendVoteRequest `protobuf:"bytes,11,opt,name=extend_vote,json=extendVote,proto3,oneof"`
+}
+
+type Request_VerifyVoteExtension struct {
+	VerifyVoteExtension *VerifyVoteExtensionRequest `protobuf:"bytes,12,opt,name=verify_vote_extension,json=verifyVoteExtension,proto3,oneof"`
+}
+
+type Request_ListSnapshots struct {
+	ListSnapshots *ListSnapshotsRequest `protobuf:"bytes,13,opt,name=list_snapshots,json=listSnapshots,proto3,oneof"`
+}
+
+type Request_LoadSnapshotChunk struct {
+	LoadSnapshotChunk *LoadSnapshotChunkRequest `protobuf:"bytes,14,opt,name=load_snapshot_chunk,json=loadSnapshotChunk,proto3,oneof"`
+}
+
+type Request_OfferSnapshot struct {
+	OfferSnapshot *OfferSnapshotRequest `protobuf:"bytes,15,opt,name=offer_snapshot,json=offerSnapshot,proto3,oneof"`
+}
+
+type Request_ApplySnapshotChunk struct {
+	ApplySnapshotChunk *ApplySnapshotChunkRequest `protobuf:"bytes,16,opt,name=apply_snapshot_chunk,json=applySnapshotChunk,proto3,oneof"`
+}
+
+type Request_TracksAppHash struct {
+	TracksAppHash *TracksAppHashRequest `protobuf:"bytes,17,opt,name=tracks_app_hash,json=tracksAppHash,proto3,oneof"`
+}
+
 func (*Request_CreatePayload) isRequest_Request() {}
 
 func (*Request_ValidateBlock) isRequest_Request() {}
@@ -931,6 +1103,106 @@ func (*Request_OnEvidence) isRequest_Request() {}
 
 func (*Request_Query) isRequest_Request() {}
 
+func (*Request_Info) isRequest_Request() {}
+
+func (*Request_InitChain) isRequest_Request() {}
+
+func (*Request_OnOfflineValidators) isRequest_Request() {}
+
+func (*Request_ExtendVote) isRequest_Request() {}
+
+func (*Request_VerifyVoteExtension) isRequest_Request() {}
+
+func (*Request_ListSnapshots) isRequest_Request() {}
+
+func (*Request_LoadSnapshotChunk) isRequest_Request() {}
+
+func (*Request_OfferSnapshot) isRequest_Request() {}
+
+func (*Request_ApplySnapshotChunk) isRequest_Request() {}
+
+func (*Request_TracksAppHash) isRequest_Request() {}
+
+type InfoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InfoRequest) Reset() {
+	*x = InfoRequest{}
+	mi := &file_proto_abci_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InfoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InfoRequest) ProtoMessage() {}
+
+func (x *InfoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InfoRequest.ProtoReflect.Descriptor instead.
+func (*InfoRequest) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{12}
+}
+
+type InitChainRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AppState      []byte                 `protobuf:"bytes,1,opt,name=app_state,json=appState,proto3" json:"app_state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InitChainRequest) Reset() {
+	*x = InitChainRequest{}
+	mi := &file_proto_abci_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InitChainRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InitChainRequest) ProtoMessage() {}
+
+func (x *InitChainRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InitChainRequest.ProtoReflect.Descriptor instead.
+func (*InitChainRequest) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *InitChainRequest) GetAppState() []byte {
+	if x != nil {
+		return x.AppState
+	}
+	return nil
+}
+
 type ValidateBlockRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Block         *Block                 `protobuf:"bytes,1,opt,name=block,proto3" json:"block,omitempty"`
@@ -941,7 +1213,7 @@ type ValidateBlockRequest struct {
 
 func (x *ValidateBlockRequest) Reset() {
 	*x = ValidateBlockRequest{}
-	mi := &file_proto_abci_proto_msgTypes[12]
+	mi := &file_proto_abci_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -953,7 +1225,7 @@ func (x *ValidateBlockRequest) String() string {
 func (*ValidateBlockRequest) ProtoMessage() {}
 
 func (x *ValidateBlockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[12]
+	mi := &file_proto_abci_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -966,7 +1238,7 @@ func (x *ValidateBlockRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateBlockRequest.ProtoReflect.Descriptor instead.
 func (*ValidateBlockRequest) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{12}
+	return file_proto_abci_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ValidateBlockRequest) GetBlock() *Block {
@@ -993,7 +1265,7 @@ type ValidateTxRequest struct {
 
 func (x *ValidateTxRequest) Reset() {
 	*x = ValidateTxRequest{}
-	mi := &file_proto_abci_proto_msgTypes[13]
+	mi := &file_proto_abci_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1005,7 +1277,7 @@ func (x *ValidateTxRequest) String() string {
 func (*ValidateTxRequest) ProtoMessage() {}
 
 func (x *ValidateTxRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[13]
+	mi := &file_proto_abci_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1018,7 +1290,7 @@ func (x *ValidateTxRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateTxRequest.ProtoReflect.Descriptor instead.
 func (*ValidateTxRequest) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{13}
+	return file_proto_abci_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ValidateTxRequest) GetTx() []byte {
@@ -1045,7 +1317,7 @@ type ExecuteBlockRequest struct {
 
 func (x *ExecuteBlockRequest) Reset() {
 	*x = ExecuteBlockRequest{}
-	mi := &file_proto_abci_proto_msgTypes[14]
+	mi := &file_proto_abci_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1057,7 +1329,7 @@ func (x *ExecuteBlockRequest) String() string {
 func (*ExecuteBlockRequest) ProtoMessage() {}
 
 func (x *ExecuteBlockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[14]
+	mi := &file_proto_abci_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1070,7 +1342,7 @@ func (x *ExecuteBlockRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteBlockRequest.ProtoReflect.Descriptor instead.
 func (*ExecuteBlockRequest) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{14}
+	return file_proto_abci_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ExecuteBlockRequest) GetTxs() [][]byte {
@@ -1097,7 +1369,7 @@ type OnCommitRequest struct {
 
 func (x *OnCommitRequest) Reset() {
 	*x = OnCommitRequest{}
-	mi := &file_proto_abci_proto_msgTypes[15]
+	mi := &file_proto_abci_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1109,7 +1381,7 @@ func (x *OnCommitRequest) String() string {
 func (*OnCommitRequest) ProtoMessage() {}
 
 func (x *OnCommitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[15]
+	mi := &file_proto_abci_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1122,7 +1394,7 @@ func (x *OnCommitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OnCommitRequest.ProtoReflect.Descriptor instead.
 func (*OnCommitRequest) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{15}
+	return file_proto_abci_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *OnCommitRequest) GetBlock() *Block {
@@ -1149,7 +1421,7 @@ type QueryRequest struct {
 
 func (x *QueryRequest) Reset() {
 	*x = QueryRequest{}
-	mi := &file_proto_abci_proto_msgTypes[16]
+	mi := &file_proto_abci_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1161,7 +1433,7 @@ func (x *QueryRequest) String() string {
 func (*QueryRequest) ProtoMessage() {}
 
 func (x *QueryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[16]
+	mi := &file_proto_abci_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1174,7 +1446,7 @@ func (x *QueryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest.ProtoReflect.Descriptor instead.
 func (*QueryRequest) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{16}
+	return file_proto_abci_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *QueryRequest) GetPath() string {
@@ -1191,6 +1463,510 @@ func (x *QueryRequest) GetData() []byte {
 	return nil
 }
 
+type OfflineEvidence struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Validator      uint64                 `protobuf:"varint,1,opt,name=validator,proto3" json:"validator,omitempty"`
+	MissedCommits  uint64                 `protobuf:"varint,2,opt,name=missed_commits,json=missedCommits,proto3" json:"missed_commits,omitempty"`
+	TotalCommits   uint64                 `protobuf:"varint,3,opt,name=total_commits,json=totalCommits,proto3" json:"total_commits,omitempty"`
+	EvidenceHeight uint64                 `protobuf:"varint,4,opt,name=evidence_height,json=evidenceHeight,proto3" json:"evidence_height,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *OfflineEvidence) Reset() {
+	*x = OfflineEvidence{}
+	mi := &file_proto_abci_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OfflineEvidence) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OfflineEvidence) ProtoMessage() {}
+
+func (x *OfflineEvidence) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OfflineEvidence.ProtoReflect.Descriptor instead.
+func (*OfflineEvidence) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *OfflineEvidence) GetValidator() uint64 {
+	if x != nil {
+		return x.Validator
+	}
+	return 0
+}
+
+func (x *OfflineEvidence) GetMissedCommits() uint64 {
+	if x != nil {
+		return x.MissedCommits
+	}
+	return 0
+}
+
+func (x *OfflineEvidence) GetTotalCommits() uint64 {
+	if x != nil {
+		return x.TotalCommits
+	}
+	return 0
+}
+
+func (x *OfflineEvidence) GetEvidenceHeight() uint64 {
+	if x != nil {
+		return x.EvidenceHeight
+	}
+	return 0
+}
+
+type OnOfflineValidatorsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Offline       []*OfflineEvidence     `protobuf:"bytes,1,rep,name=offline,proto3" json:"offline,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnOfflineValidatorsRequest) Reset() {
+	*x = OnOfflineValidatorsRequest{}
+	mi := &file_proto_abci_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnOfflineValidatorsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnOfflineValidatorsRequest) ProtoMessage() {}
+
+func (x *OnOfflineValidatorsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnOfflineValidatorsRequest.ProtoReflect.Descriptor instead.
+func (*OnOfflineValidatorsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *OnOfflineValidatorsRequest) GetOffline() []*OfflineEvidence {
+	if x != nil {
+		return x.Offline
+	}
+	return nil
+}
+
+type ExtendVoteRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Block         *Block                 `protobuf:"bytes,1,opt,name=block,proto3" json:"block,omitempty"`
+	Ctx           *BlockContext          `protobuf:"bytes,2,opt,name=ctx,proto3" json:"ctx,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExtendVoteRequest) Reset() {
+	*x = ExtendVoteRequest{}
+	mi := &file_proto_abci_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExtendVoteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExtendVoteRequest) ProtoMessage() {}
+
+func (x *ExtendVoteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExtendVoteRequest.ProtoReflect.Descriptor instead.
+func (*ExtendVoteRequest) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ExtendVoteRequest) GetBlock() *Block {
+	if x != nil {
+		return x.Block
+	}
+	return nil
+}
+
+func (x *ExtendVoteRequest) GetCtx() *BlockContext {
+	if x != nil {
+		return x.Ctx
+	}
+	return nil
+}
+
+type VerifyVoteExtensionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Extension     []byte                 `protobuf:"bytes,1,opt,name=extension,proto3" json:"extension,omitempty"`
+	BlockHash     []byte                 `protobuf:"bytes,2,opt,name=block_hash,json=blockHash,proto3" json:"block_hash,omitempty"`
+	Validator     uint64                 `protobuf:"varint,3,opt,name=validator,proto3" json:"validator,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyVoteExtensionRequest) Reset() {
+	*x = VerifyVoteExtensionRequest{}
+	mi := &file_proto_abci_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyVoteExtensionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyVoteExtensionRequest) ProtoMessage() {}
+
+func (x *VerifyVoteExtensionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyVoteExtensionRequest.ProtoReflect.Descriptor instead.
+func (*VerifyVoteExtensionRequest) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *VerifyVoteExtensionRequest) GetExtension() []byte {
+	if x != nil {
+		return x.Extension
+	}
+	return nil
+}
+
+func (x *VerifyVoteExtensionRequest) GetBlockHash() []byte {
+	if x != nil {
+		return x.BlockHash
+	}
+	return nil
+}
+
+func (x *VerifyVoteExtensionRequest) GetValidator() uint64 {
+	if x != nil {
+		return x.Validator
+	}
+	return 0
+}
+
+type SnapshotInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Height        uint64                 `protobuf:"varint,1,opt,name=height,proto3" json:"height,omitempty"`
+	Chunks        uint32                 `protobuf:"varint,2,opt,name=chunks,proto3" json:"chunks,omitempty"`
+	Hash          []byte                 `protobuf:"bytes,3,opt,name=hash,proto3" json:"hash,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SnapshotInfo) Reset() {
+	*x = SnapshotInfo{}
+	mi := &file_proto_abci_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SnapshotInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SnapshotInfo) ProtoMessage() {}
+
+func (x *SnapshotInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SnapshotInfo.ProtoReflect.Descriptor instead.
+func (*SnapshotInfo) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *SnapshotInfo) GetHeight() uint64 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
+func (x *SnapshotInfo) GetChunks() uint32 {
+	if x != nil {
+		return x.Chunks
+	}
+	return 0
+}
+
+func (x *SnapshotInfo) GetHash() []byte {
+	if x != nil {
+		return x.Hash
+	}
+	return nil
+}
+
+type ListSnapshotsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListSnapshotsRequest) Reset() {
+	*x = ListSnapshotsRequest{}
+	mi := &file_proto_abci_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListSnapshotsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListSnapshotsRequest) ProtoMessage() {}
+
+func (x *ListSnapshotsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListSnapshotsRequest.ProtoReflect.Descriptor instead.
+func (*ListSnapshotsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{24}
+}
+
+type LoadSnapshotChunkRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Height        uint64                 `protobuf:"varint,1,opt,name=height,proto3" json:"height,omitempty"`
+	ChunkIndex    uint32                 `protobuf:"varint,2,opt,name=chunk_index,json=chunkIndex,proto3" json:"chunk_index,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LoadSnapshotChunkRequest) Reset() {
+	*x = LoadSnapshotChunkRequest{}
+	mi := &file_proto_abci_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoadSnapshotChunkRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoadSnapshotChunkRequest) ProtoMessage() {}
+
+func (x *LoadSnapshotChunkRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoadSnapshotChunkRequest.ProtoReflect.Descriptor instead.
+func (*LoadSnapshotChunkRequest) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *LoadSnapshotChunkRequest) GetHeight() uint64 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
+func (x *LoadSnapshotChunkRequest) GetChunkIndex() uint32 {
+	if x != nil {
+		return x.ChunkIndex
+	}
+	return 0
+}
+
+type OfferSnapshotRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Snapshot      *SnapshotInfo          `protobuf:"bytes,1,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OfferSnapshotRequest) Reset() {
+	*x = OfferSnapshotRequest{}
+	mi := &file_proto_abci_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OfferSnapshotRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OfferSnapshotRequest) ProtoMessage() {}
+
+func (x *OfferSnapshotRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OfferSnapshotRequest.ProtoReflect.Descriptor instead.
+func (*OfferSnapshotRequest) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *OfferSnapshotRequest) GetSnapshot() *SnapshotInfo {
+	if x != nil {
+		return x.Snapshot
+	}
+	return nil
+}
+
+type ApplySnapshotChunkRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Chunk         []byte                 `protobuf:"bytes,1,opt,name=chunk,proto3" json:"chunk,omitempty"`
+	ChunkIndex    uint32                 `protobuf:"varint,2,opt,name=chunk_index,json=chunkIndex,proto3" json:"chunk_index,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApplySnapshotChunkRequest) Reset() {
+	*x = ApplySnapshotChunkRequest{}
+	mi := &file_proto_abci_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApplySnapshotChunkRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApplySnapshotChunkRequest) ProtoMessage() {}
+
+func (x *ApplySnapshotChunkRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApplySnapshotChunkRequest.ProtoReflect.Descriptor instead.
+func (*ApplySnapshotChunkRequest) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ApplySnapshotChunkRequest) GetChunk() []byte {
+	if x != nil {
+		return x.Chunk
+	}
+	return nil
+}
+
+func (x *ApplySnapshotChunkRequest) GetChunkIndex() uint32 {
+	if x != nil {
+		return x.ChunkIndex
+	}
+	return 0
+}
+
+type TracksAppHashRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TracksAppHashRequest) Reset() {
+	*x = TracksAppHashRequest{}
+	mi := &file_proto_abci_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TracksAppHashRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TracksAppHashRequest) ProtoMessage() {}
+
+func (x *TracksAppHashRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TracksAppHashRequest.ProtoReflect.Descriptor instead.
+func (*TracksAppHashRequest) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{28}
+}
+
 type Response struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Response:
@@ -1202,6 +1978,16 @@ type Response struct {
 	//	*Response_OnCommit
 	//	*Response_OnEvidence
 	//	*Response_Query
+	//	*Response_Info
+	//	*Response_InitChain
+	//	*Response_OnOfflineValidators
+	//	*Response_ExtendVote
+	//	*Response_VerifyVoteExtension
+	//	*Response_ListSnapshots
+	//	*Response_LoadSnapshotChunk
+	//	*Response_OfferSnapshot
+	//	*Response_ApplySnapshotChunk
+	//	*Response_TracksAppHash
 	Response      isResponse_Response `protobuf_oneof:"response"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1209,7 +1995,7 @@ type Response struct {
 
 func (x *Response) Reset() {
 	*x = Response{}
-	mi := &file_proto_abci_proto_msgTypes[17]
+	mi := &file_proto_abci_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1221,7 +2007,7 @@ func (x *Response) String() string {
 func (*Response) ProtoMessage() {}
 
 func (x *Response) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[17]
+	mi := &file_proto_abci_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1234,7 +2020,7 @@ func (x *Response) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Response.ProtoReflect.Descriptor instead.
 func (*Response) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{17}
+	return file_proto_abci_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *Response) GetResponse() isResponse_Response {
@@ -1307,6 +2093,96 @@ func (x *Response) GetQuery() *QueryResponse {
 	return nil
 }
 
+func (x *Response) GetInfo() *InfoResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_Info); ok {
+			return x.Info
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetInitChain() *InitChainResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_InitChain); ok {
+			return x.InitChain
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetOnOfflineValidators() *OnOfflineValidatorsResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_OnOfflineValidators); ok {
+			return x.OnOfflineValidators
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetExtendVote() *ExtendVoteResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_ExtendVote); ok {
+			return x.ExtendVote
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetVerifyVoteExtension() *VerifyVoteExtensionResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_VerifyVoteExtension); ok {
+			return x.VerifyVoteExtension
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetListSnapshots() *ListSnapshotsResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_ListSnapshots); ok {
+			return x.ListSnapshots
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetLoadSnapshotChunk() *LoadSnapshotChunkResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_LoadSnapshotChunk); ok {
+			return x.LoadSnapshotChunk
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetOfferSnapshot() *OfferSnapshotResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_OfferSnapshot); ok {
+			return x.OfferSnapshot
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetApplySnapshotChunk() *ApplySnapshotChunkResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_ApplySnapshotChunk); ok {
+			return x.ApplySnapshotChunk
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetTracksAppHash() *TracksAppHashResponse {
+	if x != nil {
+		if x, ok := x.Response.(*Response_TracksAppHash); ok {
+			return x.TracksAppHash
+		}
+	}
+	return nil
+}
+
 type isResponse_Response interface {
 	isResponse_Response()
 }
@@ -1339,6 +2215,46 @@ type Response_Query struct {
 	Query *QueryResponse `protobuf:"bytes,7,opt,name=query,proto3,oneof"`
 }
 
+type Response_Info struct {
+	Info *InfoResponse `protobuf:"bytes,8,opt,name=info,proto3,oneof"`
+}
+
+type Response_InitChain struct {
+	InitChain *InitChainResponse `protobuf:"bytes,9,opt,name=init_chain,json=initChain,proto3,oneof"`
+}
+
+type Response_OnOfflineValidators struct {
+	OnOfflineValidators *OnOfflineValidatorsResponse `protobuf:"bytes,10,opt,name=on_offline_validators,json=onOfflineValidators,proto3,oneof"`
+}
+
+type Response_ExtendVote struct {
+	ExtendVote *ExtendVoteResponse `protobuf:"bytes,11,opt,name=extend_vote,json=extendVote,proto3,oneof"`
+}
+
+type Response_VerifyVoteExtension struct {
+	VerifyVoteExtension *VerifyVoteExtensionResponse `protobuf:"bytes,12,opt,name=verify_vote_extension,json=verifyVoteExtension,proto3,oneof"`
+}
+
+type Response_ListSnapshots struct {
+	ListSnapshots *ListSnapshotsResponse `protobuf:"bytes,13,opt,name=list_snapshots,json=listSnapshots,proto3,oneof"`
+}
+
+type Response_LoadSnapshotChunk struct {
+	LoadSnapshotChunk *LoadSnapshotChunkResponse `protobuf:"bytes,14,opt,name=load_snapshot_chunk,json=loadSnapshotChunk,proto3,oneof"`
+}
+
+type Response_OfferSnapshot struct {
+	OfferSnapshot *OfferSnapshotResponse `protobuf:"bytes,15,opt,name=offer_snapshot,json=offerSnapshot,proto3,oneof"`
+}
+
+type Response_ApplySnapshotChunk struct {
+	ApplySnapshotChunk *ApplySnapshotChunkResponse `protobuf:"bytes,16,opt,name=apply_snapshot_chunk,json=applySnapshotChunk,proto3,oneof"`
+}
+
+type Response_TracksAppHash struct {
+	TracksAppHash *TracksAppHashResponse `protobuf:"bytes,17,opt,name=tracks_app_hash,json=tracksAppHash,proto3,oneof"`
+}
+
 func (*Response_CreatePayload) isResponse_Response() {}
 
 func (*Response_ValidateBlock) isResponse_Response() {}
@@ -1353,6 +2269,174 @@ func (*Response_OnEvidence) isResponse_Response() {}
 
 func (*Response_Query) isResponse_Response() {}
 
+func (*Response_Info) isResponse_Response() {}
+
+func (*Response_InitChain) isResponse_Response() {}
+
+func (*Response_OnOfflineValidators) isResponse_Response() {}
+
+func (*Response_ExtendVote) isResponse_Response() {}
+
+func (*Response_VerifyVoteExtension) isResponse_Response() {}
+
+func (*Response_ListSnapshots) isResponse_Response() {}
+
+func (*Response_LoadSnapshotChunk) isResponse_Response() {}
+
+func (*Response_OfferSnapshot) isResponse_Response() {}
+
+func (*Response_ApplySnapshotChunk) isResponse_Response() {}
+
+func (*Response_TracksAppHash) isResponse_Response() {}
+
+type AppInfo struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	LastBlockHeight  uint64                 `protobuf:"varint,1,opt,name=last_block_height,json=lastBlockHeight,proto3" json:"last_block_height,omitempty"`
+	LastBlockAppHash []byte                 `protobuf:"bytes,2,opt,name=last_block_app_hash,json=lastBlockAppHash,proto3" json:"last_block_app_hash,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *AppInfo) Reset() {
+	*x = AppInfo{}
+	mi := &file_proto_abci_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AppInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AppInfo) ProtoMessage() {}
+
+func (x *AppInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AppInfo.ProtoReflect.Descriptor instead.
+func (*AppInfo) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *AppInfo) GetLastBlockHeight() uint64 {
+	if x != nil {
+		return x.LastBlockHeight
+	}
+	return 0
+}
+
+func (x *AppInfo) GetLastBlockAppHash() []byte {
+	if x != nil {
+		return x.LastBlockAppHash
+	}
+	return nil
+}
+
+type InfoResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Info          *AppInfo               `protobuf:"bytes,1,opt,name=info,proto3" json:"info,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InfoResponse) Reset() {
+	*x = InfoResponse{}
+	mi := &file_proto_abci_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InfoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InfoResponse) ProtoMessage() {}
+
+func (x *InfoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InfoResponse.ProtoReflect.Descriptor instead.
+func (*InfoResponse) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *InfoResponse) GetInfo() *AppInfo {
+	if x != nil {
+		return x.Info
+	}
+	return nil
+}
+
+type InitChainResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AppHash       []byte                 `protobuf:"bytes,1,opt,name=app_hash,json=appHash,proto3" json:"app_hash,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InitChainResponse) Reset() {
+	*x = InitChainResponse{}
+	mi := &file_proto_abci_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InitChainResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InitChainResponse) ProtoMessage() {}
+
+func (x *InitChainResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InitChainResponse.ProtoReflect.Descriptor instead.
+func (*InitChainResponse) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *InitChainResponse) GetAppHash() []byte {
+	if x != nil {
+		return x.AppHash
+	}
+	return nil
+}
+
+func (x *InitChainResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 type CreatePayloadResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Payload       []byte                 `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
@@ -1362,7 +2446,7 @@ type CreatePayloadResponse struct {
 
 func (x *CreatePayloadResponse) Reset() {
 	*x = CreatePayloadResponse{}
-	mi := &file_proto_abci_proto_msgTypes[18]
+	mi := &file_proto_abci_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1374,7 +2458,7 @@ func (x *CreatePayloadResponse) String() string {
 func (*CreatePayloadResponse) ProtoMessage() {}
 
 func (x *CreatePayloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[18]
+	mi := &file_proto_abci_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1387,7 +2471,7 @@ func (x *CreatePayloadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreatePayloadResponse.ProtoReflect.Descriptor instead.
 func (*CreatePayloadResponse) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{18}
+	return file_proto_abci_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *CreatePayloadResponse) GetPayload() []byte {
@@ -1406,7 +2490,7 @@ type ValidateBlockResponse struct {
 
 func (x *ValidateBlockResponse) Reset() {
 	*x = ValidateBlockResponse{}
-	mi := &file_proto_abci_proto_msgTypes[19]
+	mi := &file_proto_abci_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1418,7 +2502,7 @@ func (x *ValidateBlockResponse) String() string {
 func (*ValidateBlockResponse) ProtoMessage() {}
 
 func (x *ValidateBlockResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[19]
+	mi := &file_proto_abci_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1431,7 +2515,7 @@ func (x *ValidateBlockResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateBlockResponse.ProtoReflect.Descriptor instead.
 func (*ValidateBlockResponse) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{19}
+	return file_proto_abci_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ValidateBlockResponse) GetOk() bool {
@@ -1452,7 +2536,7 @@ type ValidateTxResponse struct {
 
 func (x *ValidateTxResponse) Reset() {
 	*x = ValidateTxResponse{}
-	mi := &file_proto_abci_proto_msgTypes[20]
+	mi := &file_proto_abci_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1464,7 +2548,7 @@ func (x *ValidateTxResponse) String() string {
 func (*ValidateTxResponse) ProtoMessage() {}
 
 func (x *ValidateTxResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[20]
+	mi := &file_proto_abci_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1477,7 +2561,7 @@ func (x *ValidateTxResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateTxResponse.ProtoReflect.Descriptor instead.
 func (*ValidateTxResponse) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{20}
+	return file_proto_abci_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ValidateTxResponse) GetOk() bool {
@@ -1511,7 +2595,7 @@ type ExecuteBlockResponse struct {
 
 func (x *ExecuteBlockResponse) Reset() {
 	*x = ExecuteBlockResponse{}
-	mi := &file_proto_abci_proto_msgTypes[21]
+	mi := &file_proto_abci_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1523,7 +2607,7 @@ func (x *ExecuteBlockResponse) String() string {
 func (*ExecuteBlockResponse) ProtoMessage() {}
 
 func (x *ExecuteBlockResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[21]
+	mi := &file_proto_abci_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1536,7 +2620,7 @@ func (x *ExecuteBlockResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteBlockResponse.ProtoReflect.Descriptor instead.
 func (*ExecuteBlockResponse) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{21}
+	return file_proto_abci_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ExecuteBlockResponse) GetResult() *EndBlockResponse {
@@ -1562,7 +2646,7 @@ type OnCommitResponse struct {
 
 func (x *OnCommitResponse) Reset() {
 	*x = OnCommitResponse{}
-	mi := &file_proto_abci_proto_msgTypes[22]
+	mi := &file_proto_abci_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1574,7 +2658,7 @@ func (x *OnCommitResponse) String() string {
 func (*OnCommitResponse) ProtoMessage() {}
 
 func (x *OnCommitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[22]
+	mi := &file_proto_abci_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1587,7 +2671,7 @@ func (x *OnCommitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OnCommitResponse.ProtoReflect.Descriptor instead.
 func (*OnCommitResponse) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{22}
+	return file_proto_abci_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *OnCommitResponse) GetError() string {
@@ -1606,7 +2690,7 @@ type OnEvidenceResponse struct {
 
 func (x *OnEvidenceResponse) Reset() {
 	*x = OnEvidenceResponse{}
-	mi := &file_proto_abci_proto_msgTypes[23]
+	mi := &file_proto_abci_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1618,7 +2702,7 @@ func (x *OnEvidenceResponse) String() string {
 func (*OnEvidenceResponse) ProtoMessage() {}
 
 func (x *OnEvidenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[23]
+	mi := &file_proto_abci_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1631,7 +2715,7 @@ func (x *OnEvidenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OnEvidenceResponse.ProtoReflect.Descriptor instead.
 func (*OnEvidenceResponse) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{23}
+	return file_proto_abci_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *OnEvidenceResponse) GetError() string {
@@ -1639,6 +2723,146 @@ func (x *OnEvidenceResponse) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+type OnOfflineValidatorsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Error         string                 `protobuf:"bytes,1,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnOfflineValidatorsResponse) Reset() {
+	*x = OnOfflineValidatorsResponse{}
+	mi := &file_proto_abci_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnOfflineValidatorsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnOfflineValidatorsResponse) ProtoMessage() {}
+
+func (x *OnOfflineValidatorsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnOfflineValidatorsResponse.ProtoReflect.Descriptor instead.
+func (*OnOfflineValidatorsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *OnOfflineValidatorsResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type ExtendVoteResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Extension     []byte                 `protobuf:"bytes,1,opt,name=extension,proto3" json:"extension,omitempty"`
+	HasExtension  bool                   `protobuf:"varint,2,opt,name=has_extension,json=hasExtension,proto3" json:"has_extension,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExtendVoteResponse) Reset() {
+	*x = ExtendVoteResponse{}
+	mi := &file_proto_abci_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExtendVoteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExtendVoteResponse) ProtoMessage() {}
+
+func (x *ExtendVoteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExtendVoteResponse.ProtoReflect.Descriptor instead.
+func (*ExtendVoteResponse) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *ExtendVoteResponse) GetExtension() []byte {
+	if x != nil {
+		return x.Extension
+	}
+	return nil
+}
+
+func (x *ExtendVoteResponse) GetHasExtension() bool {
+	if x != nil {
+		return x.HasExtension
+	}
+	return false
+}
+
+type VerifyVoteExtensionResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyVoteExtensionResponse) Reset() {
+	*x = VerifyVoteExtensionResponse{}
+	mi := &file_proto_abci_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyVoteExtensionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyVoteExtensionResponse) ProtoMessage() {}
+
+func (x *VerifyVoteExtensionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyVoteExtensionResponse.ProtoReflect.Descriptor instead.
+func (*VerifyVoteExtensionResponse) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *VerifyVoteExtensionResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
 }
 
 type QueryResponse struct {
@@ -1653,7 +2877,7 @@ type QueryResponse struct {
 
 func (x *QueryResponse) Reset() {
 	*x = QueryResponse{}
-	mi := &file_proto_abci_proto_msgTypes[24]
+	mi := &file_proto_abci_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1665,7 +2889,7 @@ func (x *QueryResponse) String() string {
 func (*QueryResponse) ProtoMessage() {}
 
 func (x *QueryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_abci_proto_msgTypes[24]
+	mi := &file_proto_abci_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1678,7 +2902,7 @@ func (x *QueryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryResponse.ProtoReflect.Descriptor instead.
 func (*QueryResponse) Descriptor() ([]byte, []int) {
-	return file_proto_abci_proto_rawDescGZIP(), []int{24}
+	return file_proto_abci_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *QueryResponse) GetData() []byte {
@@ -1707,6 +2931,226 @@ func (x *QueryResponse) GetHeight() uint64 {
 		return x.Height
 	}
 	return 0
+}
+
+type ListSnapshotsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Snapshots     []*SnapshotInfo        `protobuf:"bytes,1,rep,name=snapshots,proto3" json:"snapshots,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListSnapshotsResponse) Reset() {
+	*x = ListSnapshotsResponse{}
+	mi := &file_proto_abci_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListSnapshotsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListSnapshotsResponse) ProtoMessage() {}
+
+func (x *ListSnapshotsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListSnapshotsResponse.ProtoReflect.Descriptor instead.
+func (*ListSnapshotsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *ListSnapshotsResponse) GetSnapshots() []*SnapshotInfo {
+	if x != nil {
+		return x.Snapshots
+	}
+	return nil
+}
+
+type LoadSnapshotChunkResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LoadSnapshotChunkResponse) Reset() {
+	*x = LoadSnapshotChunkResponse{}
+	mi := &file_proto_abci_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoadSnapshotChunkResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoadSnapshotChunkResponse) ProtoMessage() {}
+
+func (x *LoadSnapshotChunkResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoadSnapshotChunkResponse.ProtoReflect.Descriptor instead.
+func (*LoadSnapshotChunkResponse) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *LoadSnapshotChunkResponse) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type OfferSnapshotResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Result        uint32                 `protobuf:"varint,1,opt,name=result,proto3" json:"result,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OfferSnapshotResponse) Reset() {
+	*x = OfferSnapshotResponse{}
+	mi := &file_proto_abci_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OfferSnapshotResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OfferSnapshotResponse) ProtoMessage() {}
+
+func (x *OfferSnapshotResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OfferSnapshotResponse.ProtoReflect.Descriptor instead.
+func (*OfferSnapshotResponse) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *OfferSnapshotResponse) GetResult() uint32 {
+	if x != nil {
+		return x.Result
+	}
+	return 0
+}
+
+type ApplySnapshotChunkResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Result        uint32                 `protobuf:"varint,1,opt,name=result,proto3" json:"result,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApplySnapshotChunkResponse) Reset() {
+	*x = ApplySnapshotChunkResponse{}
+	mi := &file_proto_abci_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApplySnapshotChunkResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApplySnapshotChunkResponse) ProtoMessage() {}
+
+func (x *ApplySnapshotChunkResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApplySnapshotChunkResponse.ProtoReflect.Descriptor instead.
+func (*ApplySnapshotChunkResponse) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *ApplySnapshotChunkResponse) GetResult() uint32 {
+	if x != nil {
+		return x.Result
+	}
+	return 0
+}
+
+type TracksAppHashResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tracks        bool                   `protobuf:"varint,1,opt,name=tracks,proto3" json:"tracks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TracksAppHashResponse) Reset() {
+	*x = TracksAppHashResponse{}
+	mi := &file_proto_abci_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TracksAppHashResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TracksAppHashResponse) ProtoMessage() {}
+
+func (x *TracksAppHashResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_abci_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TracksAppHashResponse.ProtoReflect.Descriptor instead.
+func (*TracksAppHashResponse) Descriptor() ([]byte, []int) {
+	return file_proto_abci_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *TracksAppHashResponse) GetTracks() bool {
+	if x != nil {
+		return x.Tracks
+	}
+	return false
 }
 
 var File_proto_abci_proto protoreflect.FileDescriptor
@@ -1741,7 +3185,7 @@ const file_proto_abci_proto_rawDesc = "" +
 	"totalPower\"F\n" +
 	"\rVoteExtension\x12!\n" +
 	"\fvalidator_id\x18\x01 \x01(\x04R\vvalidatorId\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\"\x9d\x02\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"\xbb\x02\n" +
 	"\fBlockContext\x12\x16\n" +
 	"\x06height\x18\x01 \x01(\x04R\x06height\x12\x12\n" +
 	"\x04view\x18\x02 \x01(\x04R\x04view\x12\x1a\n" +
@@ -1749,7 +3193,8 @@ const file_proto_abci_proto_rawDesc = "" +
 	"\x05epoch\x18\x04 \x01(\x04R\x05epoch\x12(\n" +
 	"\x10epoch_start_view\x18\x05 \x01(\x04R\x0eepochStartView\x12?\n" +
 	"\rvalidator_set\x18\x06 \x01(\v2\x1a.hotmint.abci.ValidatorSetR\fvalidatorSet\x12D\n" +
-	"\x0fvote_extensions\x18\a \x03(\v2\x1b.hotmint.abci.VoteExtensionR\x0evoteExtensions\"\xfe\x01\n" +
+	"\x0fvote_extensions\x18\a \x03(\v2\x1b.hotmint.abci.VoteExtensionR\x0evoteExtensions\x12\x1c\n" +
+	"\ttimestamp\x18\b \x01(\x04R\ttimestamp\"\x90\x03\n" +
 	"\x11EquivocationProof\x12\x1c\n" +
 	"\tvalidator\x18\x01 \x01(\x04R\tvalidator\x12\x12\n" +
 	"\x04view\x18\x02 \x01(\x04R\x04view\x12\x1b\n" +
@@ -1762,7 +3207,14 @@ const file_proto_abci_proto_rawDesc = "" +
 	"blockHashB\x12\x1f\n" +
 	"\vsignature_b\x18\a \x01(\fR\n" +
 	"signatureB\x12\x14\n" +
-	"\x05epoch\x18\b \x01(\x04R\x05epoch\"V\n" +
+	"\x05epoch\x18\b \x01(\x04R\x05epoch\x12\x1f\n" +
+	"\vextension_a\x18\t \x01(\fR\n" +
+	"extensionA\x12\x1f\n" +
+	"\vextension_b\x18\n" +
+	" \x01(\fR\n" +
+	"extensionB\x12&\n" +
+	"\x0fhas_extension_a\x18\v \x01(\bR\rhasExtensionA\x12&\n" +
+	"\x0fhas_extension_b\x18\f \x01(\bR\rhasExtensionB\"V\n" +
 	"\x0fValidatorUpdate\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x1d\n" +
 	"\n" +
@@ -1779,7 +3231,7 @@ const file_proto_abci_proto_rawDesc = "" +
 	"\x10EndBlockResponse\x12J\n" +
 	"\x11validator_updates\x18\x01 \x03(\v2\x1d.hotmint.abci.ValidatorUpdateR\x10validatorUpdates\x12+\n" +
 	"\x06events\x18\x02 \x03(\v2\x13.hotmint.abci.EventR\x06events\x12\x19\n" +
-	"\bapp_hash\x18\x03 \x01(\fR\aappHash\"\xea\x03\n" +
+	"\bapp_hash\x18\x03 \x01(\fR\aappHash\"\xff\t\n" +
 	"\aRequest\x12C\n" +
 	"\x0ecreate_payload\x18\x01 \x01(\v2\x1a.hotmint.abci.BlockContextH\x00R\rcreatePayload\x12K\n" +
 	"\x0evalidate_block\x18\x02 \x01(\v2\".hotmint.abci.ValidateBlockRequestH\x00R\rvalidateBlock\x12B\n" +
@@ -1789,8 +3241,24 @@ const file_proto_abci_proto_rawDesc = "" +
 	"\ton_commit\x18\x05 \x01(\v2\x1d.hotmint.abci.OnCommitRequestH\x00R\bonCommit\x12B\n" +
 	"\von_evidence\x18\x06 \x01(\v2\x1f.hotmint.abci.EquivocationProofH\x00R\n" +
 	"onEvidence\x122\n" +
-	"\x05query\x18\a \x01(\v2\x1a.hotmint.abci.QueryRequestH\x00R\x05queryB\t\n" +
-	"\arequest\"o\n" +
+	"\x05query\x18\a \x01(\v2\x1a.hotmint.abci.QueryRequestH\x00R\x05query\x12/\n" +
+	"\x04info\x18\b \x01(\v2\x19.hotmint.abci.InfoRequestH\x00R\x04info\x12?\n" +
+	"\n" +
+	"init_chain\x18\t \x01(\v2\x1e.hotmint.abci.InitChainRequestH\x00R\tinitChain\x12^\n" +
+	"\x15on_offline_validators\x18\n" +
+	" \x01(\v2(.hotmint.abci.OnOfflineValidatorsRequestH\x00R\x13onOfflineValidators\x12B\n" +
+	"\vextend_vote\x18\v \x01(\v2\x1f.hotmint.abci.ExtendVoteRequestH\x00R\n" +
+	"extendVote\x12^\n" +
+	"\x15verify_vote_extension\x18\f \x01(\v2(.hotmint.abci.VerifyVoteExtensionRequestH\x00R\x13verifyVoteExtension\x12K\n" +
+	"\x0elist_snapshots\x18\r \x01(\v2\".hotmint.abci.ListSnapshotsRequestH\x00R\rlistSnapshots\x12X\n" +
+	"\x13load_snapshot_chunk\x18\x0e \x01(\v2&.hotmint.abci.LoadSnapshotChunkRequestH\x00R\x11loadSnapshotChunk\x12K\n" +
+	"\x0eoffer_snapshot\x18\x0f \x01(\v2\".hotmint.abci.OfferSnapshotRequestH\x00R\rofferSnapshot\x12[\n" +
+	"\x14apply_snapshot_chunk\x18\x10 \x01(\v2'.hotmint.abci.ApplySnapshotChunkRequestH\x00R\x12applySnapshotChunk\x12L\n" +
+	"\x0ftracks_app_hash\x18\x11 \x01(\v2\".hotmint.abci.TracksAppHashRequestH\x00R\rtracksAppHashB\t\n" +
+	"\arequest\"\r\n" +
+	"\vInfoRequest\"/\n" +
+	"\x10InitChainRequest\x12\x1b\n" +
+	"\tapp_state\x18\x01 \x01(\fR\bappState\"o\n" +
 	"\x14ValidateBlockRequest\x12)\n" +
 	"\x05block\x18\x01 \x01(\v2\x13.hotmint.abci.BlockR\x05block\x12,\n" +
 	"\x03ctx\x18\x02 \x01(\v2\x1a.hotmint.abci.BlockContextR\x03ctx\"N\n" +
@@ -1805,7 +3273,39 @@ const file_proto_abci_proto_rawDesc = "" +
 	"\x03ctx\x18\x02 \x01(\v2\x1a.hotmint.abci.BlockContextR\x03ctx\"6\n" +
 	"\fQueryRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\"\xfb\x03\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"\xa4\x01\n" +
+	"\x0fOfflineEvidence\x12\x1c\n" +
+	"\tvalidator\x18\x01 \x01(\x04R\tvalidator\x12%\n" +
+	"\x0emissed_commits\x18\x02 \x01(\x04R\rmissedCommits\x12#\n" +
+	"\rtotal_commits\x18\x03 \x01(\x04R\ftotalCommits\x12'\n" +
+	"\x0fevidence_height\x18\x04 \x01(\x04R\x0eevidenceHeight\"U\n" +
+	"\x1aOnOfflineValidatorsRequest\x127\n" +
+	"\aoffline\x18\x01 \x03(\v2\x1d.hotmint.abci.OfflineEvidenceR\aoffline\"l\n" +
+	"\x11ExtendVoteRequest\x12)\n" +
+	"\x05block\x18\x01 \x01(\v2\x13.hotmint.abci.BlockR\x05block\x12,\n" +
+	"\x03ctx\x18\x02 \x01(\v2\x1a.hotmint.abci.BlockContextR\x03ctx\"w\n" +
+	"\x1aVerifyVoteExtensionRequest\x12\x1c\n" +
+	"\textension\x18\x01 \x01(\fR\textension\x12\x1d\n" +
+	"\n" +
+	"block_hash\x18\x02 \x01(\fR\tblockHash\x12\x1c\n" +
+	"\tvalidator\x18\x03 \x01(\x04R\tvalidator\"R\n" +
+	"\fSnapshotInfo\x12\x16\n" +
+	"\x06height\x18\x01 \x01(\x04R\x06height\x12\x16\n" +
+	"\x06chunks\x18\x02 \x01(\rR\x06chunks\x12\x12\n" +
+	"\x04hash\x18\x03 \x01(\fR\x04hash\"\x16\n" +
+	"\x14ListSnapshotsRequest\"S\n" +
+	"\x18LoadSnapshotChunkRequest\x12\x16\n" +
+	"\x06height\x18\x01 \x01(\x04R\x06height\x12\x1f\n" +
+	"\vchunk_index\x18\x02 \x01(\rR\n" +
+	"chunkIndex\"N\n" +
+	"\x14OfferSnapshotRequest\x126\n" +
+	"\bsnapshot\x18\x01 \x01(\v2\x1a.hotmint.abci.SnapshotInfoR\bsnapshot\"R\n" +
+	"\x19ApplySnapshotChunkRequest\x12\x14\n" +
+	"\x05chunk\x18\x01 \x01(\fR\x05chunk\x12\x1f\n" +
+	"\vchunk_index\x18\x02 \x01(\rR\n" +
+	"chunkIndex\"\x16\n" +
+	"\x14TracksAppHashRequest\"\x9a\n" +
+	"\n" +
 	"\bResponse\x12L\n" +
 	"\x0ecreate_payload\x18\x01 \x01(\v2#.hotmint.abci.CreatePayloadResponseH\x00R\rcreatePayload\x12L\n" +
 	"\x0evalidate_block\x18\x02 \x01(\v2#.hotmint.abci.ValidateBlockResponseH\x00R\rvalidateBlock\x12C\n" +
@@ -1815,9 +3315,30 @@ const file_proto_abci_proto_rawDesc = "" +
 	"\ton_commit\x18\x05 \x01(\v2\x1e.hotmint.abci.OnCommitResponseH\x00R\bonCommit\x12C\n" +
 	"\von_evidence\x18\x06 \x01(\v2 .hotmint.abci.OnEvidenceResponseH\x00R\n" +
 	"onEvidence\x123\n" +
-	"\x05query\x18\a \x01(\v2\x1b.hotmint.abci.QueryResponseH\x00R\x05queryB\n" +
+	"\x05query\x18\a \x01(\v2\x1b.hotmint.abci.QueryResponseH\x00R\x05query\x120\n" +
+	"\x04info\x18\b \x01(\v2\x1a.hotmint.abci.InfoResponseH\x00R\x04info\x12@\n" +
 	"\n" +
-	"\bresponse\"1\n" +
+	"init_chain\x18\t \x01(\v2\x1f.hotmint.abci.InitChainResponseH\x00R\tinitChain\x12_\n" +
+	"\x15on_offline_validators\x18\n" +
+	" \x01(\v2).hotmint.abci.OnOfflineValidatorsResponseH\x00R\x13onOfflineValidators\x12C\n" +
+	"\vextend_vote\x18\v \x01(\v2 .hotmint.abci.ExtendVoteResponseH\x00R\n" +
+	"extendVote\x12_\n" +
+	"\x15verify_vote_extension\x18\f \x01(\v2).hotmint.abci.VerifyVoteExtensionResponseH\x00R\x13verifyVoteExtension\x12L\n" +
+	"\x0elist_snapshots\x18\r \x01(\v2#.hotmint.abci.ListSnapshotsResponseH\x00R\rlistSnapshots\x12Y\n" +
+	"\x13load_snapshot_chunk\x18\x0e \x01(\v2'.hotmint.abci.LoadSnapshotChunkResponseH\x00R\x11loadSnapshotChunk\x12L\n" +
+	"\x0eoffer_snapshot\x18\x0f \x01(\v2#.hotmint.abci.OfferSnapshotResponseH\x00R\rofferSnapshot\x12\\\n" +
+	"\x14apply_snapshot_chunk\x18\x10 \x01(\v2(.hotmint.abci.ApplySnapshotChunkResponseH\x00R\x12applySnapshotChunk\x12M\n" +
+	"\x0ftracks_app_hash\x18\x11 \x01(\v2#.hotmint.abci.TracksAppHashResponseH\x00R\rtracksAppHashB\n" +
+	"\n" +
+	"\bresponse\"d\n" +
+	"\aAppInfo\x12*\n" +
+	"\x11last_block_height\x18\x01 \x01(\x04R\x0flastBlockHeight\x12-\n" +
+	"\x13last_block_app_hash\x18\x02 \x01(\fR\x10lastBlockAppHash\"9\n" +
+	"\fInfoResponse\x12)\n" +
+	"\x04info\x18\x01 \x01(\v2\x15.hotmint.abci.AppInfoR\x04info\"D\n" +
+	"\x11InitChainResponse\x12\x19\n" +
+	"\bapp_hash\x18\x01 \x01(\fR\aappHash\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"1\n" +
 	"\x15CreatePayloadResponse\x12\x18\n" +
 	"\apayload\x18\x01 \x01(\fR\apayload\"'\n" +
 	"\x15ValidateBlockResponse\x12\x0e\n" +
@@ -1833,12 +3354,29 @@ const file_proto_abci_proto_rawDesc = "" +
 	"\x10OnCommitResponse\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\"*\n" +
 	"\x12OnEvidenceResponse\x12\x14\n" +
-	"\x05error\x18\x01 \x01(\tR\x05error\"g\n" +
+	"\x05error\x18\x01 \x01(\tR\x05error\"3\n" +
+	"\x1bOnOfflineValidatorsResponse\x12\x14\n" +
+	"\x05error\x18\x01 \x01(\tR\x05error\"W\n" +
+	"\x12ExtendVoteResponse\x12\x1c\n" +
+	"\textension\x18\x01 \x01(\fR\textension\x12#\n" +
+	"\rhas_extension\x18\x02 \x01(\bR\fhasExtension\"-\n" +
+	"\x1bVerifyVoteExtensionResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"g\n" +
 	"\rQueryResponse\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12\x14\n" +
 	"\x05proof\x18\x03 \x01(\fR\x05proof\x12\x16\n" +
-	"\x06height\x18\x04 \x01(\x04R\x06heightB<Z:github.com/rust-util-collections/hotmint/sdk/go/proto/abcib\x06proto3"
+	"\x06height\x18\x04 \x01(\x04R\x06height\"Q\n" +
+	"\x15ListSnapshotsResponse\x128\n" +
+	"\tsnapshots\x18\x01 \x03(\v2\x1a.hotmint.abci.SnapshotInfoR\tsnapshots\"/\n" +
+	"\x19LoadSnapshotChunkResponse\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\"/\n" +
+	"\x15OfferSnapshotResponse\x12\x16\n" +
+	"\x06result\x18\x01 \x01(\rR\x06result\"4\n" +
+	"\x1aApplySnapshotChunkResponse\x12\x16\n" +
+	"\x06result\x18\x01 \x01(\rR\x06result\"/\n" +
+	"\x15TracksAppHashResponse\x12\x16\n" +
+	"\x06tracks\x18\x01 \x01(\bR\x06tracksB<Z:github.com/rust-util-collections/hotmint/sdk/go/proto/abcib\x06proto3"
 
 var (
 	file_proto_abci_proto_rawDescOnce sync.Once
@@ -1852,33 +3390,56 @@ func file_proto_abci_proto_rawDescGZIP() []byte {
 	return file_proto_abci_proto_rawDescData
 }
 
-var file_proto_abci_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_proto_abci_proto_msgTypes = make([]protoimpl.MessageInfo, 48)
 var file_proto_abci_proto_goTypes = []any{
-	(*Block)(nil),                 // 0: hotmint.abci.Block
-	(*TxContext)(nil),             // 1: hotmint.abci.TxContext
-	(*ValidatorInfo)(nil),         // 2: hotmint.abci.ValidatorInfo
-	(*ValidatorSet)(nil),          // 3: hotmint.abci.ValidatorSet
-	(*VoteExtension)(nil),         // 4: hotmint.abci.VoteExtension
-	(*BlockContext)(nil),          // 5: hotmint.abci.BlockContext
-	(*EquivocationProof)(nil),     // 6: hotmint.abci.EquivocationProof
-	(*ValidatorUpdate)(nil),       // 7: hotmint.abci.ValidatorUpdate
-	(*EventAttribute)(nil),        // 8: hotmint.abci.EventAttribute
-	(*Event)(nil),                 // 9: hotmint.abci.Event
-	(*EndBlockResponse)(nil),      // 10: hotmint.abci.EndBlockResponse
-	(*Request)(nil),               // 11: hotmint.abci.Request
-	(*ValidateBlockRequest)(nil),  // 12: hotmint.abci.ValidateBlockRequest
-	(*ValidateTxRequest)(nil),     // 13: hotmint.abci.ValidateTxRequest
-	(*ExecuteBlockRequest)(nil),   // 14: hotmint.abci.ExecuteBlockRequest
-	(*OnCommitRequest)(nil),       // 15: hotmint.abci.OnCommitRequest
-	(*QueryRequest)(nil),          // 16: hotmint.abci.QueryRequest
-	(*Response)(nil),              // 17: hotmint.abci.Response
-	(*CreatePayloadResponse)(nil), // 18: hotmint.abci.CreatePayloadResponse
-	(*ValidateBlockResponse)(nil), // 19: hotmint.abci.ValidateBlockResponse
-	(*ValidateTxResponse)(nil),    // 20: hotmint.abci.ValidateTxResponse
-	(*ExecuteBlockResponse)(nil),  // 21: hotmint.abci.ExecuteBlockResponse
-	(*OnCommitResponse)(nil),      // 22: hotmint.abci.OnCommitResponse
-	(*OnEvidenceResponse)(nil),    // 23: hotmint.abci.OnEvidenceResponse
-	(*QueryResponse)(nil),         // 24: hotmint.abci.QueryResponse
+	(*Block)(nil),                       // 0: hotmint.abci.Block
+	(*TxContext)(nil),                   // 1: hotmint.abci.TxContext
+	(*ValidatorInfo)(nil),               // 2: hotmint.abci.ValidatorInfo
+	(*ValidatorSet)(nil),                // 3: hotmint.abci.ValidatorSet
+	(*VoteExtension)(nil),               // 4: hotmint.abci.VoteExtension
+	(*BlockContext)(nil),                // 5: hotmint.abci.BlockContext
+	(*EquivocationProof)(nil),           // 6: hotmint.abci.EquivocationProof
+	(*ValidatorUpdate)(nil),             // 7: hotmint.abci.ValidatorUpdate
+	(*EventAttribute)(nil),              // 8: hotmint.abci.EventAttribute
+	(*Event)(nil),                       // 9: hotmint.abci.Event
+	(*EndBlockResponse)(nil),            // 10: hotmint.abci.EndBlockResponse
+	(*Request)(nil),                     // 11: hotmint.abci.Request
+	(*InfoRequest)(nil),                 // 12: hotmint.abci.InfoRequest
+	(*InitChainRequest)(nil),            // 13: hotmint.abci.InitChainRequest
+	(*ValidateBlockRequest)(nil),        // 14: hotmint.abci.ValidateBlockRequest
+	(*ValidateTxRequest)(nil),           // 15: hotmint.abci.ValidateTxRequest
+	(*ExecuteBlockRequest)(nil),         // 16: hotmint.abci.ExecuteBlockRequest
+	(*OnCommitRequest)(nil),             // 17: hotmint.abci.OnCommitRequest
+	(*QueryRequest)(nil),                // 18: hotmint.abci.QueryRequest
+	(*OfflineEvidence)(nil),             // 19: hotmint.abci.OfflineEvidence
+	(*OnOfflineValidatorsRequest)(nil),  // 20: hotmint.abci.OnOfflineValidatorsRequest
+	(*ExtendVoteRequest)(nil),           // 21: hotmint.abci.ExtendVoteRequest
+	(*VerifyVoteExtensionRequest)(nil),  // 22: hotmint.abci.VerifyVoteExtensionRequest
+	(*SnapshotInfo)(nil),                // 23: hotmint.abci.SnapshotInfo
+	(*ListSnapshotsRequest)(nil),        // 24: hotmint.abci.ListSnapshotsRequest
+	(*LoadSnapshotChunkRequest)(nil),    // 25: hotmint.abci.LoadSnapshotChunkRequest
+	(*OfferSnapshotRequest)(nil),        // 26: hotmint.abci.OfferSnapshotRequest
+	(*ApplySnapshotChunkRequest)(nil),   // 27: hotmint.abci.ApplySnapshotChunkRequest
+	(*TracksAppHashRequest)(nil),        // 28: hotmint.abci.TracksAppHashRequest
+	(*Response)(nil),                    // 29: hotmint.abci.Response
+	(*AppInfo)(nil),                     // 30: hotmint.abci.AppInfo
+	(*InfoResponse)(nil),                // 31: hotmint.abci.InfoResponse
+	(*InitChainResponse)(nil),           // 32: hotmint.abci.InitChainResponse
+	(*CreatePayloadResponse)(nil),       // 33: hotmint.abci.CreatePayloadResponse
+	(*ValidateBlockResponse)(nil),       // 34: hotmint.abci.ValidateBlockResponse
+	(*ValidateTxResponse)(nil),          // 35: hotmint.abci.ValidateTxResponse
+	(*ExecuteBlockResponse)(nil),        // 36: hotmint.abci.ExecuteBlockResponse
+	(*OnCommitResponse)(nil),            // 37: hotmint.abci.OnCommitResponse
+	(*OnEvidenceResponse)(nil),          // 38: hotmint.abci.OnEvidenceResponse
+	(*OnOfflineValidatorsResponse)(nil), // 39: hotmint.abci.OnOfflineValidatorsResponse
+	(*ExtendVoteResponse)(nil),          // 40: hotmint.abci.ExtendVoteResponse
+	(*VerifyVoteExtensionResponse)(nil), // 41: hotmint.abci.VerifyVoteExtensionResponse
+	(*QueryResponse)(nil),               // 42: hotmint.abci.QueryResponse
+	(*ListSnapshotsResponse)(nil),       // 43: hotmint.abci.ListSnapshotsResponse
+	(*LoadSnapshotChunkResponse)(nil),   // 44: hotmint.abci.LoadSnapshotChunkResponse
+	(*OfferSnapshotResponse)(nil),       // 45: hotmint.abci.OfferSnapshotResponse
+	(*ApplySnapshotChunkResponse)(nil),  // 46: hotmint.abci.ApplySnapshotChunkResponse
+	(*TracksAppHashResponse)(nil),       // 47: hotmint.abci.TracksAppHashResponse
 }
 var file_proto_abci_proto_depIdxs = []int32{
 	6,  // 0: hotmint.abci.Block.evidence:type_name -> hotmint.abci.EquivocationProof
@@ -1889,31 +3450,57 @@ var file_proto_abci_proto_depIdxs = []int32{
 	7,  // 5: hotmint.abci.EndBlockResponse.validator_updates:type_name -> hotmint.abci.ValidatorUpdate
 	9,  // 6: hotmint.abci.EndBlockResponse.events:type_name -> hotmint.abci.Event
 	5,  // 7: hotmint.abci.Request.create_payload:type_name -> hotmint.abci.BlockContext
-	12, // 8: hotmint.abci.Request.validate_block:type_name -> hotmint.abci.ValidateBlockRequest
-	13, // 9: hotmint.abci.Request.validate_tx:type_name -> hotmint.abci.ValidateTxRequest
-	14, // 10: hotmint.abci.Request.execute_block:type_name -> hotmint.abci.ExecuteBlockRequest
-	15, // 11: hotmint.abci.Request.on_commit:type_name -> hotmint.abci.OnCommitRequest
+	14, // 8: hotmint.abci.Request.validate_block:type_name -> hotmint.abci.ValidateBlockRequest
+	15, // 9: hotmint.abci.Request.validate_tx:type_name -> hotmint.abci.ValidateTxRequest
+	16, // 10: hotmint.abci.Request.execute_block:type_name -> hotmint.abci.ExecuteBlockRequest
+	17, // 11: hotmint.abci.Request.on_commit:type_name -> hotmint.abci.OnCommitRequest
 	6,  // 12: hotmint.abci.Request.on_evidence:type_name -> hotmint.abci.EquivocationProof
-	16, // 13: hotmint.abci.Request.query:type_name -> hotmint.abci.QueryRequest
-	0,  // 14: hotmint.abci.ValidateBlockRequest.block:type_name -> hotmint.abci.Block
-	5,  // 15: hotmint.abci.ValidateBlockRequest.ctx:type_name -> hotmint.abci.BlockContext
-	1,  // 16: hotmint.abci.ValidateTxRequest.ctx:type_name -> hotmint.abci.TxContext
-	5,  // 17: hotmint.abci.ExecuteBlockRequest.ctx:type_name -> hotmint.abci.BlockContext
-	0,  // 18: hotmint.abci.OnCommitRequest.block:type_name -> hotmint.abci.Block
-	5,  // 19: hotmint.abci.OnCommitRequest.ctx:type_name -> hotmint.abci.BlockContext
-	18, // 20: hotmint.abci.Response.create_payload:type_name -> hotmint.abci.CreatePayloadResponse
-	19, // 21: hotmint.abci.Response.validate_block:type_name -> hotmint.abci.ValidateBlockResponse
-	20, // 22: hotmint.abci.Response.validate_tx:type_name -> hotmint.abci.ValidateTxResponse
-	21, // 23: hotmint.abci.Response.execute_block:type_name -> hotmint.abci.ExecuteBlockResponse
-	22, // 24: hotmint.abci.Response.on_commit:type_name -> hotmint.abci.OnCommitResponse
-	23, // 25: hotmint.abci.Response.on_evidence:type_name -> hotmint.abci.OnEvidenceResponse
-	24, // 26: hotmint.abci.Response.query:type_name -> hotmint.abci.QueryResponse
-	10, // 27: hotmint.abci.ExecuteBlockResponse.result:type_name -> hotmint.abci.EndBlockResponse
-	28, // [28:28] is the sub-list for method output_type
-	28, // [28:28] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	18, // 13: hotmint.abci.Request.query:type_name -> hotmint.abci.QueryRequest
+	12, // 14: hotmint.abci.Request.info:type_name -> hotmint.abci.InfoRequest
+	13, // 15: hotmint.abci.Request.init_chain:type_name -> hotmint.abci.InitChainRequest
+	20, // 16: hotmint.abci.Request.on_offline_validators:type_name -> hotmint.abci.OnOfflineValidatorsRequest
+	21, // 17: hotmint.abci.Request.extend_vote:type_name -> hotmint.abci.ExtendVoteRequest
+	22, // 18: hotmint.abci.Request.verify_vote_extension:type_name -> hotmint.abci.VerifyVoteExtensionRequest
+	24, // 19: hotmint.abci.Request.list_snapshots:type_name -> hotmint.abci.ListSnapshotsRequest
+	25, // 20: hotmint.abci.Request.load_snapshot_chunk:type_name -> hotmint.abci.LoadSnapshotChunkRequest
+	26, // 21: hotmint.abci.Request.offer_snapshot:type_name -> hotmint.abci.OfferSnapshotRequest
+	27, // 22: hotmint.abci.Request.apply_snapshot_chunk:type_name -> hotmint.abci.ApplySnapshotChunkRequest
+	28, // 23: hotmint.abci.Request.tracks_app_hash:type_name -> hotmint.abci.TracksAppHashRequest
+	0,  // 24: hotmint.abci.ValidateBlockRequest.block:type_name -> hotmint.abci.Block
+	5,  // 25: hotmint.abci.ValidateBlockRequest.ctx:type_name -> hotmint.abci.BlockContext
+	1,  // 26: hotmint.abci.ValidateTxRequest.ctx:type_name -> hotmint.abci.TxContext
+	5,  // 27: hotmint.abci.ExecuteBlockRequest.ctx:type_name -> hotmint.abci.BlockContext
+	0,  // 28: hotmint.abci.OnCommitRequest.block:type_name -> hotmint.abci.Block
+	5,  // 29: hotmint.abci.OnCommitRequest.ctx:type_name -> hotmint.abci.BlockContext
+	19, // 30: hotmint.abci.OnOfflineValidatorsRequest.offline:type_name -> hotmint.abci.OfflineEvidence
+	0,  // 31: hotmint.abci.ExtendVoteRequest.block:type_name -> hotmint.abci.Block
+	5,  // 32: hotmint.abci.ExtendVoteRequest.ctx:type_name -> hotmint.abci.BlockContext
+	23, // 33: hotmint.abci.OfferSnapshotRequest.snapshot:type_name -> hotmint.abci.SnapshotInfo
+	33, // 34: hotmint.abci.Response.create_payload:type_name -> hotmint.abci.CreatePayloadResponse
+	34, // 35: hotmint.abci.Response.validate_block:type_name -> hotmint.abci.ValidateBlockResponse
+	35, // 36: hotmint.abci.Response.validate_tx:type_name -> hotmint.abci.ValidateTxResponse
+	36, // 37: hotmint.abci.Response.execute_block:type_name -> hotmint.abci.ExecuteBlockResponse
+	37, // 38: hotmint.abci.Response.on_commit:type_name -> hotmint.abci.OnCommitResponse
+	38, // 39: hotmint.abci.Response.on_evidence:type_name -> hotmint.abci.OnEvidenceResponse
+	42, // 40: hotmint.abci.Response.query:type_name -> hotmint.abci.QueryResponse
+	31, // 41: hotmint.abci.Response.info:type_name -> hotmint.abci.InfoResponse
+	32, // 42: hotmint.abci.Response.init_chain:type_name -> hotmint.abci.InitChainResponse
+	39, // 43: hotmint.abci.Response.on_offline_validators:type_name -> hotmint.abci.OnOfflineValidatorsResponse
+	40, // 44: hotmint.abci.Response.extend_vote:type_name -> hotmint.abci.ExtendVoteResponse
+	41, // 45: hotmint.abci.Response.verify_vote_extension:type_name -> hotmint.abci.VerifyVoteExtensionResponse
+	43, // 46: hotmint.abci.Response.list_snapshots:type_name -> hotmint.abci.ListSnapshotsResponse
+	44, // 47: hotmint.abci.Response.load_snapshot_chunk:type_name -> hotmint.abci.LoadSnapshotChunkResponse
+	45, // 48: hotmint.abci.Response.offer_snapshot:type_name -> hotmint.abci.OfferSnapshotResponse
+	46, // 49: hotmint.abci.Response.apply_snapshot_chunk:type_name -> hotmint.abci.ApplySnapshotChunkResponse
+	47, // 50: hotmint.abci.Response.tracks_app_hash:type_name -> hotmint.abci.TracksAppHashResponse
+	30, // 51: hotmint.abci.InfoResponse.info:type_name -> hotmint.abci.AppInfo
+	10, // 52: hotmint.abci.ExecuteBlockResponse.result:type_name -> hotmint.abci.EndBlockResponse
+	23, // 53: hotmint.abci.ListSnapshotsResponse.snapshots:type_name -> hotmint.abci.SnapshotInfo
+	54, // [54:54] is the sub-list for method output_type
+	54, // [54:54] is the sub-list for method input_type
+	54, // [54:54] is the sub-list for extension type_name
+	54, // [54:54] is the sub-list for extension extendee
+	0,  // [0:54] is the sub-list for field type_name
 }
 
 func init() { file_proto_abci_proto_init() }
@@ -1929,8 +3516,18 @@ func file_proto_abci_proto_init() {
 		(*Request_OnCommit)(nil),
 		(*Request_OnEvidence)(nil),
 		(*Request_Query)(nil),
+		(*Request_Info)(nil),
+		(*Request_InitChain)(nil),
+		(*Request_OnOfflineValidators)(nil),
+		(*Request_ExtendVote)(nil),
+		(*Request_VerifyVoteExtension)(nil),
+		(*Request_ListSnapshots)(nil),
+		(*Request_LoadSnapshotChunk)(nil),
+		(*Request_OfferSnapshot)(nil),
+		(*Request_ApplySnapshotChunk)(nil),
+		(*Request_TracksAppHash)(nil),
 	}
-	file_proto_abci_proto_msgTypes[17].OneofWrappers = []any{
+	file_proto_abci_proto_msgTypes[29].OneofWrappers = []any{
 		(*Response_CreatePayload)(nil),
 		(*Response_ValidateBlock)(nil),
 		(*Response_ValidateTx)(nil),
@@ -1938,6 +3535,16 @@ func file_proto_abci_proto_init() {
 		(*Response_OnCommit)(nil),
 		(*Response_OnEvidence)(nil),
 		(*Response_Query)(nil),
+		(*Response_Info)(nil),
+		(*Response_InitChain)(nil),
+		(*Response_OnOfflineValidators)(nil),
+		(*Response_ExtendVote)(nil),
+		(*Response_VerifyVoteExtension)(nil),
+		(*Response_ListSnapshots)(nil),
+		(*Response_LoadSnapshotChunk)(nil),
+		(*Response_OfferSnapshot)(nil),
+		(*Response_ApplySnapshotChunk)(nil),
+		(*Response_TracksAppHash)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1945,7 +3552,7 @@ func file_proto_abci_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_abci_proto_rawDesc), len(file_proto_abci_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   25,
+			NumMessages:   48,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

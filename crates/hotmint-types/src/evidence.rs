@@ -18,6 +18,10 @@ pub struct EquivocationProof {
     pub epoch: crate::epoch::EpochNumber,
     pub block_hash_a: BlockHash,
     pub signature_a: Signature,
+    #[serde(default)]
+    pub extension_a: Option<Vec<u8>>,
     pub block_hash_b: BlockHash,
     pub signature_b: Signature,
+    #[serde(default)]
+    pub extension_b: Option<Vec<u8>>,
 }

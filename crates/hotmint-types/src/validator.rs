@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::crypto::{PublicKey, Signer};
@@ -17,6 +17,15 @@ impl fmt::Display for ValidatorId {
 impl From<u64> for ValidatorId {
     fn from(v: u64) -> Self {
         Self(v)
+    }
+}
+
+impl ValidatorId {
+    pub fn from_public_key(public_key: &PublicKey) -> Self {
+        let hash = blake3::hash(&public_key.0);
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&hash.as_bytes()[..8]);
+        Self(u64::from_le_bytes(bytes))
     }
 }
 
@@ -47,33 +56,74 @@ impl<'de> Deserialize<'de> for ValidatorSet {
             total_power: u64,
         }
         let raw = Raw::deserialize(deserializer)?;
-        let index_map = raw
-            .validators
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (v.id, i))
-            .collect();
-        Ok(ValidatorSet {
-            validators: raw.validators,
-            total_power: raw.total_power,
-            index_map,
-        })
+        ValidatorSet::try_from_parts(raw.validators, raw.total_power)
+            .map_err(serde::de::Error::custom)
     }
 }
 
 impl ValidatorSet {
     pub fn new(validators: Vec<ValidatorInfo>) -> Self {
-        let total_power = validators.iter().map(|v| v.power).sum();
+        Self::try_new(validators).expect("invalid validator set")
+    }
+
+    pub fn try_new(validators: Vec<ValidatorInfo>) -> Result<Self, String> {
+        let total_power = Self::compute_total_power(&validators)?;
+        Self::try_from_parts(validators, total_power)
+    }
+
+    fn try_from_parts(validators: Vec<ValidatorInfo>, total_power: u64) -> Result<Self, String> {
+        let computed_total_power = Self::compute_total_power(&validators)?;
+        if total_power != computed_total_power {
+            return Err(format!(
+                "validator set total_power mismatch: serialized {total_power}, computed {computed_total_power}"
+            ));
+        }
+        if !validators.is_empty() && total_power == 0 {
+            return Err("non-empty validator set has zero total power".to_string());
+        }
+
+        let mut ids = HashSet::with_capacity(validators.len());
+        let mut public_keys = HashSet::with_capacity(validators.len());
+        for validator in &validators {
+            if !ids.insert(validator.id) {
+                return Err(format!("duplicate validator id {}", validator.id));
+            }
+            if validator.public_key.0.len() != 32 {
+                return Err(format!(
+                    "validator {} has invalid public key length {}",
+                    validator.id,
+                    validator.public_key.0.len()
+                ));
+            }
+            if !public_keys.insert(validator.public_key.clone()) {
+                return Err(format!(
+                    "duplicate public key for validator {}",
+                    validator.id
+                ));
+            }
+        }
+
         let index_map = validators
             .iter()
             .enumerate()
             .map(|(i, v)| (v.id, i))
             .collect();
-        Self {
+        Ok(Self {
             validators,
             total_power,
             index_map,
-        }
+        })
+    }
+
+    fn compute_total_power(validators: &[ValidatorInfo]) -> Result<u64, String> {
+        validators.iter().try_fold(0u64, |acc, validator| {
+            acc.checked_add(validator.power).ok_or_else(|| {
+                format!(
+                    "validator set total_power overflow while adding {}",
+                    validator.id
+                )
+            })
+        })
     }
 
     /// Build a `ValidatorSet` from signers with equal power (1 each).
@@ -172,6 +222,17 @@ impl ValidatorSet {
         &self,
         updates: &[crate::validator_update::ValidatorUpdate],
     ) -> ValidatorSet {
+        self.try_apply_updates(updates)
+            .expect("invalid validator updates")
+    }
+
+    /// Fallibly apply validator updates and return a new ValidatorSet.
+    /// - `power > 0`: update existing validator's power/key, or add new validator
+    /// - `power == 0`: remove validator
+    pub fn try_apply_updates(
+        &self,
+        updates: &[crate::validator_update::ValidatorUpdate],
+    ) -> Result<ValidatorSet, String> {
         let mut infos: Vec<ValidatorInfo> = self.validators.clone();
 
         for update in updates {
@@ -189,7 +250,7 @@ impl ValidatorSet {
             }
         }
 
-        ValidatorSet::new(infos)
+        ValidatorSet::try_new(infos)
     }
 }
 
@@ -203,7 +264,7 @@ mod tests {
             .enumerate()
             .map(|(i, &p)| ValidatorInfo {
                 id: ValidatorId(i as u64),
-                public_key: PublicKey(vec![i as u8]),
+                public_key: PublicKey(vec![i as u8; 32]),
                 power: p,
             })
             .collect();
@@ -283,7 +344,7 @@ mod tests {
         let vs = make_vs(&[1, 1, 1]);
         let updates = vec![crate::validator_update::ValidatorUpdate {
             id: ValidatorId(3),
-            public_key: PublicKey(vec![3]),
+            public_key: PublicKey(vec![3; 32]),
             power: 2,
         }];
         let new_vs = vs.apply_updates(&updates);
@@ -297,7 +358,7 @@ mod tests {
         let vs = make_vs(&[1, 1, 1, 1]);
         let updates = vec![crate::validator_update::ValidatorUpdate {
             id: ValidatorId(2),
-            public_key: PublicKey(vec![2]),
+            public_key: PublicKey(vec![2; 32]),
             power: 0,
         }];
         let new_vs = vs.apply_updates(&updates);
@@ -311,13 +372,26 @@ mod tests {
         let vs = make_vs(&[1, 1, 1, 1]);
         let updates = vec![crate::validator_update::ValidatorUpdate {
             id: ValidatorId(0),
-            public_key: PublicKey(vec![0]),
+            public_key: PublicKey(vec![0; 32]),
             power: 10,
         }];
         let new_vs = vs.apply_updates(&updates);
         assert_eq!(new_vs.validator_count(), 4);
         assert_eq!(new_vs.power_of(ValidatorId(0)), 10);
         assert_eq!(new_vs.total_power(), 13);
+    }
+
+    #[test]
+    fn test_try_apply_updates_rejects_invalid_public_key() {
+        let vs = make_vs(&[1, 1, 1]);
+        let updates = vec![crate::validator_update::ValidatorUpdate {
+            id: ValidatorId(1),
+            public_key: PublicKey(vec![1; 31]),
+            power: 2,
+        }];
+
+        let err = vs.try_apply_updates(&updates).unwrap_err();
+        assert!(err.contains("invalid public key length"));
     }
 
     #[test]

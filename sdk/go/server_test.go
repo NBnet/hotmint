@@ -62,7 +62,7 @@ func (a *testApp) CreatePayload(_ *pb.BlockContext) []byte {
 }
 
 func (a *testApp) ExecuteBlock(_ [][]byte, _ *pb.BlockContext) (*pb.EndBlockResponse, error) {
-	return &pb.EndBlockResponse{}, nil
+	return NewEndBlockResponse(), nil
 }
 
 func (a *testApp) OnCommit(_ *pb.Block, _ *pb.BlockContext) error {
@@ -70,8 +70,8 @@ func (a *testApp) OnCommit(_ *pb.Block, _ *pb.BlockContext) error {
 	return nil
 }
 
-func (a *testApp) Query(_ string, data []byte) ([]byte, error) {
-	return data, nil // echo
+func (a *testApp) Query(_ string, data []byte) (*QueryResult, error) {
+	return &QueryResult{Data: data}, nil // echo
 }
 
 // --- Server integration test (Go-to-Go) ---

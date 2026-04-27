@@ -91,6 +91,11 @@ impl Block {
     /// Compute the Blake3 hash of this block's content and return it.
     pub fn compute_hash(&self) -> BlockHash {
         let mut hasher = blake3::Hasher::new();
+        fn update_len_prefixed(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+            hasher.update(&(bytes.len() as u64).to_le_bytes());
+            hasher.update(bytes);
+        }
+
         hasher.update(&self.height.as_u64().to_le_bytes());
         hasher.update(&self.parent_hash.0);
         hasher.update(&self.view.as_u64().to_le_bytes());
@@ -107,11 +112,29 @@ impl Block {
             }]);
             hasher.update(&ev.epoch.as_u64().to_le_bytes());
             hasher.update(&ev.block_hash_a.0);
-            hasher.update(&ev.signature_a.0);
+            update_len_prefixed(&mut hasher, &ev.signature_a.0);
+            match &ev.extension_a {
+                Some(extension) => {
+                    hasher.update(&[1]);
+                    update_len_prefixed(&mut hasher, extension);
+                }
+                None => {
+                    hasher.update(&[0]);
+                }
+            }
             hasher.update(&ev.block_hash_b.0);
-            hasher.update(&ev.signature_b.0);
+            update_len_prefixed(&mut hasher, &ev.signature_b.0);
+            match &ev.extension_b {
+                Some(extension) => {
+                    hasher.update(&[1]);
+                    update_len_prefixed(&mut hasher, extension);
+                }
+                None => {
+                    hasher.update(&[0]);
+                }
+            }
         }
-        hasher.update(&self.payload);
+        update_len_prefixed(&mut hasher, &self.payload);
         let hash = hasher.finalize();
         BlockHash(*hash.as_bytes())
     }

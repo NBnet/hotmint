@@ -67,26 +67,29 @@ pub fn enter_view(
                 state.step = ViewStep::WaitingForStatus;
             } else {
                 // Send status to new leader
-                let leader_id = state
-                    .validator_set
-                    .leader_for_view(view)
-                    .expect("empty validator set")
-                    .id;
-                let msg_bytes = status_signing_bytes(
-                    &state.chain_id_hash,
-                    state.current_epoch.number,
-                    view,
-                    &state.locked_qc,
-                );
-                let sig = signer.sign(&msg_bytes);
-                network.send_to(
-                    leader_id,
-                    ConsensusMessage::StatusCert {
-                        locked_qc: state.locked_qc.clone(),
-                        validator: state.validator_id,
-                        signature: sig,
-                    },
-                );
+                if state.validator_set.power_of(state.validator_id) > 0 {
+                    let leader_id = state
+                        .validator_set
+                        .leader_for_view(view)
+                        .expect("empty validator set")
+                        .id;
+                    let msg_bytes = status_signing_bytes(
+                        &state.chain_id_hash,
+                        state.current_epoch.number,
+                        view,
+                        state.validator_id,
+                        &state.locked_qc,
+                    );
+                    let sig = signer.sign(&msg_bytes);
+                    network.send_to(
+                        leader_id,
+                        ConsensusMessage::StatusCert {
+                            locked_qc: state.locked_qc.clone(),
+                            validator: state.validator_id,
+                            signature: sig,
+                        },
+                    );
+                }
                 state.step = ViewStep::WaitingForProposal;
             }
         }
@@ -97,26 +100,29 @@ pub fn enter_view(
             if am_leader {
                 state.step = ViewStep::WaitingForStatus;
             } else {
-                let leader_id = state
-                    .validator_set
-                    .leader_for_view(view)
-                    .expect("empty validator set")
-                    .id;
-                let msg_bytes = status_signing_bytes(
-                    &state.chain_id_hash,
-                    state.current_epoch.number,
-                    view,
-                    &state.locked_qc,
-                );
-                let sig = signer.sign(&msg_bytes);
-                network.send_to(
-                    leader_id,
-                    ConsensusMessage::StatusCert {
-                        locked_qc: state.locked_qc.clone(),
-                        validator: state.validator_id,
-                        signature: sig,
-                    },
-                );
+                if state.validator_set.power_of(state.validator_id) > 0 {
+                    let leader_id = state
+                        .validator_set
+                        .leader_for_view(view)
+                        .expect("empty validator set")
+                        .id;
+                    let msg_bytes = status_signing_bytes(
+                        &state.chain_id_hash,
+                        state.current_epoch.number,
+                        view,
+                        state.validator_id,
+                        &state.locked_qc,
+                    );
+                    let sig = signer.sign(&msg_bytes);
+                    network.send_to(
+                        leader_id,
+                        ConsensusMessage::StatusCert {
+                            locked_qc: state.locked_qc.clone(),
+                            validator: state.validator_id,
+                            signature: sig,
+                        },
+                    );
+                }
                 state.step = ViewStep::WaitingForProposal;
             }
         }
@@ -330,6 +336,16 @@ pub fn on_proposal(
             justify.block_hash
         ));
     }
+    let parent = store
+        .get_block(&block.parent_hash)
+        .ok_or_else(|| eg!("proposal parent block {} not found", block.parent_hash))?;
+    if block.height != parent.height.next() {
+        return Err(eg!(
+            "block height {} is not parent height {} + 1",
+            block.height,
+            parent.height
+        ));
+    }
 
     // BFT Time: verify the block timestamp is monotonically non-decreasing
     // and within a reasonable drift window of the local clock.
@@ -339,9 +355,7 @@ pub fn on_proposal(
             return Err(eg!("non-genesis block has timestamp 0"));
         }
         // Check monotonicity against parent block (if available).
-        if let Some(parent) = store.get_block(&block.parent_hash)
-            && block.timestamp < parent.timestamp
-        {
+        if block.timestamp < parent.timestamp {
             return Err(eg!(
                 "block timestamp {} < parent timestamp {}",
                 block.timestamp,
@@ -418,11 +432,15 @@ pub fn on_proposal(
     // Skip when the application does not track state roots (e.g. fullnode
     // running NoopApplication against a chain produced by a real ABCI app).
     if app.tracks_app_hash() && block.app_hash != state.last_app_hash {
-        return Err(eg!(
-            "app_hash mismatch: block {} != local {}",
-            block.app_hash,
-            state.last_app_hash
-        ));
+        warn!(
+            block_app_hash = %block.app_hash,
+            local_app_hash = %state.last_app_hash,
+            "rejecting proposal after processing fast-forward commit: app_hash mismatch"
+        );
+        return Ok(ProposalResult {
+            pending_epoch,
+            commit_result: fast_forward_commit,
+        });
     }
 
     // Vote (first phase) → send to current leader (only if we have voting power)
@@ -431,11 +449,14 @@ pub fn on_proposal(
             &state.chain_id_hash,
             state.current_epoch.number,
             state.current_view,
+            state.validator_id,
             &block.hash,
             VoteType::Vote,
+            None,
         );
         let signature = signer.sign(&vote_bytes);
         let vote = Vote {
+            epoch: state.current_epoch.number,
             block_hash: block.hash,
             view: state.current_view,
             validator: state.validator_id,
@@ -497,13 +518,16 @@ pub fn on_votes_collected(
 /// `vote_extension` is an optional ABCI++ vote extension to attach to the
 /// Vote2 message.  The caller (engine) is responsible for generating the
 /// extension via `Application::extend_vote` before invoking this function.
+pub struct PrepareResult {
+    pub vote2: Option<(ValidatorId, Vote)>,
+}
+
 pub fn on_prepare(
     state: &mut ConsensusState,
     qc: QuorumCertificate,
-    network: &dyn NetworkSink,
     signer: &dyn Signer,
     vote_extension: Option<Vec<u8>>,
-) {
+) -> PrepareResult {
     // C-1: Guard — only accept Prepare if we have already voted (sent Vote1).
     // Without this check, a Byzantine leader could cause us to lock a QC and
     // emit Vote2 for a block we never validated in the first phase.
@@ -514,7 +538,7 @@ pub fn on_prepare(
             view = %state.current_view,
             "ignoring prepare: not in Voted step"
         );
-        return;
+        return PrepareResult { vote2: None };
     }
 
     // Update lock to this QC
@@ -527,11 +551,14 @@ pub fn on_prepare(
             &state.chain_id_hash,
             state.current_epoch.number,
             state.current_view,
+            state.validator_id,
             &qc.block_hash,
             VoteType::Vote2,
+            vote_extension.as_deref(),
         );
         let signature = signer.sign(&vote_bytes);
         let vote = Vote {
+            epoch: state.current_epoch.number,
             block_hash: qc.block_hash,
             view: state.current_view,
             validator: state.validator_id,
@@ -548,10 +575,14 @@ pub fn on_prepare(
             "sending vote2 to next leader {}",
             next_leader_id
         );
-        network.send_to(next_leader_id, ConsensusMessage::Vote2Msg(vote));
+        state.step = ViewStep::SentVote2;
+        return PrepareResult {
+            vote2: Some((next_leader_id, vote)),
+        };
     }
 
     state.step = ViewStep::SentVote2;
+    PrepareResult { vote2: None }
 }
 
 // --- Signing helpers ---
@@ -560,14 +591,16 @@ pub(crate) fn status_signing_bytes(
     chain_id_hash: &[u8; 32],
     epoch: EpochNumber,
     view: ViewNumber,
+    validator: ValidatorId,
     locked_qc: &Option<QuorumCertificate>,
 ) -> Vec<u8> {
-    let tag = b"HOTMINT_STATUS_V1\0";
-    let mut buf = Vec::with_capacity(tag.len() + 32 + 8 + 8 + 40);
+    let tag = b"HOTMINT_STATUS_V2\0";
+    let mut buf = Vec::with_capacity(tag.len() + 32 + 8 + 8 + 8 + 40);
     buf.extend_from_slice(tag);
     buf.extend_from_slice(chain_id_hash);
     buf.extend_from_slice(&epoch.as_u64().to_le_bytes());
     buf.extend_from_slice(&view.as_u64().to_le_bytes());
+    buf.extend_from_slice(&validator.0.to_le_bytes());
     if let Some(qc) = locked_qc {
         buf.extend_from_slice(&qc.block_hash.0);
         buf.extend_from_slice(&qc.view.as_u64().to_le_bytes());

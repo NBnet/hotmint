@@ -6,6 +6,7 @@
 pub use vsdb::MptProof;
 
 use ruc::*;
+use std::sync::{Mutex, MutexGuard};
 
 use hotmint_crypto::has_quorum;
 use hotmint_types::block::{Block, BlockHash, Height};
@@ -44,20 +45,54 @@ impl From<&Block> for BlockHeader {
 /// Light client that verifies block headers against a trusted validator set.
 pub struct LightClient {
     trusted_validator_set: ValidatorSet,
-    trusted_height: Height,
+    trusted_state: Mutex<TrustedState>,
     chain_id_hash: [u8; 32],
+}
+
+#[derive(Debug, Clone)]
+struct TrustedState {
+    height: Height,
+    hash: Option<BlockHash>,
 }
 
 impl LightClient {
     /// Create a new light client with a trusted validator set and height.
+    ///
+    /// This legacy constructor has a trusted hash only at genesis. For any
+    /// non-genesis checkpoint, use [`Self::new_with_trusted_hash`].
     pub fn new(
         trusted_validator_set: ValidatorSet,
         trusted_height: Height,
         chain_id_hash: [u8; 32],
     ) -> Self {
+        let trusted_hash = if trusted_height == Height::GENESIS {
+            Some(BlockHash::GENESIS)
+        } else {
+            None
+        };
         Self {
             trusted_validator_set,
-            trusted_height,
+            trusted_state: Mutex::new(TrustedState {
+                height: trusted_height,
+                hash: trusted_hash,
+            }),
+            chain_id_hash,
+        }
+    }
+
+    /// Create a light client from an explicit trusted block checkpoint.
+    pub fn new_with_trusted_hash(
+        trusted_validator_set: ValidatorSet,
+        trusted_height: Height,
+        trusted_hash: BlockHash,
+        chain_id_hash: [u8; 32],
+    ) -> Self {
+        Self {
+            trusted_validator_set,
+            trusted_state: Mutex::new(TrustedState {
+                height: trusted_height,
+                hash: Some(trusted_hash),
+            }),
             chain_id_hash,
         }
     }
@@ -74,12 +109,40 @@ impl LightClient {
         qc: &QuorumCertificate,
         verifier: &dyn Verifier,
     ) -> Result<()> {
-        // A-6: Enforce height monotonicity — reject replayed or older headers.
-        if header.height <= self.trusted_height {
+        let mut trusted = self.trusted_state()?;
+
+        if header.height <= trusted.height {
             return Err(eg!(
                 "header height {} <= trusted height {}",
                 header.height.as_u64(),
-                self.trusted_height.as_u64()
+                trusted.height.as_u64()
+            ));
+        }
+
+        let trusted_hash = trusted.hash.ok_or_else(|| {
+            eg!(
+                "trusted hash unavailable at height {}; use new_with_trusted_hash or a verified trust path",
+                trusted.height.as_u64()
+            )
+        })?;
+        let expected_height = trusted
+            .height
+            .as_u64()
+            .checked_add(1)
+            .map(Height)
+            .ok_or_else(|| eg!("trusted height overflow"))?;
+        if header.height != expected_height {
+            return Err(eg!(
+                "non-adjacent header height {} does not extend trusted height {}; verify intermediate headers first",
+                header.height.as_u64(),
+                trusted.height.as_u64()
+            ));
+        }
+        if header.parent_hash != trusted_hash {
+            return Err(eg!(
+                "header parent hash mismatch: expected {}, got {}",
+                trusted_hash,
+                header.parent_hash
             ));
         }
 
@@ -97,39 +160,86 @@ impl LightClient {
             return Err(eg!("QC does not have quorum"));
         }
 
-        // 3. Verify aggregate signature
-        let signing_bytes = Vote::signing_bytes(
-            &self.chain_id_hash,
-            qc.epoch,
-            qc.view,
-            &qc.block_hash,
-            VoteType::Vote,
-        );
-        if !verifier.verify_aggregate(
-            &self.trusted_validator_set,
-            &signing_bytes,
-            &qc.aggregate_signature,
-        ) {
+        // 3. Verify each aggregate signature against the signer-specific vote payload.
+        if qc.aggregate_signature.signers.len() != self.trusted_validator_set.validator_count() {
+            return Err(eg!("QC signer bitfield length mismatch"));
+        }
+        let mut sig_idx = 0usize;
+        for (idx, signed) in qc.aggregate_signature.signers.iter().enumerate() {
+            if !signed {
+                continue;
+            }
+            let Some(validator) = self.trusted_validator_set.validators().get(idx) else {
+                return Err(eg!("QC signer index out of bounds"));
+            };
+            let Some(signature) = qc.aggregate_signature.signatures.get(sig_idx) else {
+                return Err(eg!("QC signature count below signer bitfield"));
+            };
+            let signing_bytes = Vote::signing_bytes(
+                &self.chain_id_hash,
+                qc.epoch,
+                qc.view,
+                validator.id,
+                &qc.block_hash,
+                VoteType::Vote,
+                None,
+            );
+            if !verifier.verify(&validator.public_key, &signing_bytes, signature) {
+                return Err(eg!("QC aggregate signature verification failed"));
+            }
+            sig_idx += 1;
+        }
+        if sig_idx != qc.aggregate_signature.signatures.len() {
             return Err(eg!("QC aggregate signature verification failed"));
         }
 
+        trusted.height = header.height;
+        trusted.hash = Some(header.hash);
         Ok(())
     }
 
     /// Update the trusted validator set after an epoch transition.
-    pub fn update_validator_set(&mut self, new_vs: ValidatorSet, new_height: Height) {
+    pub fn update_validator_set(
+        &mut self,
+        new_vs: ValidatorSet,
+        new_height: Height,
+        new_hash: BlockHash,
+    ) {
         self.trusted_validator_set = new_vs;
-        self.trusted_height = new_height;
+        *self
+            .trusted_state
+            .get_mut()
+            .expect("trusted state mutex poisoned") = TrustedState {
+            height: new_height,
+            hash: Some(new_hash),
+        };
     }
 
     /// Return the current trusted height.
     pub fn trusted_height(&self) -> Height {
-        self.trusted_height
+        self.trusted_state
+            .lock()
+            .expect("trusted state mutex poisoned")
+            .height
+    }
+
+    /// Return the current trusted block hash, if this client has one.
+    pub fn trusted_hash(&self) -> Option<BlockHash> {
+        self.trusted_state
+            .lock()
+            .expect("trusted state mutex poisoned")
+            .hash
     }
 
     /// Return a reference to the current trusted validator set.
     pub fn trusted_validator_set(&self) -> &ValidatorSet {
         &self.trusted_validator_set
+    }
+
+    fn trusted_state(&self) -> Result<MutexGuard<'_, TrustedState>> {
+        self.trusted_state
+            .lock()
+            .map_err(|_| eg!("trusted state mutex poisoned"))
     }
 
     /// Verify an MPT state proof against a trusted app_hash.
@@ -178,9 +288,17 @@ mod tests {
     }
 
     fn make_header(height: u64, hash: BlockHash) -> BlockHeader {
+        make_header_with_parent(height, BlockHash::GENESIS, hash)
+    }
+
+    fn make_header_with_parent(
+        height: u64,
+        parent_hash: BlockHash,
+        hash: BlockHash,
+    ) -> BlockHeader {
         BlockHeader {
             height: Height(height),
-            parent_hash: BlockHash::GENESIS,
+            parent_hash,
             view: ViewNumber(height),
             proposer: ValidatorId(0),
             timestamp: 0,
@@ -201,9 +319,17 @@ mod tests {
             .iter()
             .take(count)
             .map(|s| {
-                let bytes =
-                    Vote::signing_bytes(&TEST_CHAIN, epoch, view, &block_hash, VoteType::Vote);
+                let bytes = Vote::signing_bytes(
+                    &TEST_CHAIN,
+                    epoch,
+                    view,
+                    s.validator_id(),
+                    &block_hash,
+                    VoteType::Vote,
+                    None,
+                );
                 hotmint_types::vote::Vote {
+                    epoch,
                     block_hash,
                     view,
                     validator: s.validator_id(),
@@ -232,6 +358,8 @@ mod tests {
         let client = LightClient::new(vs, Height(0), TEST_CHAIN);
 
         assert!(client.verify_header(&header, &qc, &verifier).is_ok());
+        assert_eq!(client.trusted_height(), Height(1));
+        assert_eq!(client.trusted_hash(), Some(hash));
     }
 
     #[test]
@@ -269,6 +397,8 @@ mod tests {
             err.unwrap_err().to_string().contains("quorum"),
             "expected quorum error"
         );
+        assert_eq!(client.trusted_height(), Height(0));
+        assert_eq!(client.trusted_hash(), Some(BlockHash::GENESIS));
     }
 
     #[test]
@@ -290,8 +420,69 @@ mod tests {
             .collect();
         let new_vs = ValidatorSet::new(new_infos);
 
-        client.update_validator_set(new_vs, Height(100));
+        let checkpoint_hash = BlockHash([9u8; 32]);
+        client.update_validator_set(new_vs, Height(100), checkpoint_hash);
         assert_eq!(client.trusted_height(), Height(100));
+        assert_eq!(client.trusted_hash(), Some(checkpoint_hash));
         assert_eq!(client.trusted_validator_set().validator_count(), 4);
+    }
+
+    #[test]
+    fn test_parent_mismatch_fails_without_advancing_trust() {
+        let (vs, signers) = make_env();
+        let hash = BlockHash([1u8; 32]);
+        let wrong_parent = BlockHash([9u8; 32]);
+        let header = make_header_with_parent(1, wrong_parent, hash);
+        let qc = make_qc(&signers, &vs, hash, ViewNumber(1), 3);
+        let verifier = Ed25519Verifier;
+        let client = LightClient::new(vs, Height(0), TEST_CHAIN);
+
+        let err = client.verify_header(&header, &qc, &verifier);
+        assert!(err.is_err());
+        assert!(
+            err.unwrap_err()
+                .to_string()
+                .contains("parent hash mismatch"),
+            "expected parent hash mismatch error"
+        );
+        assert_eq!(client.trusted_height(), Height(0));
+        assert_eq!(client.trusted_hash(), Some(BlockHash::GENESIS));
+    }
+
+    #[test]
+    fn test_non_adjacent_header_requires_verified_path() {
+        let (vs, signers) = make_env();
+        let hash = BlockHash([2u8; 32]);
+        let header = make_header(2, hash);
+        let qc = make_qc(&signers, &vs, hash, ViewNumber(2), 3);
+        let verifier = Ed25519Verifier;
+        let client = LightClient::new(vs, Height(0), TEST_CHAIN);
+
+        let err = client.verify_header(&header, &qc, &verifier);
+        assert!(err.is_err());
+        assert!(
+            err.unwrap_err().to_string().contains("non-adjacent"),
+            "expected non-adjacent path error"
+        );
+        assert_eq!(client.trusted_height(), Height(0));
+    }
+
+    #[test]
+    fn test_trust_advances_along_hash_chain() {
+        let (vs, signers) = make_env();
+        let hash1 = BlockHash([1u8; 32]);
+        let hash2 = BlockHash([2u8; 32]);
+        let header1 = make_header(1, hash1);
+        let header2 = make_header_with_parent(2, hash1, hash2);
+        let qc1 = make_qc(&signers, &vs, hash1, ViewNumber(1), 3);
+        let qc2 = make_qc(&signers, &vs, hash2, ViewNumber(2), 3);
+        let verifier = Ed25519Verifier;
+        let client = LightClient::new(vs, Height(0), TEST_CHAIN);
+
+        client.verify_header(&header1, &qc1, &verifier).unwrap();
+        client.verify_header(&header2, &qc2, &verifier).unwrap();
+
+        assert_eq!(client.trusted_height(), Height(2));
+        assert_eq!(client.trusted_hash(), Some(hash2));
     }
 }

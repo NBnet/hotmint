@@ -2,7 +2,7 @@ use hotmint_consensus::store::BlockStore;
 use hotmint_types::{Block, BlockHash, EndBlockResponse, Height, QuorumCertificate};
 use ruc::*;
 use std::path::Path;
-use tracing::debug;
+use tracing::{debug, warn};
 use vsdb::MapxOrd;
 
 /// File name for the persisted instance IDs of the block store collections.
@@ -155,7 +155,14 @@ impl BlockStore for VsdbBlockStore {
         // Insert by_hash first so a crash between the two inserts leaves the
         // block data present (recoverable) rather than a dangling height index.
         self.by_hash.insert(&block.hash.0, &block);
-        self.by_height.insert(&block.height.as_u64(), &block.hash.0);
+        let height = block.height.as_u64();
+        if let Some(commit_qc) = self.commit_qcs.get(&height) {
+            if commit_qc.block_hash == block.hash {
+                self.by_height.insert(&height, &block.hash.0);
+            }
+        } else {
+            self.by_height.insert(&height, &block.hash.0);
+        }
     }
 
     fn get_block(&self, hash: &BlockHash) -> Option<Block> {
@@ -183,7 +190,20 @@ impl BlockStore for VsdbBlockStore {
     }
 
     fn put_commit_qc(&mut self, height: Height, qc: QuorumCertificate) {
-        self.commit_qcs.insert(&height.as_u64(), &qc);
+        let h = height.as_u64();
+        self.commit_qcs.insert(&h, &qc);
+        if let Some(block) = self.by_hash.get(&qc.block_hash.0) {
+            if block.height == height {
+                self.by_height.insert(&h, &qc.block_hash.0);
+            } else {
+                warn!(
+                    qc_hash = %qc.block_hash,
+                    qc_height = h,
+                    block_height = block.height.as_u64(),
+                    "commit QC height does not match stored block height; not repinning height index"
+                );
+            }
+        }
     }
 
     fn get_commit_qc(&self, height: Height) -> Option<QuorumCertificate> {
@@ -208,5 +228,67 @@ impl BlockStore for VsdbBlockStore {
 
     fn get_block_results(&self, height: Height) -> Option<EndBlockResponse> {
         self.block_results.get(&height.as_u64())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hotmint_types::{AggregateSignature, EpochNumber, ValidatorId, ViewNumber};
+
+    fn make_block(height: u64, parent: BlockHash, byte: u8) -> Block {
+        Block {
+            height: Height(height),
+            parent_hash: parent,
+            view: ViewNumber(height),
+            proposer: ValidatorId(0),
+            timestamp: 0,
+            payload: vec![],
+            app_hash: BlockHash::GENESIS,
+            evidence: Vec::new(),
+            hash: BlockHash([byte; 32]),
+        }
+    }
+
+    fn make_qc(block: &Block) -> QuorumCertificate {
+        QuorumCertificate {
+            block_hash: block.hash,
+            view: block.view,
+            aggregate_signature: AggregateSignature::new(1),
+            epoch: EpochNumber(0),
+        }
+    }
+
+    #[test]
+    fn committed_height_index_repins_and_stays_pinned() {
+        let mut store = VsdbBlockStore::new();
+        let committed = make_block(1, BlockHash::GENESIS, 1);
+        let proposal = make_block(1, BlockHash::GENESIS, 42);
+        let later_proposal = make_block(1, BlockHash::GENESIS, 99);
+        let later_hash = later_proposal.hash;
+
+        store.put_block(committed.clone());
+        store.put_block(proposal.clone());
+        assert_eq!(
+            store.get_block_by_height(Height(1)).map(|b| b.hash),
+            Some(proposal.hash)
+        );
+
+        store.put_commit_qc(Height(1), make_qc(&committed));
+        assert_eq!(
+            store.get_block_by_height(Height(1)).map(|b| b.hash),
+            Some(committed.hash)
+        );
+
+        store.put_block(later_proposal);
+        assert_eq!(
+            store.get_block_by_height(Height(1)).map(|b| b.hash),
+            Some(committed.hash)
+        );
+        assert!(store.get_block(&later_hash).is_some());
+        assert_eq!(
+            store.get_commit_qc(Height(1)).map(|qc| qc.block_hash),
+            Some(committed.hash)
+        );
     }
 }

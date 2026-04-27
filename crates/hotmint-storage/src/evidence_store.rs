@@ -76,7 +76,6 @@ pub struct PersistentEvidenceStore {
     proofs: MapxOrd<u64, EquivocationProof>,
     committed: MapxOrd<u64, u8>,
     next_id: u64,
-    meta_path: std::path::PathBuf,
 }
 
 impl PersistentEvidenceStore {
@@ -94,14 +93,13 @@ impl PersistentEvidenceStore {
             }
             let proofs_id = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
             let committed_id = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
-            let next_id = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
             let proofs = MapxOrd::from_meta(proofs_id).c(d!("restore proofs"))?;
             let committed = MapxOrd::from_meta(committed_id).c(d!("restore committed"))?;
+            let next_id = Self::next_id_from_proofs(&proofs);
             Ok(Self {
                 proofs,
                 committed,
                 next_id,
-                meta_path: meta_path.clone(),
             })
         } else {
             let proofs: MapxOrd<u64, EquivocationProof> = MapxOrd::new();
@@ -124,9 +122,15 @@ impl PersistentEvidenceStore {
                 proofs,
                 committed,
                 next_id,
-                meta_path,
             })
         }
+    }
+
+    fn next_id_from_proofs(proofs: &MapxOrd<u64, EquivocationProof>) -> u64 {
+        proofs
+            .last()
+            .map(|(id, _)| id.saturating_add(1))
+            .unwrap_or(0)
     }
 
     fn committed_key(view: ViewNumber, validator: ValidatorId) -> u64 {
@@ -142,41 +146,6 @@ impl PersistentEvidenceStore {
             .iter()
             .any(|(_, p)| p.view == proof.view && p.validator == proof.validator)
     }
-
-    /// A-4: Write the updated next_id back to the meta file so it survives restarts.
-    fn persist_next_id(&self) {
-        let bytes = match std::fs::read(&self.meta_path) {
-            Ok(b) if b.len() == 24 => b,
-            Ok(b) => {
-                tracing::warn!(
-                    "evidence_store.meta corrupt: expected 24 bytes, got {}",
-                    b.len()
-                );
-                return;
-            }
-            Err(e) => {
-                tracing::warn!("failed to read evidence_store.meta: {e}");
-                return;
-            }
-        };
-        let mut meta = bytes;
-        meta[16..24].copy_from_slice(&self.next_id.to_le_bytes());
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&self.meta_path)
-        {
-            Ok(mut file) => {
-                use std::io::Write;
-                if let Err(e) = file.write_all(&meta).and_then(|_| file.sync_all()) {
-                    tracing::warn!("failed to persist evidence next_id: {e}");
-                }
-            }
-            Err(e) => {
-                tracing::warn!("failed to open evidence_store.meta for write: {e}");
-            }
-        }
-    }
 }
 
 impl EvidenceStore for PersistentEvidenceStore {
@@ -190,9 +159,8 @@ impl EvidenceStore for PersistentEvidenceStore {
         }
         self.proofs.insert(&self.next_id, &proof);
         self.next_id += 1;
-        // A-4: Persist next_id so it survives restarts.
-        self.persist_next_id();
-        // Flush vsdb so proof data reaches disk — not just the meta counter.
+        // Flush vsdb so proof data reaches disk. On reopen, next_id is derived
+        // from the durable proof map rather than a non-atomic sidecar counter.
         vsdb::vsdb_flush();
     }
 
@@ -245,8 +213,10 @@ mod tests {
             epoch: Default::default(),
             block_hash_a: BlockHash::GENESIS,
             signature_a: Signature(vec![1]),
+            extension_a: None,
             block_hash_b: BlockHash::GENESIS,
             signature_b: Signature(vec![2]),
+            extension_b: None,
         }
     }
 
@@ -280,5 +250,15 @@ mod tests {
         store.put_evidence(dummy_proof(1, 0));
         store.put_evidence(dummy_proof(1, 0)); // duplicate
         assert_eq!(store.all().len(), 1);
+    }
+
+    #[test]
+    fn persistent_next_id_is_derived_from_durable_proof_keys() {
+        let mut proofs: MapxOrd<u64, EquivocationProof> = MapxOrd::new();
+        assert_eq!(PersistentEvidenceStore::next_id_from_proofs(&proofs), 0);
+
+        proofs.insert(&7, &dummy_proof(7, 0));
+        proofs.insert(&41, &dummy_proof(41, 1));
+        assert_eq!(PersistentEvidenceStore::next_id_from_proofs(&proofs), 42);
     }
 }

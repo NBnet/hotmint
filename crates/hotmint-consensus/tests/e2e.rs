@@ -391,7 +391,7 @@ impl Application for ValidatorLeaveApp {
             return Ok(EndBlockResponse {
                 validator_updates: vec![ValidatorUpdate {
                     id: self.validator_to_remove,
-                    public_key: hotmint_types::crypto::PublicKey(vec![0]),
+                    public_key: hotmint_types::crypto::PublicKey(vec![0; 32]),
                     power: 0,
                 }],
                 ..Default::default()
@@ -507,17 +507,22 @@ async fn test_equivocation_detected_via_injected_votes() {
         &chain_id_hash,
         EpochNumber(0),
         view,
+        signers[0].validator_id(),
         &hash_a,
         VoteType::Vote,
+        None,
     );
     let bytes_b = Vote::signing_bytes(
         &chain_id_hash,
         EpochNumber(0),
         view,
+        signers[0].validator_id(),
         &hash_b,
         VoteType::Vote,
+        None,
     );
     let vote_a = Vote {
+        epoch: EpochNumber(0),
         block_hash: hash_a,
         view,
         validator: signers[0].validator_id(),
@@ -526,6 +531,7 @@ async fn test_equivocation_detected_via_injected_votes() {
         extension: None,
     };
     let vote_b = Vote {
+        epoch: EpochNumber(0),
         block_hash: hash_b,
         view,
         validator: signers[0].validator_id(),
@@ -866,12 +872,12 @@ impl Application for TwoRemoveApp {
                 validator_updates: vec![
                     ValidatorUpdate {
                         id: ValidatorId(2),
-                        public_key: hotmint_types::crypto::PublicKey(vec![2]),
+                        public_key: hotmint_types::crypto::PublicKey(vec![2; 32]),
                         power: 0,
                     },
                     ValidatorUpdate {
                         id: ValidatorId(3),
-                        public_key: hotmint_types::crypto::PublicKey(vec![3]),
+                        public_key: hotmint_types::crypto::PublicKey(vec![3; 32]),
                         power: 0,
                     },
                 ],

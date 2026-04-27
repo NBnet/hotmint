@@ -110,7 +110,7 @@ mod tests {
         let validators: Vec<ValidatorInfo> = (0..n)
             .map(|i| ValidatorInfo {
                 id: ValidatorId(i as u64),
-                public_key: PublicKey(vec![i as u8]),
+                public_key: PublicKey(vec![i as u8; 32]),
                 power: 1,
             })
             .collect();

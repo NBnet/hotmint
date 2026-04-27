@@ -30,7 +30,7 @@ const ENTRY_MAGIC: [u8; 4] = [0x57, 0x41, 0x4C, 0x31]; // "WAL1"
 /// without a matching `CommitDone` is found, the node knows a mid-commit
 /// crash occurred and can re-execute from the block store.
 pub struct ConsensusWal {
-    _path: PathBuf,
+    path: PathBuf,
     file: File,
 }
 
@@ -58,17 +58,44 @@ impl ConsensusWal {
         // Unlike `.append(true)`, this allows truncate+seek(0) to work
         // correctly — subsequent writes go to position 0, not the old EOF.
         file.seek(io::SeekFrom::End(0))?;
-        Ok(Self { _path: path, file })
+        Ok(Self { path, file })
     }
 
     /// Check the WAL for incomplete commits (called on startup).
     pub fn check_recovery(data_dir: &Path) -> io::Result<WalRecovery> {
         let path = data_dir.join(WAL_FILE);
+        Self::check_recovery_path(&path, None)
+    }
+
+    /// Check the WAL and clear stale intents that are already covered by the
+    /// durable consensus checkpoint.
+    pub fn check_recovery_with_committed_height(
+        data_dir: &Path,
+        last_committed_height: Height,
+    ) -> io::Result<WalRecovery> {
+        let path = data_dir.join(WAL_FILE);
+        Self::check_recovery_path(&path, Some(last_committed_height))
+    }
+
+    /// Reconcile this open WAL handle with the durable consensus checkpoint.
+    pub fn reconcile_with_committed_height(
+        &mut self,
+        last_committed_height: Height,
+    ) -> io::Result<WalRecovery> {
+        let recovery = Self::check_recovery_path(&self.path, Some(last_committed_height))?;
+        self.file.seek(io::SeekFrom::End(0))?;
+        Ok(recovery)
+    }
+
+    fn check_recovery_path(
+        path: &Path,
+        last_committed_height: Option<Height>,
+    ) -> io::Result<WalRecovery> {
         if !path.exists() {
             return Ok(WalRecovery::Clean);
         }
 
-        let mut file = File::open(&path)?;
+        let mut file = File::open(path)?;
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
 
@@ -77,23 +104,48 @@ impl ConsensusWal {
 
         while offset < buf.len() {
             match decode_entry(&buf[offset..]) {
-                Some((entry, consumed)) => {
+                DecodeResult::Entry(entry, consumed) => {
                     last_entry = Some(entry);
                     offset += consumed;
                 }
-                None => break, // corrupt or truncated tail
+                DecodeResult::Truncated => {
+                    warn!(offset, "WAL: ignoring truncated, unsynced EOF tail");
+                    truncate_path(path, offset as u64)?;
+                    break;
+                }
+                DecodeResult::Invalid => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("corrupt or truncated WAL entry at byte offset {offset}"),
+                    ));
+                }
             }
         }
 
         match last_entry {
             Some(WalEntry::CommitIntent { target_height }) => {
+                if let Some(committed_height) = last_committed_height
+                    && committed_height >= target_height
+                {
+                    warn!(
+                        target_height = target_height.as_u64(),
+                        committed_height = committed_height.as_u64(),
+                        "WAL: clearing stale commit intent already covered by persisted state"
+                    );
+                    truncate_path(path, 0)?;
+                    return Ok(WalRecovery::Clean);
+                }
                 warn!(
                     target_height = target_height.as_u64(),
                     "WAL: incomplete commit detected, replay needed"
                 );
                 Ok(WalRecovery::NeedsReplay { target_height })
             }
-            _ => Ok(WalRecovery::Clean),
+            Some(WalEntry::CommitDone { .. }) => {
+                truncate_path(path, 0)?;
+                Ok(WalRecovery::Clean)
+            }
+            None => Ok(WalRecovery::Clean),
         }
     }
 
@@ -131,20 +183,42 @@ impl ConsensusWal {
     }
 }
 
+enum DecodeResult {
+    Entry(WalEntry, usize),
+    Truncated,
+    Invalid,
+}
+
 /// Decode one WAL entry from a byte slice. Returns the entry and bytes consumed.
-fn decode_entry(buf: &[u8]) -> Option<(WalEntry, usize)> {
-    if buf.len() < 8 {
-        return None;
+fn decode_entry(buf: &[u8]) -> DecodeResult {
+    if buf.len() < 4 {
+        return if ENTRY_MAGIC.starts_with(buf) {
+            DecodeResult::Truncated
+        } else {
+            DecodeResult::Invalid
+        };
     }
     if buf[..4] != ENTRY_MAGIC {
-        return None;
+        return DecodeResult::Invalid;
+    }
+    if buf.len() < 8 {
+        return DecodeResult::Truncated;
     }
     let len = u32::from_le_bytes(buf[4..8].try_into().unwrap()) as usize;
     if buf.len() < 8 + len {
-        return None;
+        return DecodeResult::Truncated;
     }
-    let entry: WalEntry = postcard::from_bytes(&buf[8..8 + len]).ok()?;
-    Some((entry, 8 + len))
+    let Ok(entry) = postcard::from_bytes(&buf[8..8 + len]) else {
+        return DecodeResult::Invalid;
+    };
+    DecodeResult::Entry(entry, 8 + len)
+}
+
+fn truncate_path(path: &Path, len: u64) -> io::Result<()> {
+    let mut file = OpenOptions::new().write(true).open(path)?;
+    file.set_len(len)?;
+    file.seek(io::SeekFrom::Start(len))?;
+    file.sync_all()
 }
 
 /// The WAL struct implements `hotmint_consensus::Wal`.
@@ -205,6 +279,44 @@ mod tests {
             WalRecovery::NeedsReplay {
                 target_height: Height(10),
             }
+        );
+    }
+
+    #[test]
+    fn wal_recovery_ignores_unsynced_partial_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(WAL_FILE), [ENTRY_MAGIC[0]]).unwrap();
+
+        let recovery = ConsensusWal::check_recovery(dir.path()).unwrap();
+        assert_eq!(recovery, WalRecovery::Clean);
+        assert_eq!(
+            std::fs::metadata(dir.path().join(WAL_FILE)).unwrap().len(),
+            0
+        );
+    }
+
+    #[test]
+    fn wal_recovery_rejects_corrupt_magic() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(WAL_FILE), [0xff]).unwrap();
+
+        let err = ConsensusWal::check_recovery(dir.path()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn wal_recovery_clears_stale_intent_at_committed_height() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut wal = ConsensusWal::open(dir.path()).unwrap();
+        wal.log_commit_intent(Height(10)).unwrap();
+        drop(wal);
+
+        let recovery =
+            ConsensusWal::check_recovery_with_committed_height(dir.path(), Height(10)).unwrap();
+        assert_eq!(recovery, WalRecovery::Clean);
+        assert_eq!(
+            std::fs::metadata(dir.path().join(WAL_FILE)).unwrap().len(),
+            0
         );
     }
 

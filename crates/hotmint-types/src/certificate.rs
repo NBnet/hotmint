@@ -22,6 +22,25 @@ impl QuorumCertificate {
     pub fn rank(&self) -> ViewNumber {
         self.view
     }
+
+    /// Canonical digest of all certificate fields that must be bound into
+    /// higher-level signatures, such as timeout wishes carrying a highest QC.
+    pub fn digest(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&self.epoch.as_u64().to_le_bytes());
+        hasher.update(&self.view.as_u64().to_le_bytes());
+        hasher.update(&self.block_hash.0);
+        hasher.update(&(self.aggregate_signature.signers.len() as u64).to_le_bytes());
+        for signed in &self.aggregate_signature.signers {
+            hasher.update(&[*signed as u8]);
+        }
+        hasher.update(&(self.aggregate_signature.signatures.len() as u64).to_le_bytes());
+        for sig in &self.aggregate_signature.signatures {
+            hasher.update(&(sig.0.len() as u64).to_le_bytes());
+            hasher.update(&sig.0);
+        }
+        *hasher.finalize().as_bytes()
+    }
 }
 
 /// C_v(C_v(B_k)): double certificate — QC of QC, triggers commit
@@ -50,7 +69,15 @@ impl TimeoutCertificate {
     pub fn highest_qc(&self) -> Option<&QuorumCertificate> {
         self.highest_qcs
             .iter()
-            .filter_map(|qc| qc.as_ref())
+            .enumerate()
+            .filter(|(idx, _)| {
+                self.aggregate_signature
+                    .signers
+                    .get(*idx)
+                    .copied()
+                    .unwrap_or(false)
+            })
+            .filter_map(|(_, qc)| qc.as_ref())
             .max_by_key(|qc| qc.view)
     }
 }
@@ -78,13 +105,37 @@ mod tests {
     fn test_tc_highest_qc_some() {
         let qc1 = make_qc(3, [1u8; 32]);
         let qc2 = make_qc(7, [2u8; 32]);
+        let mut aggregate_signature = AggregateSignature::new(4);
+        aggregate_signature
+            .add(0, crate::Signature(vec![1]))
+            .unwrap();
+        aggregate_signature
+            .add(2, crate::Signature(vec![2]))
+            .unwrap();
         let tc = TimeoutCertificate {
             view: ViewNumber(8),
-            aggregate_signature: AggregateSignature::new(4),
+            aggregate_signature,
             highest_qcs: vec![Some(qc1), None, Some(qc2), None],
         };
         let highest = tc.highest_qc().unwrap();
         assert_eq!(highest.view, ViewNumber(7));
+    }
+
+    #[test]
+    fn test_tc_highest_qc_ignores_unsigned_entries() {
+        let signed_qc = make_qc(3, [1u8; 32]);
+        let unsigned_qc = make_qc(7, [2u8; 32]);
+        let mut aggregate_signature = AggregateSignature::new(4);
+        aggregate_signature
+            .add(0, crate::Signature(vec![1]))
+            .unwrap();
+        let tc = TimeoutCertificate {
+            view: ViewNumber(8),
+            aggregate_signature,
+            highest_qcs: vec![Some(signed_qc), None, Some(unsigned_qc), None],
+        };
+        let highest = tc.highest_qc().unwrap();
+        assert_eq!(highest.view, ViewNumber(3));
     }
 
     #[test]

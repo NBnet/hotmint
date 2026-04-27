@@ -21,8 +21,8 @@ pub struct VoteResult {
 
 /// Collects votes and forms QCs when quorum is reached
 pub struct VoteCollector {
-    /// (view, block_hash, vote_type) -> votes
-    votes: HashMap<(ViewNumber, BlockHash, VoteType), Vec<Vote>>,
+    /// (epoch, view, block_hash, vote_type) -> votes
+    votes: HashMap<(EpochNumber, ViewNumber, BlockHash, VoteType), Vec<Vote>>,
 }
 
 impl Default for VoteCollector {
@@ -45,10 +45,22 @@ impl VoteCollector {
         vote: Vote,
         epoch: EpochNumber,
     ) -> Result<VoteResult> {
-        // Detect equivocation: same (view, vote_type) but different block_hash
+        if vote.epoch != epoch {
+            return Err(eg!(
+                "vote epoch {} does not match collector epoch {}",
+                vote.epoch,
+                epoch
+            ));
+        }
+        if vote.vote_type == VoteType::Vote && vote.extension.is_some() {
+            return Err(eg!("first-phase vote must not carry vote extension"));
+        }
+
+        // Detect equivocation: same (epoch, view, vote_type) but different block_hash
         let mut equivocation = None;
-        for ((v, bh, vt), existing_votes) in &self.votes {
-            if *v == vote.view
+        for ((ep, v, bh, vt), existing_votes) in &self.votes {
+            if *ep == epoch
+                && *v == vote.view
                 && *vt == vote.vote_type
                 && *bh != vote.block_hash
                 && let Some(existing) = existing_votes
@@ -62,15 +74,17 @@ impl VoteCollector {
                     epoch,
                     block_hash_a: existing.block_hash,
                     signature_a: existing.signature.clone(),
+                    extension_a: existing.extension.clone(),
                     block_hash_b: vote.block_hash,
                     signature_b: vote.signature.clone(),
+                    extension_b: vote.extension.clone(),
                 });
                 break;
             }
         }
 
         // Standard dedup + quorum check
-        let key = (vote.view, vote.block_hash, vote.vote_type);
+        let key = (epoch, vote.view, vote.block_hash, vote.vote_type);
         let votes = self.votes.entry(key).or_default();
 
         if votes.iter().any(|v| v.validator == vote.validator) {
@@ -92,8 +106,8 @@ impl VoteCollector {
                 .collect();
             (
                 Some(QuorumCertificate {
-                    block_hash: key.1,
-                    view: key.0,
+                    block_hash: key.2,
+                    view: key.1,
                     aggregate_signature: agg,
                     epoch,
                 }),
@@ -111,12 +125,12 @@ impl VoteCollector {
     }
 
     pub fn clear_view(&mut self, view: ViewNumber) {
-        self.votes.retain(|k, _| k.0 != view);
+        self.votes.retain(|k, _| k.1 != view);
     }
 
     /// Remove all votes for views before `min_view` to prevent unbounded growth.
     pub fn prune_before(&mut self, min_view: ViewNumber) {
-        self.votes.retain(|k, _| k.0 >= min_view);
+        self.votes.retain(|k, _| k.1 >= min_view);
     }
 }
 
@@ -151,8 +165,17 @@ mod tests {
         hash: BlockHash,
         vote_type: VoteType,
     ) -> Vote {
-        let bytes = Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), view, &hash, vote_type);
+        let bytes = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            view,
+            signer.validator_id(),
+            &hash,
+            vote_type,
+            None,
+        );
         Vote {
+            epoch: EpochNumber(0),
             block_hash: hash,
             view,
             validator: signer.validator_id(),

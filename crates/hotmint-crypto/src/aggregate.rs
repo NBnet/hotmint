@@ -22,7 +22,10 @@ pub fn has_quorum(vs: &ValidatorSet, agg: &AggregateSignature) -> bool {
     let validators = vs.validators();
     for (i, signed) in agg.signers.iter().enumerate() {
         if *signed && let Some(vi) = validators.get(i) {
-            power += vi.power;
+            let Some(new_power) = power.checked_add(vi.power) else {
+                return false;
+            };
+            power = new_power;
         }
     }
     power >= vs.quorum_threshold()
@@ -64,9 +67,17 @@ mod tests {
             .iter()
             .take(3)
             .map(|s| {
-                let bytes =
-                    Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), view, &hash, VoteType::Vote);
+                let bytes = Vote::signing_bytes(
+                    &TEST_CHAIN,
+                    EpochNumber(0),
+                    view,
+                    s.validator_id(),
+                    &hash,
+                    VoteType::Vote,
+                    None,
+                );
                 Vote {
+                    epoch: EpochNumber(0),
                     block_hash: hash,
                     view,
                     validator: s.validator_id(),
@@ -91,9 +102,17 @@ mod tests {
             .iter()
             .take(2)
             .map(|s| {
-                let bytes =
-                    Vote::signing_bytes(&TEST_CHAIN, EpochNumber(0), view, &hash, VoteType::Vote);
+                let bytes = Vote::signing_bytes(
+                    &TEST_CHAIN,
+                    EpochNumber(0),
+                    view,
+                    s.validator_id(),
+                    &hash,
+                    VoteType::Vote,
+                    None,
+                );
                 Vote {
+                    epoch: EpochNumber(0),
                     block_hash: hash,
                     view,
                     validator: s.validator_id(),
@@ -118,10 +137,13 @@ mod tests {
             &TEST_CHAIN,
             EpochNumber(0),
             ViewNumber(1),
+            unknown_signer.validator_id(),
             &hash,
             VoteType::Vote,
+            None,
         );
         let vote = Vote {
+            epoch: EpochNumber(0),
             block_hash: hash,
             view: ViewNumber(1),
             validator: ValidatorId(99),

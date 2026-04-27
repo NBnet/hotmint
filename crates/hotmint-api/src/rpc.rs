@@ -25,11 +25,14 @@ use tokio::time::{Duration, Instant, timeout};
 use tracing::{info, warn};
 
 const MAX_RPC_CONNECTIONS: usize = 256;
+const MAX_CONCURRENT_APP_QUERIES: usize = 8;
 const RPC_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum bytes per RPC line. Prevents OOM from clients sending huge data without newlines.
 const MAX_LINE_BYTES: usize = 1_048_576;
 /// Maximum submit_tx calls per second per IP address.
 pub(crate) const TX_RATE_LIMIT_PER_SEC: u32 = 100;
+/// Maximum application query calls per second per IP address.
+pub(crate) const QUERY_RATE_LIMIT_PER_SEC: u32 = 50;
 /// How often to prune stale per-IP rate limiter entries.
 const IP_LIMITER_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -74,10 +77,20 @@ pub struct RpcState {
     pub validator_set_rx: watch::Receiver<Vec<ValidatorInfoResponse>>,
     /// Application reference for tx validation (optional for backward compatibility).
     pub app: Option<Arc<dyn Application>>,
+    /// Application reference dedicated to public queries.
+    pub query_app: Option<Arc<dyn Application>>,
+    /// Bounded concurrency for potentially blocking application queries.
+    pub query_semaphore: Arc<Semaphore>,
     /// Optional network sink for broadcasting transactions to peers.
     pub network_sink: Option<Arc<dyn hotmint_consensus::network::NetworkSink>>,
     /// Chain ID hash for light client verification.
     pub chain_id_hash: [u8; 32],
+}
+
+impl RpcState {
+    pub fn new_query_semaphore() -> Arc<Semaphore> {
+        Arc::new(Semaphore::new(MAX_CONCURRENT_APP_QUERIES))
+    }
 }
 
 /// Simple JSON-RPC server over TCP (one JSON object per line)
@@ -106,6 +119,9 @@ impl RpcServer {
     pub async fn run(self) {
         let semaphore = Arc::new(Semaphore::new(MAX_RPC_CONNECTIONS));
         let ip_limiter = Arc::new(Mutex::new(PerIpRateLimiter::new()));
+        let query_limiter = Arc::new(Mutex::new(PerIpRateLimiter::with_rate(
+            QUERY_RATE_LIMIT_PER_SEC,
+        )));
         loop {
             match self.listener.accept().await {
                 Ok((stream, addr)) => {
@@ -119,6 +135,7 @@ impl RpcServer {
                     };
                     let state = self.state.clone();
                     let ip_limiter = ip_limiter.clone();
+                    let query_limiter = query_limiter.clone();
                     let peer_ip = addr.ip();
                     tokio::spawn(async move {
                         let _permit = permit;
@@ -139,7 +156,8 @@ impl RpcServer {
                                 _ => break, // EOF or timeout
                             };
                             let response =
-                                handle_request(&state, &line, &ip_limiter, peer_ip).await;
+                                handle_request(&state, &line, &ip_limiter, &query_limiter, peer_ip)
+                                    .await;
                             let mut json = serde_json::to_string(&response).unwrap_or_default();
                             json.push('\n');
                             if writer.write_all(json.as_bytes()).await.is_err() {
@@ -197,6 +215,7 @@ const MAX_IP_LIMITER_ENTRIES: usize = 100_000;
 /// many TCP connections or HTTP requests.
 pub struct PerIpRateLimiter {
     buckets: HashMap<IpAddr, TxRateLimiter>,
+    rate_per_sec: u32,
     last_prune: Instant,
 }
 
@@ -208,8 +227,13 @@ impl Default for PerIpRateLimiter {
 
 impl PerIpRateLimiter {
     pub fn new() -> Self {
+        Self::with_rate(TX_RATE_LIMIT_PER_SEC)
+    }
+
+    pub fn with_rate(rate_per_sec: u32) -> Self {
         Self {
             buckets: HashMap::new(),
+            rate_per_sec,
             last_prune: Instant::now(),
         }
     }
@@ -224,7 +248,7 @@ impl PerIpRateLimiter {
         let bucket = self
             .buckets
             .entry(ip)
-            .or_insert_with(|| TxRateLimiter::new(TX_RATE_LIMIT_PER_SEC));
+            .or_insert_with(|| TxRateLimiter::new(self.rate_per_sec));
         bucket.allow()
     }
 
@@ -245,6 +269,7 @@ pub(crate) async fn handle_request(
     state: &RpcState,
     line: &str,
     ip_limiter: &Mutex<PerIpRateLimiter>,
+    query_limiter: &Mutex<PerIpRateLimiter>,
     peer_ip: IpAddr,
 ) -> RpcResponse {
     let req: RpcRequest = match serde_json::from_str(line) {
@@ -547,6 +572,16 @@ pub(crate) async fn handle_request(
         }
 
         "query" => {
+            {
+                let mut limiter = query_limiter.lock().await;
+                if !limiter.allow(peer_ip) {
+                    return RpcResponse::err(
+                        req.id,
+                        -32000,
+                        "rate limit exceeded for query".to_string(),
+                    );
+                }
+            }
             let path = match req.params.get("path").and_then(|v| v.as_str()) {
                 Some(p) => p,
                 None => {
@@ -572,21 +607,43 @@ pub(crate) async fn handle_request(
                     );
                 }
             };
-            match &state.app {
-                Some(app) => match app.query(path, &data) {
-                    Ok(resp) => {
-                        let info = QueryResponseInfo {
-                            data: hex_encode(&resp.data),
-                            proof: resp.proof.as_ref().map(|p| hex_encode(p)),
-                            height: resp.height,
-                        };
-                        json_ok(req.id, &info)
+            match state.query_app.as_ref().or(state.app.as_ref()) {
+                Some(app) => {
+                    let permit = match state.query_semaphore.clone().try_acquire_owned() {
+                        Ok(permit) => permit,
+                        Err(_) => {
+                            return RpcResponse::err(
+                                req.id,
+                                -32000,
+                                "too many concurrent queries".to_string(),
+                            );
+                        }
+                    };
+                    let app = app.clone();
+                    let path = path.to_string();
+                    let query = tokio::task::spawn_blocking(move || {
+                        let _permit = permit;
+                        app.query(&path, &data)
+                    });
+                    match query.await {
+                        Ok(Ok(resp)) => {
+                            let info = QueryResponseInfo {
+                                data: hex_encode(&resp.data),
+                                proof: resp.proof.as_ref().map(|p| hex_encode(p)),
+                                height: resp.height,
+                            };
+                            json_ok(req.id, &info)
+                        }
+                        Ok(Err(e)) => {
+                            warn!(error = %e, "RPC query failed");
+                            RpcResponse::err(req.id, -32602, "query failed".to_string())
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "RPC query task failed");
+                            RpcResponse::err(req.id, -32603, "query task failed".to_string())
+                        }
                     }
-                    Err(e) => {
-                        warn!(error = %e, "RPC query failed");
-                        RpcResponse::err(req.id, -32602, "query failed".to_string())
-                    }
-                },
+                }
                 None => RpcResponse::err(
                     req.id,
                     -32602,

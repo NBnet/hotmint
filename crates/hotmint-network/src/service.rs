@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::iter;
 use std::mem;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use hotmint_consensus::network::NetworkSink;
@@ -45,6 +45,8 @@ const PEX_PROTOCOL: &str = "/hotmint/pex/1";
 const MAX_NOTIFICATION_SIZE: usize = 16 * 1024 * 1024;
 /// Max size for a single mempool tx gossip message (512 KB).
 const MAX_MEMPOOL_NOTIF_SIZE: usize = 512 * 1024;
+/// Per-peer consensus ingress byte budget, enforced before decode/enqueue.
+const MAX_CONSENSUS_INGRESS_BYTES_PER_SEC: usize = 32 * 1024 * 1024;
 const MAINTENANCE_INTERVAL_SECS: u64 = 10;
 
 /// Maps ValidatorId <-> PeerId for routing
@@ -183,6 +185,8 @@ pub struct NetworkService {
     seen_backup: HashSet<[u8; 32]>,
     /// Reliable channel for epoch changes (F-02).
     epoch_rx: watch::Receiver<EpochUpdate>,
+    /// Per-peer consensus ingress byte rate limit (Instant, bytes in window).
+    consensus_peer_rate: HashMap<PeerId, (Instant, usize)>,
     /// Per-peer rate limiting for PEX requests (F-09).
     pex_rate_limit: HashMap<PeerId, Instant>,
     /// Sender for transactions received via mempool gossip.
@@ -249,7 +253,7 @@ impl NetworkService {
             NotifConfigBuilder::new(MEMPOOL_NOTIF_PROTOCOL.into())
                 .with_max_size(MAX_MEMPOOL_NOTIF_SIZE)
                 .with_handshake(chain_id_hash.to_vec())
-                .with_auto_accept_inbound(true)
+                .with_auto_accept_inbound(false)
                 .with_sync_channel_size(2048)
                 .with_async_channel_size(2048)
                 .build();
@@ -363,6 +367,7 @@ impl NetworkService {
                 seen_active: HashSet::new(),
                 seen_backup: HashSet::new(),
                 epoch_rx,
+                consensus_peer_rate: HashMap::new(),
                 pex_rate_limit: HashMap::new(),
                 mempool_tx_tx,
                 mempool_seen_active: HashSet::new(),
@@ -453,6 +458,105 @@ impl NetworkService {
         }
     }
 
+    fn check_consensus_ingress_budget(&mut self, peer: PeerId, bytes: usize) -> bool {
+        let now = Instant::now();
+        let entry = self.consensus_peer_rate.entry(peer).or_insert((now, 0));
+        if now.duration_since(entry.0) >= Duration::from_secs(1) {
+            *entry = (now, 0);
+        }
+
+        match entry.1.checked_add(bytes) {
+            Some(total) if total <= MAX_CONSENSUS_INGRESS_BYTES_PER_SEC => {
+                entry.1 = total;
+                true
+            }
+            _ => {
+                warn!(
+                    peer = %peer,
+                    bytes,
+                    used = entry.1,
+                    limit = MAX_CONSENSUS_INGRESS_BYTES_PER_SEC,
+                    "dropping consensus message: ingress byte budget exceeded"
+                );
+                false
+            }
+        }
+    }
+
+    fn should_accept_consensus_from_peer(
+        &self,
+        sender: ValidatorId,
+        msg: &ConsensusMessage,
+    ) -> bool {
+        match msg {
+            ConsensusMessage::Propose { block, .. } => {
+                self.validator_keys.contains_key(&block.proposer)
+            }
+            ConsensusMessage::VoteMsg(vote) | ConsensusMessage::Vote2Msg(vote) => {
+                self.validator_keys.contains_key(&vote.validator)
+            }
+            ConsensusMessage::Wish { validator, .. } => self.validator_keys.contains_key(validator),
+            ConsensusMessage::StatusCert { validator, .. } => {
+                *validator == sender && self.validator_keys.contains_key(validator)
+            }
+            ConsensusMessage::Prepare { .. }
+            | ConsensusMessage::TimeoutCert(_)
+            | ConsensusMessage::Evidence(_) => true,
+        }
+    }
+
+    fn should_relay_consensus_message(&self, sender: ValidatorId, msg: &ConsensusMessage) -> bool {
+        if matches!(msg, ConsensusMessage::StatusCert { .. }) {
+            return false;
+        }
+
+        hotmint_consensus::engine::verify_relay_sender(
+            sender,
+            msg,
+            &self.validator_keys,
+            &self.validator_ids_ordered,
+            &self.chain_id_hash,
+            self.current_epoch,
+        )
+    }
+
+    fn relay_consensus_message(&mut self, from_peer: PeerId, msg: &ConsensusMessage) {
+        let canonical_identity = match postcard_encode(msg) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                warn!(error = %e, "failed to encode consensus relay identity");
+                return;
+            }
+        };
+        let msg_hash: [u8; 32] = *blake3::hash(&canonical_identity).as_bytes();
+
+        // Check both sets to avoid re-relay across rotations.
+        if self.seen_active.contains(&msg_hash) || self.seen_backup.contains(&msg_hash) {
+            return;
+        }
+
+        let raw = match codec::encode(msg) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                warn!(error = %e, "failed to encode consensus relay message");
+                return;
+            }
+        };
+
+        self.seen_active.insert(msg_hash);
+        // A4-6: Use notif_connected_peers (peers with open substream)
+        // instead of connected_peers (all TCP-connected).
+        for &other in &self.notif_connected_peers {
+            if other != from_peer {
+                let _ = self.notif_handle.send_sync_notification(other, raw.clone());
+            }
+        }
+        // Rotate: move active→backup, clear old backup.
+        if self.seen_active.len() > 10_000 {
+            self.seen_backup = mem::take(&mut self.seen_active);
+        }
+    }
+
     async fn handle_notification_event(&mut self, event: NotificationEvent) {
         match event {
             NotificationEvent::ValidateSubstream {
@@ -487,13 +591,27 @@ impl NetworkService {
                 // Determine the sender ValidatorId (None if peer is not a known validator)
                 let sender: Option<ValidatorId> =
                     self.peer_map.peer_to_validator.get(&peer).copied();
+                let Some(sender) = sender else {
+                    warn!(peer = %peer, "dropping notification from unknown peer");
+                    return;
+                };
+
+                if !self.check_consensus_ingress_budget(peer, notification.len()) {
+                    return;
+                }
 
                 match codec::decode::<ConsensusMessage>(&notification) {
                     Ok(msg) => {
-                        // F-08: Only deliver to consensus if sender is a known validator.
-                        if sender.is_some()
-                            && let Err(e) = self.msg_tx.try_send((sender, msg.clone()))
-                        {
+                        if !self.should_accept_consensus_from_peer(sender, &msg) {
+                            warn!(
+                                peer = %peer,
+                                sender = %sender,
+                                "dropping consensus message with mismatched or unknown embedded sender"
+                            );
+                            return;
+                        }
+
+                        if let Err(e) = self.msg_tx.try_send((Some(sender), msg.clone())) {
                             warn!("consensus message dropped (notification): {e}");
                         }
 
@@ -501,39 +619,9 @@ impl NetworkService {
                         // Only relay from known validators whose individual message signature
                         // is valid, preventing unknown peers from using this node as a DoS
                         // amplifier.
-                        if self.relay_consensus
-                            && let Some(sid) = sender
-                            && hotmint_consensus::engine::verify_relay_sender(
-                                sid,
-                                &msg,
-                                &self.validator_keys,
-                                &self.validator_ids_ordered,
-                                &self.chain_id_hash,
-                                self.current_epoch,
-                            )
+                        if self.relay_consensus && self.should_relay_consensus_message(sender, &msg)
                         {
-                            let msg_hash: [u8; 32] = *blake3::hash(&notification).as_bytes();
-
-                            // Check both sets to avoid re-relay across rotations
-                            if !self.seen_active.contains(&msg_hash)
-                                && !self.seen_backup.contains(&msg_hash)
-                            {
-                                self.seen_active.insert(msg_hash);
-                                let raw = notification.to_vec();
-                                // A4-6: Use notif_connected_peers (peers with open substream)
-                                // instead of connected_peers (all TCP-connected).
-                                for &other in &self.notif_connected_peers {
-                                    if other != peer {
-                                        let _ = self
-                                            .notif_handle
-                                            .send_sync_notification(other, raw.clone());
-                                    }
-                                }
-                                // Rotate: move active→backup, clear old backup
-                                if self.seen_active.len() > 10_000 {
-                                    self.seen_backup = mem::take(&mut self.seen_active);
-                                }
-                            }
+                            self.relay_consensus_message(peer, &msg);
                             // F-31: Reward peer for a valid relayed consensus message.
                             self.peer_book
                                 .write()
@@ -569,10 +657,25 @@ impl NetworkService {
                     self.reqresp_handle.reject_request(request_id);
                     return;
                 };
+                if !self.check_consensus_ingress_budget(peer, request.len()) {
+                    self.reqresp_handle.reject_request(request_id);
+                    return;
+                }
                 match codec::decode::<ConsensusMessage>(&request) {
                     Ok(msg) => {
+                        if !self.should_accept_consensus_from_peer(sender, &msg) {
+                            warn!(
+                                peer = %peer,
+                                sender = %sender,
+                                "rejecting consensus request with mismatched or unknown embedded sender"
+                            );
+                            self.reqresp_handle.reject_request(request_id);
+                            return;
+                        }
                         if let Err(e) = self.msg_tx.try_send((Some(sender), msg)) {
                             warn!("consensus message dropped (reqresp): {e}");
+                            self.reqresp_handle.reject_request(request_id);
+                            return;
                         }
                         self.reqresp_handle.send_response(request_id, vec![]);
                     }
@@ -892,6 +995,7 @@ impl NetworkService {
                     );
                     self.connected_peers.remove(&evict_peer);
                     self.notif_connected_peers.remove(&evict_peer);
+                    self.consensus_peer_rate.remove(&evict_peer);
                     // A4-4: Also clean mempool peer tracking on eviction.
                     self.remove_mempool_peer(&evict_peer);
                     // litep2p doesn't expose disconnect — closing the notification
@@ -906,6 +1010,12 @@ impl NetworkService {
                 if let Err(e) = self.notif_handle.try_open_substream_batch(iter::once(peer)) {
                     debug!(peer = %peer, error = ?e, "failed to open notification substream");
                 }
+                if let Err(e) = self
+                    .mempool_notif_handle
+                    .try_open_substream_batch(iter::once(peer))
+                {
+                    debug!(peer = %peer, error = ?e, "failed to open mempool notification substream");
+                }
 
                 // Update last_seen in peer book
                 if let Some(info) = self.peer_book.write().await.get_mut(&peer.to_string()) {
@@ -918,6 +1028,7 @@ impl NetworkService {
                 let _ = self.connected_count_tx.send(self.connected_peers.len());
                 // Eagerly remove from notif set; NotificationStreamClosed may
                 // arrive late or not at all when the TCP connection drops first.
+                self.consensus_peer_rate.remove(&peer);
                 if self.notif_connected_peers.remove(&peer) {
                     let _ = self
                         .notif_connected_count_tx
@@ -1006,10 +1117,17 @@ impl NetworkService {
 
     async fn handle_mempool_notification_event(&mut self, event: NotificationEvent) {
         match event {
-            NotificationEvent::ValidateSubstream { peer, .. } => {
-                // Auto-accept is true, but handle explicitly if called.
-                self.mempool_notif_handle
-                    .send_validation_result(peer, ValidationResult::Accept);
+            NotificationEvent::ValidateSubstream {
+                peer, handshake, ..
+            } => {
+                if handshake.as_slice() == self.chain_id_hash.as_slice() {
+                    self.mempool_notif_handle
+                        .send_validation_result(peer, ValidationResult::Accept);
+                } else {
+                    warn!(peer = %peer, "rejecting mempool peer: chain_id_hash handshake mismatch");
+                    self.mempool_notif_handle
+                        .send_validation_result(peer, ValidationResult::Reject);
+                }
             }
             NotificationEvent::NotificationStreamOpened { peer, .. } => {
                 trace!(peer = %peer, "mempool notif stream opened");
@@ -1040,14 +1158,20 @@ impl NetworkService {
                 {
                     return;
                 }
-                self.mempool_seen_active.insert(hash_bytes);
-                // Two-set rotation: swap active→backup when full, preserving
-                // recent history (same approach as relay dedup).
-                if self.mempool_seen_active.len() > 100_000 {
-                    mem::swap(&mut self.mempool_seen_active, &mut self.mempool_seen_backup);
-                    self.mempool_seen_active.clear();
+                match self.mempool_tx_tx.try_send(notification.freeze().to_vec()) {
+                    Ok(()) => {
+                        self.mempool_seen_active.insert(hash_bytes);
+                        // Two-set rotation: swap active→backup when full, preserving
+                        // recent history (same approach as relay dedup).
+                        if self.mempool_seen_active.len() > 100_000 {
+                            mem::swap(&mut self.mempool_seen_active, &mut self.mempool_seen_backup);
+                            self.mempool_seen_active.clear();
+                        }
+                    }
+                    Err(e) => {
+                        warn!("mempool tx gossip dropped: {e}");
+                    }
                 }
-                let _ = self.mempool_tx_tx.try_send(notification.freeze().to_vec());
             }
             NotificationEvent::NotificationStreamOpenFailure { peer, error } => {
                 debug!(peer = %peer, ?error, "mempool notif stream open failed");

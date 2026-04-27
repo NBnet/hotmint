@@ -47,6 +47,16 @@ pub trait Wal: Send {
     fn log_commit_done(&mut self, target_height: Height) -> std::io::Result<()>;
 }
 
+struct VoteAggregateRef<'a> {
+    validator_set: &'a ValidatorSet,
+    epoch: EpochNumber,
+    view: ViewNumber,
+    block_hash: &'a BlockHash,
+    vote_type: VoteType,
+    aggregate_signature: &'a AggregateSignature,
+    extensions: &'a [(ValidatorId, Vec<u8>)],
+}
+
 pub struct ConsensusEngine {
     state: ConsensusState,
     store: SharedBlockStore,
@@ -421,11 +431,14 @@ impl ConsensusEngine {
             &self.state.chain_id_hash,
             self.state.current_epoch.number,
             self.state.current_view,
+            self.state.validator_id,
             &block_hash,
             VoteType::Vote,
+            None,
         );
         let signature = self.signer.sign(&vote_bytes);
         let vote = Vote {
+            epoch: self.state.current_epoch.number,
             block_hash,
             view: self.state.current_view,
             validator: self.state.validator_id,
@@ -492,15 +505,20 @@ pub fn verify_relay_sender(
             Verifier::verify(&verifier, pk, &bytes, signature)
         }
         ConsensusMessage::VoteMsg(vote) | ConsensusMessage::Vote2Msg(vote) => {
+            if vote.epoch != epoch {
+                return false;
+            }
             let Some(pk) = validator_keys.get(&vote.validator) else {
                 return false;
             };
             let bytes = Vote::signing_bytes(
                 chain_id_hash,
-                epoch,
+                vote.epoch,
                 vote.view,
+                vote.validator,
                 &vote.block_hash,
                 vote.vote_type,
+                vote.extension.as_deref(),
             );
             Verifier::verify(&verifier, pk, &bytes, &vote.signature)
         }
@@ -616,6 +634,9 @@ impl ConsensusEngine {
         if tc.aggregate_signature.signers.len() != n {
             return false;
         }
+        if tc.highest_qcs.len() != n {
+            return false;
+        }
         let mut sig_idx = 0usize;
         let mut power = 0u64;
         for (i, &signed) in tc.aggregate_signature.signers.iter().enumerate() {
@@ -626,6 +647,12 @@ impl ConsensusEngine {
                 return false;
             };
             let hqc = tc.highest_qcs.get(i).and_then(|h| h.as_ref());
+            if let Some(qc) = hqc
+                && qc.aggregate_signature.count() > 0
+                && !self.verify_vote_qc(qc, VoteType::Vote)
+            {
+                return false;
+            }
             if sig_idx >= tc.aggregate_signature.signatures.len() {
                 return false;
             }
@@ -664,6 +691,110 @@ impl ConsensusEngine {
             cur
         };
         [cur, prev]
+    }
+
+    fn validator_set_for_epoch(&self, epoch: EpochNumber) -> Option<&ValidatorSet> {
+        if epoch == self.state.current_epoch.number {
+            return Some(&self.state.validator_set);
+        }
+        if epoch.as_u64().checked_add(1) == Some(self.state.current_epoch.number.as_u64()) {
+            return self.previous_validator_set.as_ref();
+        }
+        None
+    }
+
+    fn verify_vote_aggregate(&self, aggregate: VoteAggregateRef<'_>) -> bool {
+        let vs = aggregate.validator_set;
+        let agg = aggregate.aggregate_signature;
+        if agg.signers.len() != vs.validator_count() {
+            return false;
+        }
+        if aggregate.vote_type == VoteType::Vote && !aggregate.extensions.is_empty() {
+            return false;
+        }
+
+        let extension_map: HashMap<ValidatorId, &[u8]> = aggregate
+            .extensions
+            .iter()
+            .map(|(validator, extension)| (*validator, extension.as_slice()))
+            .collect();
+        let mut sig_idx = 0usize;
+        for (idx, signed) in agg.signers.iter().enumerate() {
+            if !signed {
+                continue;
+            }
+            let Some(validator) = vs.validators().get(idx) else {
+                return false;
+            };
+            let Some(signature) = agg.signatures.get(sig_idx) else {
+                return false;
+            };
+            let extension = extension_map.get(&validator.id).copied();
+            let bytes = Vote::signing_bytes(
+                &self.state.chain_id_hash,
+                aggregate.epoch,
+                aggregate.view,
+                validator.id,
+                aggregate.block_hash,
+                aggregate.vote_type,
+                extension,
+            );
+            if !self
+                .verifier
+                .verify(&validator.public_key, &bytes, signature)
+            {
+                return false;
+            }
+            sig_idx += 1;
+        }
+        sig_idx == agg.signatures.len() && has_quorum(vs, agg)
+    }
+
+    fn canonical_vote_extensions(
+        dc: &DoubleCertificate,
+        vs: &ValidatorSet,
+    ) -> Option<Vec<(ValidatorId, Vec<u8>)>> {
+        if dc.outer_qc.aggregate_signature.signers.len() != vs.validator_count() {
+            return None;
+        }
+        let mut by_validator = HashMap::new();
+        for (validator, extension) in &dc.vote_extensions {
+            if by_validator.insert(*validator, extension.clone()).is_some() {
+                return None;
+            }
+        }
+
+        let mut canonical = Vec::new();
+        for (idx, signed) in dc.outer_qc.aggregate_signature.signers.iter().enumerate() {
+            let validator = vs.validators().get(idx)?;
+            if *signed && let Some(extension) = by_validator.remove(&validator.id) {
+                canonical.push((validator.id, extension));
+            }
+        }
+        by_validator.is_empty().then_some(canonical)
+    }
+
+    fn finish_wal_intent(&mut self, target_height: Height) {
+        if let Some(ref mut wal) = self.wal
+            && let Err(e) = wal.log_commit_done(target_height)
+        {
+            warn!(error = %e, height = target_height.as_u64(), "WAL: failed to clear commit intent");
+        }
+    }
+
+    fn verify_vote_qc(&self, qc: &QuorumCertificate, vote_type: VoteType) -> bool {
+        let Some(vs) = self.validator_set_for_epoch(qc.epoch) else {
+            return false;
+        };
+        self.verify_vote_aggregate(VoteAggregateRef {
+            validator_set: vs,
+            epoch: qc.epoch,
+            view: qc.view,
+            block_hash: &qc.block_hash,
+            vote_type,
+            aggregate_signature: &qc.aggregate_signature,
+            extensions: &[],
+        })
     }
 
     /// Verify the cryptographic signature on an inbound consensus message.
@@ -724,53 +855,40 @@ impl ConsensusEngine {
                     return false;
                 }
                 // Verify justify QC aggregate signature (skip genesis QC which has no signers)
-                if justify.aggregate_signature.count() > 0 {
-                    let qc_bytes = Vote::signing_bytes(
-                        &self.state.chain_id_hash,
-                        justify.epoch,
-                        justify.view,
-                        &justify.block_hash,
-                        VoteType::Vote,
-                    );
-                    if !self
-                        .verifier
-                        .verify_aggregate(vs, &qc_bytes, &justify.aggregate_signature)
-                    {
-                        warn!(proposer = %block.proposer, "invalid justify QC aggregate signature");
-                        return false;
-                    }
-                    if justify.epoch == self.state.current_epoch.number
-                        && !has_quorum(vs, &justify.aggregate_signature)
-                    {
-                        warn!(proposer = %block.proposer, "justify QC below quorum threshold");
-                        return false;
-                    }
+                if justify.aggregate_signature.count() > 0
+                    && !self.verify_vote_qc(justify, VoteType::Vote)
+                {
+                    warn!(proposer = %block.proposer, "invalid justify QC");
+                    return false;
                 }
                 true
             }
             ConsensusMessage::VoteMsg(vote) | ConsensusMessage::Vote2Msg(vote) => {
-                let Some(vi) = vs.get(vote.validator) else {
+                let Some(vote_vs) = self.validator_set_for_epoch(vote.epoch) else {
+                    warn!(epoch = %vote.epoch, "vote from unknown epoch");
+                    return false;
+                };
+                let Some(vi) = vote_vs.get(vote.validator) else {
                     warn!(validator = %vote.validator, "vote from unknown validator");
                     return false;
                 };
-                let mut ok = false;
-                for epoch in self.verification_epochs() {
-                    let bytes = Vote::signing_bytes(
-                        &self.state.chain_id_hash,
-                        epoch,
-                        vote.view,
-                        &vote.block_hash,
-                        vote.vote_type,
-                    );
-                    if self
-                        .verifier
-                        .verify(&vi.public_key, &bytes, &vote.signature)
-                    {
-                        ok = true;
-                        break;
-                    }
+                if vote.vote_type == VoteType::Vote && vote.extension.is_some() {
+                    warn!(validator = %vote.validator, "first-phase vote carries extension");
+                    return false;
                 }
-                if !ok {
+                let bytes = Vote::signing_bytes(
+                    &self.state.chain_id_hash,
+                    vote.epoch,
+                    vote.view,
+                    vote.validator,
+                    &vote.block_hash,
+                    vote.vote_type,
+                    vote.extension.as_deref(),
+                );
+                if !self
+                    .verifier
+                    .verify(&vi.public_key, &bytes, &vote.signature)
+                {
                     warn!(validator = %vote.validator, "invalid vote signature");
                     return false;
                 }
@@ -800,25 +918,10 @@ impl ConsensusEngine {
                     warn!(view = %certificate.view, "invalid prepare signature");
                     return false;
                 }
-                // Also verify the QC's aggregate signature and quorum
-                let qc_bytes = Vote::signing_bytes(
-                    &self.state.chain_id_hash,
-                    certificate.epoch,
-                    certificate.view,
-                    &certificate.block_hash,
-                    VoteType::Vote,
-                );
-                if !self
-                    .verifier
-                    .verify_aggregate(vs, &qc_bytes, &certificate.aggregate_signature)
-                {
-                    warn!(view = %certificate.view, "invalid QC aggregate signature");
-                    return false;
-                }
-                if certificate.epoch == self.state.current_epoch.number
-                    && !has_quorum(vs, &certificate.aggregate_signature)
-                {
-                    warn!(view = %certificate.view, "Prepare QC below quorum threshold");
+                // Also verify the QC's aggregate signature and quorum against
+                // the validator set from the epoch that formed it.
+                if !self.verify_vote_qc(certificate, VoteType::Vote) {
+                    warn!(view = %certificate.view, "invalid Prepare QC");
                     return false;
                 }
                 true
@@ -887,6 +990,7 @@ impl ConsensusEngine {
                         &self.state.chain_id_hash,
                         epoch,
                         self.state.current_view,
+                        *validator,
                         locked_qc,
                     );
                     if self.verifier.verify(&vi.public_key, &bytes, signature) {
@@ -1025,15 +1129,23 @@ impl ConsensusEngine {
                 }
 
                 // WAL: log commit intent before fast-forward commit in on_proposal.
-                if let Some(ref dc) = double_cert
-                    && let Some(ref mut wal) = self.wal
-                    && let Some(target_block) = store.get_block(&dc.inner_qc.block_hash)
-                    && let Err(e) = wal.log_commit_intent(target_block.height)
-                {
-                    warn!(error = %e, "WAL: failed to log commit intent for fast-forward");
-                }
+                let fast_forward_intent_height = if let Some(ref dc) = double_cert {
+                    store.get_block(&dc.inner_qc.block_hash).map(|target_block| {
+                        if let Some(ref mut wal) = self.wal
+                            && let Err(e) = wal.log_commit_intent(target_block.height)
+                        {
+                            panic!(
+                                "FATAL: WAL failed to log commit intent for fast-forward height {}: {e}",
+                                target_block.height
+                            );
+                        }
+                        target_block.height
+                    })
+                } else {
+                    None
+                };
 
-                let proposal_result = view_protocol::on_proposal(
+                let proposal_result = match view_protocol::on_proposal(
                     &mut self.state,
                     view_protocol::ProposalData {
                         block,
@@ -1045,21 +1157,43 @@ impl ConsensusEngine {
                     self.app.as_ref(),
                     self.signer.as_ref(),
                 )
-                .c(d!())?;
+                .c(d!())
+                {
+                    Ok(result) => result,
+                    Err(e) => {
+                        drop(store);
+                        if let Some(height) = fast_forward_intent_height {
+                            self.finish_wal_intent(height);
+                        }
+                        return Err(e);
+                    }
+                };
                 drop(store);
 
                 // Process fast-forward commit result (WAL, tx indexing,
                 // evidence marking, liveness tracking, persist_state).
                 if let Some(result) = proposal_result.commit_result {
+                    let committed = !result.committed_blocks.is_empty();
+                    self.update_pending_epoch_from_commit(&result)?;
                     self.process_commit_result(&result);
-                }
-                if let Some(epoch) = proposal_result.pending_epoch {
+                    if !committed && let Some(height) = fast_forward_intent_height {
+                        self.finish_wal_intent(height);
+                    }
+                } else if let Some(epoch) = proposal_result.pending_epoch {
                     self.pending_epoch = Some(epoch);
+                    if let Some(height) = fast_forward_intent_height {
+                        self.finish_wal_intent(height);
+                    }
+                } else if let Some(height) = fast_forward_intent_height {
+                    self.finish_wal_intent(height);
                 }
             }
 
             ConsensusMessage::VoteMsg(vote) => {
                 if vote.view != self.state.current_view {
+                    return Ok(());
+                }
+                if vote.epoch != self.state.current_epoch.number {
                     return Ok(());
                 }
                 if !self.state.is_leader() {
@@ -1126,18 +1260,25 @@ impl ConsensusEngine {
                     });
                     drop(store);
 
-                    view_protocol::on_prepare(
+                    let prepare_result = view_protocol::on_prepare(
                         &mut self.state,
                         certificate,
-                        self.network.as_ref(),
                         self.signer.as_ref(),
                         vote_extension,
                     );
+                    self.persist_state();
+                    if let Some((next_leader_id, vote)) = prepare_result.vote2 {
+                        self.network
+                            .send_to(next_leader_id, ConsensusMessage::Vote2Msg(vote));
+                    }
                 }
             }
 
             ConsensusMessage::Vote2Msg(vote) => {
                 if vote.view != self.state.current_view {
+                    return Ok(());
+                }
+                if vote.epoch != self.state.current_epoch.number {
                     return Ok(());
                 }
                 if vote.vote_type != VoteType::Vote2 {
@@ -1186,35 +1327,10 @@ impl ConsensusEngine {
                 // Both signature authenticity and 2f+1 quorum weight must pass.
                 if let Some(ref qc) = highest_qc
                     && qc.aggregate_signature.count() > 0
+                    && !block_in_place(|| self.verify_vote_qc(qc, VoteType::Vote))
                 {
-                    let qc_bytes = Vote::signing_bytes(
-                        &self.state.chain_id_hash,
-                        qc.epoch,
-                        qc.view,
-                        &qc.block_hash,
-                        VoteType::Vote,
-                    );
-                    if !block_in_place(|| {
-                        self.verifier.verify_aggregate(
-                            &self.state.validator_set,
-                            &qc_bytes,
-                            &qc.aggregate_signature,
-                        )
-                    }) {
-                        warn!(validator = %validator, "wish carries invalid highest_qc signature");
-                        return Ok(());
-                    }
-                    // Only enforce quorum against the current validator set if the
-                    // QC was formed in the current epoch. A QC from a previous epoch
-                    // may not meet the new set's quorum threshold (e.g., after a
-                    // validator power change), but its signatures were already verified
-                    // above, so it remains a valid proof of finality in its own epoch.
-                    if qc.epoch == self.state.current_epoch.number
-                        && !has_quorum(&self.state.validator_set, &qc.aggregate_signature)
-                    {
-                        warn!(validator = %validator, "wish carries highest_qc without quorum");
-                        return Ok(());
-                    }
+                    warn!(validator = %validator, "wish carries invalid highest_qc");
+                    return Ok(());
                 }
 
                 if let Some(tc) = self.pacemaker.add_wish(
@@ -1255,19 +1371,7 @@ impl ConsensusEngine {
                     if let Some(ref qc) = locked_qc
                         && qc.aggregate_signature.count() > 0
                     {
-                        let qc_bytes = Vote::signing_bytes(
-                            &self.state.chain_id_hash,
-                            qc.epoch,
-                            qc.view,
-                            &qc.block_hash,
-                            VoteType::Vote,
-                        );
-                        let vs = &self.state.validator_set;
-                        if block_in_place(|| {
-                            self.verifier
-                                .verify_aggregate(vs, &qc_bytes, &qc.aggregate_signature)
-                        }) && has_quorum(vs, &qc.aggregate_signature)
-                        {
+                        if block_in_place(|| self.verify_vote_qc(qc, VoteType::Vote)) {
                             self.state.update_highest_qc(qc);
                         } else {
                             warn!(validator = %validator, "status cert carries invalid locked_qc");
@@ -1310,15 +1414,19 @@ impl ConsensusEngine {
                     &self.state.chain_id_hash,
                     proof.epoch,
                     proof.view,
+                    proof.validator,
                     &proof.block_hash_a,
                     proof.vote_type,
+                    proof.extension_a.as_deref(),
                 );
                 let bytes_b = Vote::signing_bytes(
                     &self.state.chain_id_hash,
                     proof.epoch,
                     proof.view,
+                    proof.validator,
                     &proof.block_hash_b,
                     proof.vote_type,
+                    proof.extension_b.as_deref(),
                 );
                 if !self
                     .verifier
@@ -1336,11 +1444,12 @@ impl ConsensusEngine {
                     view = %proof.view,
                     "received valid evidence gossip"
                 );
+                if let Some(ref mut store) = self.evidence_store {
+                    store.put_evidence(proof.clone());
+                    store.flush();
+                }
                 if let Err(e) = self.app.on_evidence(&proof) {
                     warn!(error = %e, "on_evidence callback failed for gossiped proof");
-                }
-                if let Some(ref mut store) = self.evidence_store {
-                    store.put_evidence(proof);
                 }
             }
         }
@@ -1354,16 +1463,16 @@ impl ConsensusEngine {
                 view = %proof.view,
                 "equivocation detected!"
             );
-            if let Err(e) = self.app.on_evidence(proof) {
-                warn!(error = %e, "on_evidence callback failed");
-            }
-            self.network.broadcast_evidence(proof);
             if let Some(ref mut store) = self.evidence_store {
                 store.put_evidence(proof.clone());
                 // A4-2: Flush immediately so evidence survives crashes
                 // between detection and the next block commit.
                 store.flush();
             }
+            if let Err(e) = self.app.on_evidence(proof) {
+                warn!(error = %e, "on_evidence callback failed");
+            }
+            self.network.broadcast_evidence(proof);
         }
     }
 
@@ -1400,11 +1509,14 @@ impl ConsensusEngine {
             &self.state.chain_id_hash,
             self.state.current_epoch.number,
             self.state.current_view,
+            self.state.validator_id,
             &qc.block_hash,
             VoteType::Vote2,
+            vote_extension.as_deref(),
         );
         let signature = self.signer.sign(&vote_bytes);
         let vote = Vote {
+            epoch: self.state.current_epoch.number,
             block_hash: qc.block_hash,
             view: self.state.current_view,
             validator: self.state.validator_id,
@@ -1415,6 +1527,7 @@ impl ConsensusEngine {
 
         // Lock on this QC
         self.state.update_locked_qc(&qc);
+        self.persist_state();
 
         let next_leader_id =
             leader::next_leader(&self.state.validator_set, self.state.current_view);
@@ -1570,11 +1683,6 @@ impl ConsensusEngine {
                 for proof in &block.evidence {
                     ev_store.mark_committed(proof.view, proof.validator);
                 }
-                for proof in ev_store.get_pending() {
-                    if proof.view <= block.view {
-                        ev_store.mark_committed(proof.view, proof.validator);
-                    }
-                }
             }
             ev_store.flush();
         }
@@ -1590,10 +1698,42 @@ impl ConsensusEngine {
         }
     }
 
+    fn update_pending_epoch_from_commit(&mut self, result: &CommitResult) -> Result<()> {
+        let mut pending_epoch = self.pending_epoch.clone();
+        for (block, response) in result
+            .committed_blocks
+            .iter()
+            .zip(result.block_responses.iter())
+        {
+            if response.validator_updates.is_empty() {
+                continue;
+            }
+            let (base_number, base_validator_set) = if let Some(ref epoch) = pending_epoch {
+                (epoch.number, &epoch.validator_set)
+            } else {
+                (self.state.current_epoch.number, &self.state.validator_set)
+            };
+            let new_vs = base_validator_set
+                .try_apply_updates(&response.validator_updates)
+                .map_err(|e| {
+                    eg!(
+                        "invalid validator updates at committed height {}: {}",
+                        block.height.as_u64(),
+                        e
+                    )
+                })?;
+            let epoch_start = ViewNumber(block.view.as_u64() + 2);
+            pending_epoch = Some(Epoch::new(base_number.next(), epoch_start, new_vs));
+        }
+        self.pending_epoch = pending_epoch;
+        Ok(())
+    }
+
     /// Apply the result of a successful try_commit: update app_hash, pending epoch,
     /// store commit QCs, and flush. Called from both normal and fast-forward commit paths.
     async fn apply_commit(&mut self, dc: &DoubleCertificate, context: &str) {
         // WAL: log commit intent before executing blocks.
+        let mut intent_height = None;
         if let Some(ref mut wal) = self.wal {
             let target_height = {
                 let store = self.store.read();
@@ -1602,8 +1742,9 @@ impl ConsensusEngine {
             if let Some(h) = target_height
                 && let Err(e) = wal.log_commit_intent(h)
             {
-                warn!(error = %e, "WAL: failed to log commit intent");
+                panic!("FATAL: WAL failed to log commit intent for height {h}: {e}");
             }
+            intent_height = target_height;
         }
 
         let store = self.store.read();
@@ -1615,18 +1756,25 @@ impl ConsensusEngine {
             &self.state.current_epoch,
         ) {
             Ok(result) => {
-                if !result.committed_blocks.is_empty() {
+                let committed = !result.committed_blocks.is_empty();
+                if committed {
                     self.state.last_app_hash = result.last_app_hash;
                 }
-                if result.pending_epoch.is_some() {
-                    self.pending_epoch = result.pending_epoch.clone();
-                }
                 drop(store);
+                if let Err(e) = self.update_pending_epoch_from_commit(&result) {
+                    panic!("FATAL: invalid commit result during {context}: {e}");
+                }
                 self.process_commit_result(&result);
+                if !committed && let Some(height) = intent_height {
+                    self.finish_wal_intent(height);
+                }
             }
             Err(e) => {
                 warn!(error = %e, "try_commit failed during {context}");
                 drop(store);
+                if let Some(height) = intent_height {
+                    self.finish_wal_intent(height);
+                }
             }
         }
     }
@@ -1638,10 +1786,9 @@ impl ConsensusEngine {
     ///
     /// Note on quorum and epoch transitions: DCs are always formed in the same epoch as
     /// the block they commit (vote_collector enforces quorum at formation time).  When
-    /// a DC is received by a node that has already transitioned to a new epoch, the
-    /// validator set may differ.  We enforce quorum against the current validator set
-    /// as the best available reference; a legitimate DC from a prior epoch should still
-    /// satisfy quorum against the new set unless the set shrank significantly.
+    /// a DC is received by a node that has already transitioned to a new epoch, retain
+    /// and use the previous validator set rather than checking old signatures against
+    /// the current epoch's power table.
     fn validate_double_cert(&self, dc: &DoubleCertificate) -> bool {
         if dc.inner_qc.block_hash != dc.outer_qc.block_hash {
             warn!("double cert inner/outer block_hash mismatch");
@@ -1651,41 +1798,40 @@ impl ConsensusEngine {
             warn!("double cert outer_qc.view != inner_qc.view");
             return false;
         }
-        let vs = &self.state.validator_set;
-        let inner_bytes = Vote::signing_bytes(
-            &self.state.chain_id_hash,
-            dc.inner_qc.epoch,
-            dc.inner_qc.view,
-            &dc.inner_qc.block_hash,
-            VoteType::Vote,
-        );
-        if !self
-            .verifier
-            .verify_aggregate(vs, &inner_bytes, &dc.inner_qc.aggregate_signature)
-        {
-            warn!("double cert inner QC signature invalid");
+        if dc.inner_qc.epoch != dc.outer_qc.epoch {
+            warn!("double cert inner/outer epoch mismatch");
             return false;
         }
-        if !has_quorum(vs, &dc.inner_qc.aggregate_signature) {
-            warn!("double cert inner QC below quorum threshold");
+        let Some(vs) = self.validator_set_for_epoch(dc.inner_qc.epoch) else {
+            warn!("double cert epoch is unknown");
+            return false;
+        };
+        let Some(vote_extensions) = Self::canonical_vote_extensions(dc, vs) else {
+            warn!("double cert carries duplicate or unsigned vote extensions");
+            return false;
+        };
+        if !self.verify_vote_aggregate(VoteAggregateRef {
+            validator_set: vs,
+            epoch: dc.inner_qc.epoch,
+            view: dc.inner_qc.view,
+            block_hash: &dc.inner_qc.block_hash,
+            vote_type: VoteType::Vote,
+            aggregate_signature: &dc.inner_qc.aggregate_signature,
+            extensions: &[],
+        }) {
+            warn!("double cert inner QC invalid");
             return false;
         }
-        let outer_bytes = Vote::signing_bytes(
-            &self.state.chain_id_hash,
-            dc.outer_qc.epoch,
-            dc.outer_qc.view,
-            &dc.outer_qc.block_hash,
-            VoteType::Vote2,
-        );
-        if !self
-            .verifier
-            .verify_aggregate(vs, &outer_bytes, &dc.outer_qc.aggregate_signature)
-        {
-            warn!("double cert outer QC signature invalid");
-            return false;
-        }
-        if !has_quorum(vs, &dc.outer_qc.aggregate_signature) {
-            warn!("double cert outer QC below quorum threshold");
+        if !self.verify_vote_aggregate(VoteAggregateRef {
+            validator_set: vs,
+            epoch: dc.outer_qc.epoch,
+            view: dc.outer_qc.view,
+            block_hash: &dc.outer_qc.block_hash,
+            vote_type: VoteType::Vote2,
+            aggregate_signature: &dc.outer_qc.aggregate_signature,
+            extensions: &vote_extensions,
+        }) {
+            warn!("double cert outer QC invalid");
             return false;
         }
         true
@@ -1727,7 +1873,10 @@ impl ConsensusEngine {
 
         // Capture vote extensions from DoubleCertificate for the next create_payload.
         if let ViewEntryTrigger::DoubleCert(ref dc) = trigger {
-            self.state.pending_vote_extensions = dc.vote_extensions.clone();
+            self.state.pending_vote_extensions = self
+                .validator_set_for_epoch(dc.outer_qc.epoch)
+                .and_then(|vs| Self::canonical_vote_extensions(dc, vs))
+                .unwrap_or_default();
         } else {
             self.state.pending_vote_extensions.clear();
         }
@@ -1923,8 +2072,10 @@ mod tests {
             &chain_id_hash,
             EpochNumber(0),
             qc_view,
+            signers[1].validator_id(),
             &hash,
             VoteType::Vote,
+            None,
         );
         let mut agg = AggregateSignature::new(4);
         agg.add(1, SignerTrait::sign(&signers[1], &vote_bytes))
@@ -1974,16 +2125,18 @@ mod tests {
         let chain_id_hash = test_chain_id_hash();
         let hash = BlockHash::GENESIS;
         let qc_view = ViewNumber::GENESIS;
-        let vote_bytes = Vote::signing_bytes(
-            &chain_id_hash,
-            EpochNumber(0),
-            qc_view,
-            &hash,
-            VoteType::Vote,
-        );
         // 3 of 4 signers — meets 2f+1 threshold.
         let mut agg = AggregateSignature::new(4);
         for (i, signer) in signers.iter().take(3).enumerate() {
+            let vote_bytes = Vote::signing_bytes(
+                &chain_id_hash,
+                EpochNumber(0),
+                qc_view,
+                signer.validator_id(),
+                &hash,
+                VoteType::Vote,
+                None,
+            );
             agg.add(i, SignerTrait::sign(signer, &vote_bytes)).unwrap();
         }
         let full_quorum_qc = QuorumCertificate {
@@ -2038,8 +2191,10 @@ mod tests {
             &chain_id_hash,
             EpochNumber(0),
             qc_view,
+            signers[0].validator_id(),
             &hash,
             VoteType::Vote,
+            None,
         );
 
         // Build a QC with only 1 signer — sub-quorum.
@@ -2055,6 +2210,15 @@ mod tests {
         // Build a QC with 3 signers — full quorum.
         let mut agg_full = AggregateSignature::new(4);
         for (i, signer) in signers.iter().take(3).enumerate() {
+            let vote_bytes = Vote::signing_bytes(
+                &chain_id_hash,
+                EpochNumber(0),
+                qc_view,
+                signer.validator_id(),
+                &hash,
+                VoteType::Vote,
+                None,
+            );
             agg_full
                 .add(i, SignerTrait::sign(signer, &vote_bytes))
                 .unwrap();

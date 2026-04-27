@@ -50,7 +50,7 @@ pub struct NodeModeConfig {
 impl Default for NodeModeConfig {
     fn default() -> Self {
         Self {
-            mode: NodeMode::Validator,
+            mode: NodeMode::Fullnode,
             relay_consensus: true,
             relay_transactions: true,
             serve_rpc: true,

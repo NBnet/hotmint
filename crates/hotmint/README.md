@@ -5,7 +5,7 @@
 
 A Rust BFT consensus framework combining Tendermint's engineering ergonomics with HotStuff-2's protocol efficiency.
 
-This is the top-level facade crate that re-exports the entire Hotmint ecosystem. Add this single dependency to access all sub-crates.
+This is the top-level facade crate that re-exports the primary Hotmint crates. Add this single dependency to access the consensus, storage, networking, ABCI, API, mempool, and staking crates.
 
 ## Sub-Crates
 
@@ -19,6 +19,7 @@ This is the top-level facade crate that re-exports the entire Hotmint ecosystem.
 | `hotmint::mempool` | [hotmint-mempool](https://crates.io/crates/hotmint-mempool) | Transaction mempool |
 | `hotmint::abci` | [hotmint-abci](https://crates.io/crates/hotmint-abci) | IPC proxy (Unix socket) |
 | `hotmint::api` | [hotmint-api](https://crates.io/crates/hotmint-api) | JSON-RPC API |
+| `hotmint::staking` | [hotmint-staking](https://crates.io/crates/hotmint-staking) | Validator lifecycle and slashing |
 
 ## Prelude
 
@@ -27,7 +28,7 @@ use hotmint::prelude::*;
 // Imports: Block, BlockHash, Height, ViewNumber, Vote, VoteType,
 //          QuorumCertificate, DoubleCertificate, TimeoutCertificate,
 //          ValidatorId, ValidatorInfo, ValidatorSet,
-//          Signer, Verifier, Signature, Epoch, EpochNumber,
+//          Signer, Verifier, Signature, AggregateSignature, Epoch, EpochNumber,
 //          ConsensusMessage
 ```
 

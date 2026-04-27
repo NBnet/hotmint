@@ -153,7 +153,11 @@ impl Pacemaker {
         // Check quorum
         let mut power = 0u64;
         for (vid, _, _) in wishes.iter() {
-            power += vs.power_of(*vid);
+            let validator_power = vs.power_of(*vid);
+            if validator_power == 0 {
+                continue;
+            }
+            power = power.checked_add(validator_power)?;
         }
 
         if power >= vs.quorum_threshold() {
@@ -212,14 +216,13 @@ pub(crate) fn wish_signing_bytes(
     buf.extend_from_slice(chain_id_hash);
     buf.extend_from_slice(&epoch.as_u64().to_le_bytes());
     buf.extend_from_slice(&target_view.as_u64().to_le_bytes());
-    // Bind the highest_qc to prevent replay with a different QC.
-    // Canonical encoding: 0x00 = None, 0x01 + view_le + hash = Some.
+    // Bind the complete highest_qc to prevent replay with a different
+    // aggregate certificate sharing the same view/hash.
     match highest_qc {
         None => buf.push(0x00),
         Some(qc) => {
             buf.push(0x01);
-            buf.extend_from_slice(&qc.view.as_u64().to_le_bytes());
-            buf.extend_from_slice(&qc.block_hash.0);
+            buf.extend_from_slice(&qc.digest());
         }
     }
     buf

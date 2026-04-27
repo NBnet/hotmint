@@ -3,7 +3,7 @@ use hotmint_types::crypto::PublicKey;
 use hotmint_types::validator::{ValidatorId, ValidatorInfo, ValidatorSet};
 
 fn pk(n: u8) -> PublicKey {
-    PublicKey(vec![n])
+    PublicKey(vec![n; 32])
 }
 
 fn make_manager() -> StakingManager<InMemoryStakingStore> {
@@ -39,6 +39,23 @@ fn register_duplicate_fails() {
     let mut mgr = make_manager();
     mgr.register_validator(ValidatorId(0), pk(0), 1000).unwrap();
     assert!(mgr.register_validator(ValidatorId(0), pk(0), 1000).is_err());
+}
+
+#[test]
+fn register_rejects_malformed_and_duplicate_public_keys() {
+    let mut mgr = make_manager();
+    assert!(
+        mgr.register_validator(ValidatorId(0), PublicKey(vec![1; 31]), 1000)
+            .is_err()
+    );
+
+    let pubkey = pk(9);
+    mgr.register_validator(ValidatorId(0), pubkey.clone(), 1000)
+        .unwrap();
+    assert!(
+        mgr.register_validator(ValidatorId(1), pubkey, 1000)
+            .is_err()
+    );
 }
 
 #[test]
@@ -188,6 +205,26 @@ fn formal_list_respects_max_validators() {
 }
 
 #[test]
+fn formal_list_breaks_equal_power_ties_by_validator_id() {
+    let mut mgr = StakingManager::new(
+        InMemoryStakingStore::new(),
+        StakingConfig {
+            max_validators: 2,
+            min_self_stake: 100,
+            ..StakingConfig::default()
+        },
+    );
+    mgr.register_validator(ValidatorId(3), pk(3), 1000).unwrap();
+    mgr.register_validator(ValidatorId(1), pk(1), 1000).unwrap();
+    mgr.register_validator(ValidatorId(2), pk(2), 1000).unwrap();
+
+    let list = mgr.formal_validator_list();
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].id, ValidatorId(1));
+    assert_eq!(list[1].id, ValidatorId(2));
+}
+
+#[test]
 fn compute_validator_updates() {
     let mut mgr = make_manager();
     mgr.register_validator(ValidatorId(0), pk(0), 1000).unwrap();
@@ -254,9 +291,17 @@ fn unregister_validator() {
     mgr.register_validator(ValidatorId(0), pk(0), 1000).unwrap();
     mgr.delegate(b"alice", ValidatorId(0), 500).unwrap();
 
-    let total = mgr.unregister_validator(ValidatorId(0)).unwrap();
-    assert_eq!(total, 1500);
-    assert!(mgr.get_validator(ValidatorId(0)).is_none());
+    assert!(mgr.unregister_validator(ValidatorId(0)).is_err());
+    assert!(mgr.get_validator(ValidatorId(0)).is_some());
+    assert!(
+        mgr.slash_with_evidence(
+            ValidatorId(0),
+            b"double-sign-1".to_vec(),
+            SlashReason::DoubleSign,
+            10
+        )
+        .is_ok()
+    );
 }
 
 #[test]
@@ -352,4 +397,79 @@ fn slash_hits_unbonding_entries() {
     let mature = mgr.process_unbonding(1200);
     assert_eq!(mature.len(), 1);
     assert_eq!(mature[0].amount, 1900);
+}
+
+#[test]
+fn unregister_tombstones_pending_unbondings_and_slash_hits_them() {
+    let mut mgr = make_manager();
+    mgr.register_validator(ValidatorId(0), pk(0), 100).unwrap();
+    mgr.delegate(b"alice", ValidatorId(0), 5_000).unwrap();
+    mgr.undelegate(b"alice", ValidatorId(0), 5_000, 100)
+        .unwrap();
+
+    let mut state = mgr.get_validator(ValidatorId(0)).unwrap();
+    state.self_stake = 0;
+    mgr.store_mut().set_validator(ValidatorId(0), state);
+
+    assert_eq!(mgr.unregister_validator(ValidatorId(0)).unwrap(), 0);
+    let tombstoned = mgr.get_validator(ValidatorId(0)).unwrap();
+    assert!(tombstoned.tombstoned);
+    assert_eq!(tombstoned.voting_power(), 0);
+
+    let result = mgr
+        .slash_with_evidence(
+            ValidatorId(0),
+            b"double-sign-2".to_vec(),
+            SlashReason::DoubleSign,
+            200,
+        )
+        .unwrap();
+    assert_eq!(result.delegated_slashed, 250);
+
+    let mature = mgr.process_unbonding(1100);
+    assert_eq!(mature.len(), 1);
+    assert_eq!(mature[0].amount, 4_750);
+    assert!(mgr.get_validator(ValidatorId(0)).is_none());
+}
+
+#[test]
+fn slash_accepts_distinct_evidence_while_jailed() {
+    let mut mgr = make_manager();
+    mgr.register_validator(ValidatorId(0), pk(0), 10_000)
+        .unwrap();
+
+    let first = mgr
+        .slash_with_evidence(
+            ValidatorId(0),
+            b"downtime-1".to_vec(),
+            SlashReason::Downtime,
+            50,
+        )
+        .unwrap();
+    assert_eq!(first.self_slashed, 100);
+
+    let second = mgr
+        .slash_with_evidence(
+            ValidatorId(0),
+            b"double-sign-3".to_vec(),
+            SlashReason::DoubleSign,
+            60,
+        )
+        .unwrap();
+    assert_eq!(second.self_slashed, 495);
+
+    assert!(
+        mgr.slash_with_evidence(
+            ValidatorId(0),
+            b"double-sign-3".to_vec(),
+            SlashReason::DoubleSign,
+            70,
+        )
+        .is_err()
+    );
+
+    let state = mgr.get_validator(ValidatorId(0)).unwrap();
+    assert!(state.jailed);
+    assert_eq!(state.jail_until_height, 1060);
+    assert_eq!(state.applied_slashes.len(), 2);
 }

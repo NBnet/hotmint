@@ -19,6 +19,12 @@ pub struct ValidatorState {
     pub jailed: bool,
     /// Block height until which the validator remains jailed.
     pub jail_until_height: u64,
+    /// Whether the validator is retained only for evidence/unbonding slashing.
+    #[serde(default)]
+    pub tombstoned: bool,
+    /// Evidence IDs already applied to this validator.
+    #[serde(default)]
+    pub applied_slashes: Vec<AppliedSlash>,
 }
 
 impl ValidatorState {
@@ -27,10 +33,21 @@ impl ValidatorState {
         self.self_stake.saturating_add(self.delegated_stake)
     }
 
-    /// Voting power: total stake if not jailed, 0 otherwise.
+    /// Voting power: total stake if active, 0 otherwise.
     pub fn voting_power(&self) -> u64 {
-        if self.jailed { 0 } else { self.total_stake() }
+        if self.jailed || self.tombstoned {
+            0
+        } else {
+            self.total_stake()
+        }
     }
+}
+
+/// A slash already applied to a validator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppliedSlash {
+    pub evidence_id: Vec<u8>,
+    pub reason: SlashReason,
 }
 
 /// A single delegation entry from a staker to a validator.
@@ -40,7 +57,7 @@ pub struct StakeEntry {
 }
 
 /// Reason for slashing a validator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SlashReason {
     /// Equivocation (double-signing).
     DoubleSign,

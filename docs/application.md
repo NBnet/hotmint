@@ -25,7 +25,7 @@ pub trait Application: Send + Sync {
     fn list_snapshots(&self) -> Vec<SnapshotInfo>                       { vec![] }
     fn load_snapshot_chunk(&self, _height: Height, _chunk_index: u32) -> Vec<u8> { vec![] }
     fn offer_snapshot(&self, _snapshot: &SnapshotInfo) -> SnapshotOfferResult { SnapshotOfferResult::Reject }
-    fn apply_snapshot_chunk(&self, _chunk: Vec<u8>, _chunk_index: u32) -> ChunkApplyResult { ChunkApplyResult::Accept }
+    fn apply_snapshot_chunk(&self, _chunk: Vec<u8>, _chunk_index: u32) -> ChunkApplyResult { ChunkApplyResult::Abort }
     // Queries & config
     fn query(&self, _path: &str, _data: &[u8]) -> Result<QueryResponse> { Ok(QueryResponse::default()) }
     fn tracks_app_hash(&self) -> bool                                   { true }

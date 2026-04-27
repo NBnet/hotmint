@@ -11,10 +11,8 @@ use ruc::*;
 
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
-
 use clap::Parser;
-use tokio::sync::watch;
+use tokio::sync::{RwLock, Semaphore, watch};
 use tracing::info;
 
 use hotmint::api::rpc::ConsensusStatus;
@@ -205,6 +203,8 @@ async fn run(home: &std::path::Path) -> Result<()> {
         peer_info_rx,
         validator_set_rx: vs_rx,
         app: None,
+        query_app: None,
+        query_semaphore: Arc::new(Semaphore::new(8)),
         network_sink: None,
         chain_id_hash: state.chain_id_hash,
     };
@@ -353,6 +353,8 @@ async fn run(home: &std::path::Path) -> Result<()> {
                     last_app_hash: &mut engine_state_app_hash,
                     chain_id_hash: &state.chain_id_hash,
                     pending_epoch: &mut engine_state_pending_epoch,
+                    persistence: None,
+                    wal: None,
                 };
                 match hotmint::consensus::sync::sync_to_tip(
                     &mut sync_state,

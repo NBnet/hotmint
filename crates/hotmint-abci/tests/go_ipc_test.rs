@@ -13,7 +13,7 @@ use hotmint_types::view::ViewNumber;
 fn make_validator_set() -> ValidatorSet {
     ValidatorSet::new(vec![ValidatorInfo {
         id: ValidatorId(0),
-        public_key: PublicKey(vec![0]),
+        public_key: PublicKey(vec![0; 32]),
         power: 1,
     }])
 }

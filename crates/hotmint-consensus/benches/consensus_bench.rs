@@ -33,9 +33,17 @@ fn bench_vote_collection_4(c: &mut Criterion) {
         .iter()
         .take(3)
         .map(|s| {
-            let bytes =
-                Vote::signing_bytes(&[0u8; 32], EpochNumber(0), view, &hash, VoteType::Vote);
+            let bytes = Vote::signing_bytes(
+                &[0u8; 32],
+                EpochNumber(0),
+                view,
+                s.validator_id(),
+                &hash,
+                VoteType::Vote,
+                None,
+            );
             Vote {
+                epoch: EpochNumber(0),
                 block_hash: hash,
                 view,
                 validator: s.validator_id(),
@@ -66,9 +74,17 @@ fn bench_vote_collection_100(c: &mut Criterion) {
         .iter()
         .take(67)
         .map(|s| {
-            let bytes =
-                Vote::signing_bytes(&[0u8; 32], EpochNumber(0), view, &hash, VoteType::Vote);
+            let bytes = Vote::signing_bytes(
+                &[0u8; 32],
+                EpochNumber(0),
+                view,
+                s.validator_id(),
+                &hash,
+                VoteType::Vote,
+                None,
+            );
             Vote {
+                epoch: EpochNumber(0),
                 block_hash: hash,
                 view,
                 validator: s.validator_id(),

@@ -10,13 +10,11 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use tokio::sync::{Mutex, broadcast};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
-use tokio::sync::Mutex;
-
-use crate::rpc::{PerIpRateLimiter, RpcState, handle_request};
+use crate::rpc::{PerIpRateLimiter, QUERY_RATE_LIMIT_PER_SEC, RpcState, handle_request};
 use crate::types::RpcResponse;
 
 /// Events broadcast to WebSocket subscribers.
@@ -46,6 +44,8 @@ pub struct HttpRpcState {
     pub event_tx: broadcast::Sender<ChainEvent>,
     /// Per-IP rate limiter for submit_tx (C-2: prevents bypass via multiple connections).
     pub ip_limiter: Mutex<PerIpRateLimiter>,
+    /// Per-IP rate limiter for application queries.
+    pub query_limiter: Mutex<PerIpRateLimiter>,
     /// Current number of active WebSocket connections.
     ws_connection_count: std::sync::atomic::AtomicUsize,
 }
@@ -67,6 +67,7 @@ impl HttpRpcServer {
                 rpc,
                 event_tx,
                 ip_limiter: Mutex::new(PerIpRateLimiter::new()),
+                query_limiter: Mutex::new(PerIpRateLimiter::with_rate(QUERY_RATE_LIMIT_PER_SEC)),
                 ws_connection_count: std::sync::atomic::AtomicUsize::new(0),
             }),
             addr,
@@ -121,8 +122,14 @@ async fn json_rpc_handler(
     body: String,
 ) -> impl IntoResponse {
     // C-2: Per-IP rate limiting for submit_tx.
-    let response: RpcResponse =
-        handle_request(&state.rpc, &body, &state.ip_limiter, addr.ip()).await;
+    let response: RpcResponse = handle_request(
+        &state.rpc,
+        &body,
+        &state.ip_limiter,
+        &state.query_limiter,
+        addr.ip(),
+    )
+    .await;
 
     axum::Json(response)
 }
@@ -146,8 +153,15 @@ async fn ws_upgrade_handler(
         )
             .into_response();
     }
-    ws.on_upgrade(move |socket| handle_ws(socket, state))
-        .into_response()
+    let failed_state = state.clone();
+    ws.on_failed_upgrade(move |error| {
+        failed_state
+            .ws_connection_count
+            .fetch_sub(1, Ordering::Relaxed);
+        warn!(%error, "WebSocket upgrade failed");
+    })
+    .on_upgrade(move |socket| handle_ws(socket, state))
+    .into_response()
 }
 
 /// Client-sent subscription filter for WebSocket events.

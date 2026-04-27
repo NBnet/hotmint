@@ -6,18 +6,17 @@ use std::path::Path;
 use std::process;
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
-
 use clap::{Parser, Subcommand};
-use tokio::sync::watch;
+use tokio::sync::{RwLock, broadcast, watch};
 use tracing::{Level, error, info};
 
 use hotmint::abci::client::IpcApplicationClient;
 use hotmint::api::rpc::ConsensusStatus;
 use hotmint::api::types::ValidatorInfoResponse;
 use hotmint::config::{self, GenesisDoc, NodeConfig, NodeKey, NodeMode, PrivValidatorKey};
-use hotmint::consensus::application::{Application, NoopApplication, TxValidationResult};
+use hotmint::consensus::application::{AppInfo, Application, NoopApplication, TxValidationResult};
 use hotmint::consensus::engine::{ConsensusEngine, EngineConfig};
+use hotmint::consensus::liveness::OfflineEvidence;
 use hotmint::consensus::pacemaker::PacemakerConfig;
 use hotmint::consensus::state::ConsensusState;
 use hotmint::consensus::store::{BlockStore, SharedStoreAdapter};
@@ -29,7 +28,7 @@ use hotmint::prelude::*;
 use hotmint::storage::block_store::VsdbBlockStore;
 use hotmint::storage::consensus_state::PersistentConsensusState;
 use hotmint_api::http_rpc::{ChainEvent, HttpRpcServer};
-use tokio::sync::broadcast;
+use hotmint_types::sync::{ChunkApplyResult, SnapshotInfo, SnapshotOfferResult};
 
 #[derive(Parser)]
 #[command(name = "hotmint-node", about = "Hotmint BFT consensus node")]
@@ -183,6 +182,12 @@ async fn main() {
     }
 }
 
+type ApplicationBundle = (
+    Box<dyn Application>,
+    Box<dyn Application>,
+    Option<Arc<dyn Application>>,
+);
+
 async fn run_node(
     home: &Path,
     proxy_app_override: Option<String>,
@@ -247,31 +252,24 @@ async fn run_node(
         }
     }
 
-    // 4. Find our validator ID.
-    // If not in genesis, assign a sentinel ID — the node runs as a fullnode
-    // (observes consensus, syncs blocks, serves RPC) but does not vote or propose.
-    // If later added to the validator set via epoch transition, it automatically
-    // begins participating in consensus.
+    // 4. Find our validator ID. Fullnode mode must never sign consensus messages,
+    // even if the local key appears in genesis; use a sentinel non-voting ID.
     let our_pk_hex = &priv_key.public_key;
-    let is_fullnode;
-    let our_vid = if let Some(gv) = genesis
+    let sentinel = ValidatorId(u64::MAX);
+    if validator_set.validators().iter().any(|v| v.id == sentinel) {
+        return Err(eg!(
+            "genesis contains a validator with ID u64::MAX which collides with the fullnode sentinel"
+        ));
+    }
+    let genesis_validator = genesis
         .validators
         .iter()
-        .find(|v| &v.public_key == our_pk_hex)
-    {
-        is_fullnode = config.node.mode == NodeMode::Fullnode;
-        ValidatorId(gv.id)
-    } else {
-        is_fullnode = true;
-        // Sentinel ID for fullnodes — they never sign votes or propose blocks.
-        // Verify no real validator uses this ID to prevent confusion.
-        let sentinel = ValidatorId(u64::MAX);
-        if validator_set.validators().iter().any(|v| v.id == sentinel) {
-            return Err(eg!(
-                "genesis contains a validator with ID u64::MAX which collides with the fullnode sentinel"
-            ));
-        }
+        .find(|v| &v.public_key == our_pk_hex);
+    let is_fullnode = config.node.mode == NodeMode::Fullnode || genesis_validator.is_none();
+    let our_vid = if is_fullnode {
         sentinel
+    } else {
+        ValidatorId(genesis_validator.expect("checked above").id)
     };
 
     if is_fullnode {
@@ -298,7 +296,7 @@ async fn run_node(
     ));
 
     // 6. Restore consensus state
-    let pcs = PersistentConsensusState::open(&data_dir).c(d!("open consensus state"))?;
+    let mut pcs = PersistentConsensusState::open(&data_dir).c(d!("open consensus state"))?;
     let mut state =
         ConsensusState::with_chain_id(our_vid, validator_set.clone(), &genesis.chain_id);
     if let Some(view) = pcs.load_current_view() {
@@ -324,21 +322,21 @@ async fn run_node(
     let restored_pending_epoch = pcs.load_pending_epoch();
 
     // Check WAL for incomplete commits (crash recovery).
-    match hotmint_storage::wal::ConsensusWal::check_recovery(&data_dir) {
-        Ok(hotmint_storage::wal::WalRecovery::NeedsReplay { target_height }) => {
-            tracing::warn!(
-                target_height = target_height.as_u64(),
-                last_committed = state.last_committed_height.as_u64(),
-                "WAL: detected incomplete commit, node will re-sync missing blocks from peers"
-            );
-            // The blocks were partially executed but state was not persisted.
-            // On restart the node will re-sync from peers using the persisted
-            // last_committed_height, which effectively replays the missing blocks.
+    match hotmint_storage::wal::ConsensusWal::check_recovery_with_committed_height(
+        &data_dir,
+        state.last_committed_height,
+    )
+    .c(d!("WAL: failed to check recovery status"))?
+    {
+        hotmint_storage::wal::WalRecovery::NeedsReplay { target_height } => {
+            return Err(eg!(
+                "WAL: incomplete commit to height {} detected while persisted height is {}; \
+                 automatic replay is not available from the WAL alone, refusing to start",
+                target_height.as_u64(),
+                state.last_committed_height.as_u64()
+            ));
         }
-        Ok(hotmint_storage::wal::WalRecovery::Clean) => {}
-        Err(e) => {
-            tracing::warn!(%e, "WAL: failed to check recovery status");
-        }
+        hotmint_storage::wal::WalRecovery::Clean => {}
     }
 
     // 7. Parse peers and create network
@@ -394,7 +392,7 @@ async fn run_node(
     // Validators MUST have proxy_app configured — enforced at startup (step 1b) before
     // any resources are allocated. By this point validator+empty proxy_app is impossible.
     let use_abci = !config.proxy_app.is_empty();
-    let (app_box, sync_app_box): (Box<dyn Application>, Box<dyn Application>) = if use_abci {
+    let (app_box, sync_app_box, query_app): ApplicationBundle = if use_abci {
         let proxy_path = config
             .proxy_app
             .strip_prefix("unix://")
@@ -405,12 +403,19 @@ async fn run_node(
             proxy_path
         ))?;
         let ipc_client_for_sync = IpcApplicationClient::new(proxy_path);
-        (Box::new(ipc_client), Box::new(ipc_client_for_sync))
+        let ipc_client_for_queries: Arc<dyn Application> =
+            Arc::new(IpcApplicationClient::new(proxy_path));
+        (
+            Box::new(ipc_client),
+            Box::new(ipc_client_for_sync),
+            Some(ipc_client_for_queries),
+        )
     } else {
         info!("fullnode mode: using embedded no-op application");
         (
             Box::new(hotmint::consensus::application::NoopApplication),
             Box::new(hotmint::consensus::application::NoopApplication),
+            None,
         )
     };
     let mut engine_state_epoch = state.current_epoch.clone();
@@ -459,6 +464,7 @@ async fn run_node(
         mempool: mempool.clone(),
         event_tx: Some(event_tx),
     });
+    let query_app = query_app.unwrap_or_else(|| app.clone());
 
     // 11. Create RPC server
     let rpc_state = hotmint::api::rpc::RpcState {
@@ -469,6 +475,8 @@ async fn run_node(
         peer_info_rx,
         validator_set_rx: vs_rx,
         app: Some(app.clone()),
+        query_app: Some(query_app),
+        query_semaphore: hotmint::api::rpc::RpcState::new_query_semaphore(),
         network_sink: Some(Arc::new(network_sink.clone())),
         chain_id_hash: state.chain_id_hash,
     };
@@ -620,6 +628,9 @@ async fn run_node(
     if !sync_peers.is_empty() {
         use hotmint_types::sync::SyncRequest;
 
+        let mut sync_wal = hotmint_storage::wal::ConsensusWal::open(&data_dir)
+            .c(d!("open consensus WAL for startup sync"))?;
+
         info!("waiting for peer connection before sync...");
         let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(15);
         loop {
@@ -660,24 +671,43 @@ async fn run_node(
 
                 info!("starting block sync with V{}", vid.0);
                 let mut sync_store = SharedStoreAdapter(store.clone());
-                let mut sync_state = hotmint::consensus::sync::SyncState {
-                    store: &mut sync_store,
-                    app: sync_app_box.as_ref(),
-                    current_epoch: &mut engine_state_epoch,
-                    last_committed_height: &mut engine_state_height,
-                    last_app_hash: &mut engine_state_app_hash,
-                    chain_id_hash: &state.chain_id_hash,
-                    pending_epoch: &mut engine_state_pending_epoch,
+                let sync_result = {
+                    let mut sync_state = hotmint::consensus::sync::SyncState {
+                        store: &mut sync_store,
+                        app: sync_app_box.as_ref(),
+                        current_epoch: &mut engine_state_epoch,
+                        last_committed_height: &mut engine_state_height,
+                        last_app_hash: &mut engine_state_app_hash,
+                        chain_id_hash: &state.chain_id_hash,
+                        pending_epoch: &mut engine_state_pending_epoch,
+                        persistence: Some(&mut pcs),
+                        wal: Some(&mut sync_wal),
+                    };
+                    sync_to_tip(&mut sync_state, &sync_tx, &mut sync_resp_rx).await
                 };
-                match sync_to_tip(&mut sync_state, &sync_tx, &mut sync_resp_rx).await {
+                match sync_result {
                     Ok(()) => {
                         bridge.abort();
                         synced = true;
                         break;
                     }
                     Err(e) => {
-                        info!(%e, peer = vid.0, "sync from peer failed, trying next");
                         bridge.abort();
+                        match sync_wal
+                            .reconcile_with_committed_height(engine_state_height)
+                            .c(d!("WAL: failed to check recovery status after sync error"))?
+                        {
+                            hotmint_storage::wal::WalRecovery::NeedsReplay { target_height } => {
+                                return Err(eg!(
+                                    "startup sync failed after recording WAL intent to height {}; \
+                                     refusing to continue with potentially partially-applied app state: {}",
+                                    target_height.as_u64(),
+                                    e
+                                ));
+                            }
+                            hotmint_storage::wal::WalRecovery::Clean => {}
+                        }
+                        info!(%e, peer = vid.0, "sync from peer failed, trying next");
                     }
                 }
             }
@@ -747,6 +777,8 @@ async fn run_node(
                             last_app_hash: &mut app_hash,
                             chain_id_hash: &watcher_chain_id_hash,
                             pending_epoch: &mut watcher_pending_epoch,
+                            persistence: None,
+                            wal: None,
                         };
                         match sync_to_tip(&mut sync_state, &sync_tx, &mut watcher_resp_rx).await {
                             Ok(()) => {
@@ -794,6 +826,13 @@ async fn run_node(
             state.current_view = synced_view;
         }
     }
+
+    pcs.save_current_view(state.current_view);
+    pcs.save_last_committed_height(state.last_committed_height);
+    pcs.save_current_epoch(&state.current_epoch);
+    pcs.save_last_app_hash(state.last_app_hash);
+    pcs.save_pending_epoch(engine_state_pending_epoch.as_ref());
+    pcs.flush();
 
     let signer = Ed25519Signer::new(signing_key, our_vid);
     let pacemaker_config = PacemakerConfig {
@@ -913,6 +952,14 @@ struct AppWithStatus {
 }
 
 impl Application for AppWithStatus {
+    fn info(&self) -> AppInfo {
+        self.inner.info()
+    }
+
+    fn init_chain(&self, app_state: &[u8]) -> Result<BlockHash> {
+        self.inner.init_chain(app_state)
+    }
+
     fn create_payload(&self, ctx: &BlockContext) -> Vec<u8> {
         self.inner.create_payload(ctx)
     }
@@ -1004,8 +1051,42 @@ impl Application for AppWithStatus {
         self.inner.on_evidence(proof)
     }
 
+    fn on_offline_validators(&self, offline: &[OfflineEvidence]) -> Result<()> {
+        self.inner.on_offline_validators(offline)
+    }
+
+    fn extend_vote(&self, block: &Block, ctx: &BlockContext) -> Option<Vec<u8>> {
+        self.inner.extend_vote(block, ctx)
+    }
+
+    fn verify_vote_extension(
+        &self,
+        extension: &[u8],
+        block_hash: &BlockHash,
+        validator: ValidatorId,
+    ) -> bool {
+        self.inner
+            .verify_vote_extension(extension, block_hash, validator)
+    }
+
     fn query(&self, path: &str, data: &[u8]) -> Result<hotmint_types::QueryResponse> {
         self.inner.query(path, data)
+    }
+
+    fn list_snapshots(&self) -> Vec<SnapshotInfo> {
+        self.inner.list_snapshots()
+    }
+
+    fn load_snapshot_chunk(&self, height: Height, chunk_index: u32) -> Vec<u8> {
+        self.inner.load_snapshot_chunk(height, chunk_index)
+    }
+
+    fn offer_snapshot(&self, snapshot: &SnapshotInfo) -> SnapshotOfferResult {
+        self.inner.offer_snapshot(snapshot)
+    }
+
+    fn apply_snapshot_chunk(&self, chunk: Vec<u8>, chunk_index: u32) -> ChunkApplyResult {
+        self.inner.apply_snapshot_chunk(chunk, chunk_index)
     }
 
     fn tracks_app_hash(&self) -> bool {
@@ -1017,6 +1098,12 @@ impl Application for AppWithStatus {
 struct ArcApp(Arc<dyn Application>);
 
 impl Application for ArcApp {
+    fn info(&self) -> AppInfo {
+        self.0.info()
+    }
+    fn init_chain(&self, app_state: &[u8]) -> Result<BlockHash> {
+        self.0.init_chain(app_state)
+    }
     fn create_payload(&self, ctx: &BlockContext) -> Vec<u8> {
         self.0.create_payload(ctx)
     }
@@ -1039,8 +1126,35 @@ impl Application for ArcApp {
     fn on_evidence(&self, proof: &EquivocationProof) -> Result<()> {
         self.0.on_evidence(proof)
     }
+    fn on_offline_validators(&self, offline: &[OfflineEvidence]) -> Result<()> {
+        self.0.on_offline_validators(offline)
+    }
+    fn extend_vote(&self, block: &Block, ctx: &BlockContext) -> Option<Vec<u8>> {
+        self.0.extend_vote(block, ctx)
+    }
+    fn verify_vote_extension(
+        &self,
+        extension: &[u8],
+        block_hash: &BlockHash,
+        validator: ValidatorId,
+    ) -> bool {
+        self.0
+            .verify_vote_extension(extension, block_hash, validator)
+    }
     fn query(&self, path: &str, data: &[u8]) -> Result<hotmint_types::QueryResponse> {
         self.0.query(path, data)
+    }
+    fn list_snapshots(&self) -> Vec<SnapshotInfo> {
+        self.0.list_snapshots()
+    }
+    fn load_snapshot_chunk(&self, height: Height, chunk_index: u32) -> Vec<u8> {
+        self.0.load_snapshot_chunk(height, chunk_index)
+    }
+    fn offer_snapshot(&self, snapshot: &SnapshotInfo) -> SnapshotOfferResult {
+        self.0.offer_snapshot(snapshot)
+    }
+    fn apply_snapshot_chunk(&self, chunk: Vec<u8>, chunk_index: u32) -> ChunkApplyResult {
+        self.0.apply_snapshot_chunk(chunk, chunk_index)
     }
     fn tracks_app_hash(&self) -> bool {
         self.0.tracks_app_hash()

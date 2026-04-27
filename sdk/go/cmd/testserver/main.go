@@ -9,7 +9,7 @@
 //
 // Usage: go run ./cmd/testserver <socket-path> [payload-size]
 //
-//   payload-size: number of bytes for CreatePayload (default: 4 = "test")
+//	payload-size: number of bytes for CreatePayload (default: 4 = "test")
 package main
 
 import (
@@ -40,7 +40,7 @@ func (a *testApp) CreatePayload(_ *pb.BlockContext) []byte {
 }
 
 func (a *testApp) ExecuteBlock(_ [][]byte, _ *pb.BlockContext) (*pb.EndBlockResponse, error) {
-	return &pb.EndBlockResponse{}, nil
+	return hotmint.NewEndBlockResponse(), nil
 }
 
 func (a *testApp) OnCommit(_ *pb.Block, _ *pb.BlockContext) error {

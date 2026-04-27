@@ -136,7 +136,14 @@ impl MemoryBlockStore {
 impl BlockStore for MemoryBlockStore {
     fn put_block(&mut self, block: Block) {
         let hash = block.hash;
-        self.by_height.insert(block.height.as_u64(), hash);
+        let height = block.height.as_u64();
+        if let Some(commit_qc) = self.commit_qcs.get(&height) {
+            if commit_qc.block_hash == hash {
+                self.by_height.insert(height, hash);
+            }
+        } else {
+            self.by_height.insert(height, hash);
+        }
         self.by_hash.insert(hash, block);
     }
 
@@ -167,7 +174,13 @@ impl BlockStore for MemoryBlockStore {
     }
 
     fn put_commit_qc(&mut self, height: Height, qc: QuorumCertificate) {
-        self.commit_qcs.insert(height.as_u64(), qc);
+        let h = height.as_u64();
+        if let Some(block) = self.by_hash.get(&qc.block_hash)
+            && block.height == height
+        {
+            self.by_height.insert(h, qc.block_hash);
+        }
+        self.commit_qcs.insert(h, qc);
     }
 
     fn get_commit_qc(&self, height: Height) -> Option<QuorumCertificate> {
@@ -178,7 +191,7 @@ impl BlockStore for MemoryBlockStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hotmint_types::{ValidatorId, ViewNumber};
+    use hotmint_types::{AggregateSignature, EpochNumber, ValidatorId, ViewNumber};
 
     fn make_block(height: u64, parent: BlockHash) -> Block {
         let hash = BlockHash([height as u8; 32]);
@@ -192,6 +205,15 @@ mod tests {
             app_hash: BlockHash::GENESIS,
             evidence: Vec::new(),
             hash,
+        }
+    }
+
+    fn make_qc(block: &Block) -> QuorumCertificate {
+        QuorumCertificate {
+            block_hash: block.hash,
+            view: block.view,
+            aggregate_signature: AggregateSignature::new(1),
+            epoch: EpochNumber(0),
         }
     }
 
@@ -283,5 +305,38 @@ mod tests {
         // Height now points to new block
         let retrieved = store.get_block_by_height(Height(1)).unwrap();
         assert_eq!(retrieved.hash, BlockHash([42u8; 32]));
+    }
+
+    #[test]
+    fn test_committed_height_index_is_pinned_to_committed_block() {
+        let mut store = MemoryBlockStore::new();
+        let committed = make_block(1, BlockHash::GENESIS);
+        let mut proposal = make_block(1, BlockHash::GENESIS);
+        proposal.hash = BlockHash([42u8; 32]);
+        let proposal_hash = proposal.hash;
+
+        store.put_block(committed.clone());
+        store.put_block(proposal);
+        assert_eq!(
+            store.get_block_by_height(Height(1)).unwrap().hash,
+            proposal_hash
+        );
+
+        store.put_commit_qc(Height(1), make_qc(&committed));
+        assert_eq!(
+            store.get_block_by_height(Height(1)).unwrap().hash,
+            committed.hash
+        );
+
+        let mut later_proposal = make_block(1, BlockHash::GENESIS);
+        later_proposal.hash = BlockHash([99u8; 32]);
+        let later_hash = later_proposal.hash;
+        store.put_block(later_proposal);
+
+        assert_eq!(
+            store.get_block_by_height(Height(1)).unwrap().hash,
+            committed.hash
+        );
+        assert!(store.get_block(&later_hash).is_some());
     }
 }

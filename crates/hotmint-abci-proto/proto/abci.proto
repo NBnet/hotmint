@@ -57,6 +57,10 @@ message EquivocationProof {
   bytes block_hash_b = 6;
   bytes signature_b = 7;
   uint64 epoch = 8;
+  bytes extension_a = 9;
+  bytes extension_b = 10;
+  bool has_extension_a = 11;
+  bool has_extension_b = 12;
 }
 
 message ValidatorUpdate {
@@ -92,7 +96,23 @@ message Request {
     OnCommitRequest on_commit = 5;
     EquivocationProof on_evidence = 6;
     QueryRequest query = 7;
+    InfoRequest info = 8;
+    InitChainRequest init_chain = 9;
+    OnOfflineValidatorsRequest on_offline_validators = 10;
+    ExtendVoteRequest extend_vote = 11;
+    VerifyVoteExtensionRequest verify_vote_extension = 12;
+    ListSnapshotsRequest list_snapshots = 13;
+    LoadSnapshotChunkRequest load_snapshot_chunk = 14;
+    OfferSnapshotRequest offer_snapshot = 15;
+    ApplySnapshotChunkRequest apply_snapshot_chunk = 16;
+    TracksAppHashRequest tracks_app_hash = 17;
   }
+}
+
+message InfoRequest {}
+
+message InitChainRequest {
+  bytes app_state = 1;
 }
 
 message ValidateBlockRequest {
@@ -120,6 +140,52 @@ message QueryRequest {
   bytes data = 2;
 }
 
+message OfflineEvidence {
+  uint64 validator = 1;
+  uint64 missed_commits = 2;
+  uint64 total_commits = 3;
+  uint64 evidence_height = 4;
+}
+
+message OnOfflineValidatorsRequest {
+  repeated OfflineEvidence offline = 1;
+}
+
+message ExtendVoteRequest {
+  Block block = 1;
+  BlockContext ctx = 2;
+}
+
+message VerifyVoteExtensionRequest {
+  bytes extension = 1;
+  bytes block_hash = 2;
+  uint64 validator = 3;
+}
+
+message SnapshotInfo {
+  uint64 height = 1;
+  uint32 chunks = 2;
+  bytes hash = 3;
+}
+
+message ListSnapshotsRequest {}
+
+message LoadSnapshotChunkRequest {
+  uint64 height = 1;
+  uint32 chunk_index = 2;
+}
+
+message OfferSnapshotRequest {
+  SnapshotInfo snapshot = 1;
+}
+
+message ApplySnapshotChunkRequest {
+  bytes chunk = 1;
+  uint32 chunk_index = 2;
+}
+
+message TracksAppHashRequest {}
+
 // ---- Response ----
 
 message Response {
@@ -131,7 +197,31 @@ message Response {
     OnCommitResponse on_commit = 5;
     OnEvidenceResponse on_evidence = 6;
     QueryResponse query = 7;
+    InfoResponse info = 8;
+    InitChainResponse init_chain = 9;
+    OnOfflineValidatorsResponse on_offline_validators = 10;
+    ExtendVoteResponse extend_vote = 11;
+    VerifyVoteExtensionResponse verify_vote_extension = 12;
+    ListSnapshotsResponse list_snapshots = 13;
+    LoadSnapshotChunkResponse load_snapshot_chunk = 14;
+    OfferSnapshotResponse offer_snapshot = 15;
+    ApplySnapshotChunkResponse apply_snapshot_chunk = 16;
+    TracksAppHashResponse tracks_app_hash = 17;
   }
+}
+
+message AppInfo {
+  uint64 last_block_height = 1;
+  bytes last_block_app_hash = 2;
+}
+
+message InfoResponse {
+  AppInfo info = 1;
+}
+
+message InitChainResponse {
+  bytes app_hash = 1;
+  string error = 2;
 }
 
 message CreatePayloadResponse {
@@ -161,9 +251,42 @@ message OnEvidenceResponse {
   string error = 1;
 }
 
+message OnOfflineValidatorsResponse {
+  string error = 1;
+}
+
+message ExtendVoteResponse {
+  bytes extension = 1;
+  bool has_extension = 2;
+}
+
+message VerifyVoteExtensionResponse {
+  bool ok = 1;
+}
+
 message QueryResponse {
   bytes data = 1;
   string error = 2;
   bytes proof = 3;
   uint64 height = 4;
+}
+
+message ListSnapshotsResponse {
+  repeated SnapshotInfo snapshots = 1;
+}
+
+message LoadSnapshotChunkResponse {
+  bytes data = 1;
+}
+
+message OfferSnapshotResponse {
+  uint32 result = 1;
+}
+
+message ApplySnapshotChunkResponse {
+  uint32 result = 1;
+}
+
+message TracksAppHashResponse {
+  bool tracks = 1;
 }

@@ -182,7 +182,15 @@ pub fn try_commit(
             } else {
                 current_epoch.number
             };
-            let new_vs = base_vs.apply_updates(&response.validator_updates);
+            let new_vs = base_vs
+                .try_apply_updates(&response.validator_updates)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "FATAL: invalid validator updates at committed height {}: {}",
+                        block.height.as_u64(),
+                        e
+                    )
+                });
             let epoch_start = ViewNumber(block.view.as_u64() + 2);
             pending_epoch = Some(Epoch::new(base_num.next(), epoch_start, new_vs));
         }
@@ -237,7 +245,7 @@ mod tests {
     fn make_epoch() -> Epoch {
         let vs = ValidatorSet::new(vec![ValidatorInfo {
             id: ValidatorId(0),
-            public_key: PublicKey(vec![0]),
+            public_key: PublicKey(vec![0; 32]),
             power: 1,
         }]);
         Epoch::genesis(vs)

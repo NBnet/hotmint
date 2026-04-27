@@ -1,6 +1,7 @@
 //! Integration test: 4-node consensus via real multi-process cluster.
 
 use std::process::Child;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use hotmint_mgmt::cluster;
@@ -29,6 +30,11 @@ fn query_height(host: &str, port: u16) -> Option<u64> {
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn serial_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn setup_cluster() -> (Vec<Child>, cluster::ClusterState, std::path::PathBuf) {
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -65,6 +71,7 @@ fn setup_cluster() -> (Vec<Child>, cluster::ClusterState, std::path::PathBuf) {
 
 #[test]
 fn test_four_node_consensus_commits_blocks() {
+    let _guard = serial_test_guard();
     let (mut children, state, base_dir) = setup_cluster();
     // Wait for ALL nodes to be ready before measuring.
     for v in &state.validators {
@@ -107,6 +114,7 @@ fn test_four_node_consensus_commits_blocks() {
 
 #[test]
 fn test_consensus_tolerates_one_silent_validator() {
+    let _guard = serial_test_guard();
     let (mut children, state, base_dir) = setup_cluster();
 
     // Wait for ALL nodes to be ready before killing one.

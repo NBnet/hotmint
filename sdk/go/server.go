@@ -21,6 +21,7 @@ type Server struct {
 	app        Application
 	listener   net.Listener
 	mu         sync.Mutex
+	appMu      sync.Mutex
 }
 
 // NewServer creates a new IPC server bound to the given Unix socket path.
@@ -32,8 +33,9 @@ func NewServer(socketPath string, app Application) *Server {
 }
 
 // Run starts the server. It blocks until the context is cancelled or an
-// unrecoverable error occurs. The server handles one connection at a time,
-// matching the single-threaded consensus engine model.
+// unrecoverable error occurs. Each connection is handled independently so
+// health checks, consensus callbacks, and query clients cannot block the
+// accept loop.
 func (s *Server) Run(ctx context.Context) error {
 	// Remove stale socket file if present.
 	_ = os.Remove(s.socketPath)
@@ -62,7 +64,7 @@ func (s *Server) Run(ctx context.Context) error {
 			}
 			return fmt.Errorf("accept: %w", err)
 		}
-		s.handleConn(conn)
+		go s.handleConn(conn)
 	}
 }
 
@@ -109,7 +111,33 @@ func (s *Server) handleConn(conn net.Conn) {
 }
 
 func (s *Server) dispatch(req *pb.Request) *pb.Response {
+	s.appMu.Lock()
+	defer s.appMu.Unlock()
+
 	switch r := req.Request.(type) {
+	case *pb.Request_Info:
+		info := s.app.Info()
+		if info == nil {
+			info = (&BaseApplication{}).Info()
+		}
+		return &pb.Response{
+			Response: &pb.Response_Info{
+				Info: &pb.InfoResponse{Info: info},
+			},
+		}
+
+	case *pb.Request_InitChain:
+		appHash, err := s.app.InitChain(r.InitChain.AppState)
+		resp := &pb.InitChainResponse{}
+		if err != nil {
+			resp.Error = err.Error()
+		} else {
+			resp.AppHash = appHash
+		}
+		return &pb.Response{
+			Response: &pb.Response_InitChain{InitChain: resp},
+		}
+
 	case *pb.Request_CreatePayload:
 		payload := s.app.CreatePayload(r.CreatePayload)
 		return &pb.Response{
@@ -166,6 +194,36 @@ func (s *Server) dispatch(req *pb.Request) *pb.Response {
 			Response: &pb.Response_OnEvidence{OnEvidence: resp},
 		}
 
+	case *pb.Request_OnOfflineValidators:
+		err := s.app.OnOfflineValidators(r.OnOfflineValidators.Offline)
+		resp := &pb.OnOfflineValidatorsResponse{}
+		if err != nil {
+			resp.Error = err.Error()
+		}
+		return &pb.Response{
+			Response: &pb.Response_OnOfflineValidators{OnOfflineValidators: resp},
+		}
+
+	case *pb.Request_ExtendVote:
+		extension, ok := s.app.ExtendVote(r.ExtendVote.Block, r.ExtendVote.Ctx)
+		return &pb.Response{
+			Response: &pb.Response_ExtendVote{
+				ExtendVote: &pb.ExtendVoteResponse{Extension: extension, HasExtension: ok},
+			},
+		}
+
+	case *pb.Request_VerifyVoteExtension:
+		ok := s.app.VerifyVoteExtension(
+			r.VerifyVoteExtension.Extension,
+			r.VerifyVoteExtension.BlockHash,
+			r.VerifyVoteExtension.Validator,
+		)
+		return &pb.Response{
+			Response: &pb.Response_VerifyVoteExtension{
+				VerifyVoteExtension: &pb.VerifyVoteExtensionResponse{Ok: ok},
+			},
+		}
+
 	case *pb.Request_Query:
 		result, err := s.app.Query(r.Query.Path, r.Query.Data)
 		resp := &pb.QueryResponse{}
@@ -178,6 +236,53 @@ func (s *Server) dispatch(req *pb.Request) *pb.Response {
 		}
 		return &pb.Response{
 			Response: &pb.Response_Query{Query: resp},
+		}
+
+	case *pb.Request_ListSnapshots:
+		return &pb.Response{
+			Response: &pb.Response_ListSnapshots{
+				ListSnapshots: &pb.ListSnapshotsResponse{Snapshots: s.app.ListSnapshots()},
+			},
+		}
+
+	case *pb.Request_LoadSnapshotChunk:
+		return &pb.Response{
+			Response: &pb.Response_LoadSnapshotChunk{
+				LoadSnapshotChunk: &pb.LoadSnapshotChunkResponse{
+					Data: s.app.LoadSnapshotChunk(
+						r.LoadSnapshotChunk.Height,
+						r.LoadSnapshotChunk.ChunkIndex,
+					),
+				},
+			},
+		}
+
+	case *pb.Request_OfferSnapshot:
+		return &pb.Response{
+			Response: &pb.Response_OfferSnapshot{
+				OfferSnapshot: &pb.OfferSnapshotResponse{
+					Result: s.app.OfferSnapshot(r.OfferSnapshot.Snapshot),
+				},
+			},
+		}
+
+	case *pb.Request_ApplySnapshotChunk:
+		return &pb.Response{
+			Response: &pb.Response_ApplySnapshotChunk{
+				ApplySnapshotChunk: &pb.ApplySnapshotChunkResponse{
+					Result: s.app.ApplySnapshotChunk(
+						r.ApplySnapshotChunk.Chunk,
+						r.ApplySnapshotChunk.ChunkIndex,
+					),
+				},
+			},
+		}
+
+	case *pb.Request_TracksAppHash:
+		return &pb.Response{
+			Response: &pb.Response_TracksAppHash{
+				TracksAppHash: &pb.TracksAppHashResponse{Tracks: s.app.TracksAppHash()},
+			},
 		}
 
 	default:

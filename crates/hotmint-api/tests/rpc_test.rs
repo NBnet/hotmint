@@ -23,6 +23,8 @@ async fn setup_server() -> (String, tokio::task::JoinHandle<()>) {
         peer_info_rx,
         validator_set_rx,
         app: None,
+        query_app: None,
+        query_semaphore: RpcState::new_query_semaphore(),
         network_sink: None,
         chain_id_hash: [0u8; 32],
     };

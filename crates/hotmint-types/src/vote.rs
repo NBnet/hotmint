@@ -16,6 +16,12 @@ pub enum VoteType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vote {
+    /// Epoch in which this vote was signed.
+    ///
+    /// This is part of the signed payload and is used to select the validator
+    /// set for both verification and QC formation.
+    #[serde(default)]
+    pub epoch: EpochNumber,
     pub block_hash: BlockHash,
     pub view: ViewNumber,
     pub validator: ValidatorId,
@@ -28,25 +34,43 @@ pub struct Vote {
 }
 
 impl Vote {
-    /// Canonical bytes for signing: domain_tag || chain_id_hash || epoch || view || block_hash || vote_type
+    /// Canonical bytes for signing:
+    /// domain_tag || chain_id_hash || epoch || view || validator_id ||
+    /// block_hash || vote_type || extension_marker || extension_len || extension_hash.
     ///
-    /// The domain tag, chain_id_hash, and epoch prevent cross-chain, cross-epoch,
-    /// and cross-message-type signature replay attacks.
+    /// The domain tag, chain_id_hash, epoch, validator_id, vote type, and
+    /// extension digest prevent cross-chain, cross-epoch, cross-validator,
+    /// cross-message-type, and Vote2-extension replay attacks.
     pub fn signing_bytes(
         chain_id_hash: &[u8; 32],
         epoch: EpochNumber,
         view: ViewNumber,
+        validator: ValidatorId,
         block_hash: &BlockHash,
         vote_type: VoteType,
+        extension: Option<&[u8]>,
     ) -> Vec<u8> {
-        let tag = b"HOTMINT_VOTE_V2\0";
-        let mut buf = Vec::with_capacity(tag.len() + 32 + 8 + 8 + 32 + 1);
+        let tag = b"HOTMINT_VOTE_V3\0";
+        let mut buf = Vec::with_capacity(tag.len() + 32 + 8 + 8 + 8 + 32 + 1 + 1 + 8 + 32);
         buf.extend_from_slice(tag);
         buf.extend_from_slice(chain_id_hash);
         buf.extend_from_slice(&epoch.as_u64().to_le_bytes());
         buf.extend_from_slice(&view.as_u64().to_le_bytes());
+        buf.extend_from_slice(&validator.0.to_le_bytes());
         buf.extend_from_slice(&block_hash.0);
         buf.push(vote_type as u8);
+        match extension {
+            Some(bytes) => {
+                buf.push(1);
+                buf.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+                buf.extend_from_slice(blake3::hash(bytes).as_bytes());
+            }
+            None => {
+                buf.push(0);
+                buf.extend_from_slice(&0u64.to_le_bytes());
+                buf.extend_from_slice(&[0u8; 32]);
+            }
+        }
         buf
     }
 }
@@ -65,15 +89,19 @@ mod tests {
             &TEST_CHAIN,
             EpochNumber(0),
             ViewNumber(5),
+            ValidatorId(0),
             &hash,
             VoteType::Vote,
+            None,
         );
         let b = Vote::signing_bytes(
             &TEST_CHAIN,
             EpochNumber(0),
             ViewNumber(5),
+            ValidatorId(0),
             &hash,
             VoteType::Vote,
+            None,
         );
         assert_eq!(a, b);
     }
@@ -85,15 +113,19 @@ mod tests {
             &TEST_CHAIN,
             EpochNumber(0),
             ViewNumber(1),
+            ValidatorId(0),
             &hash,
             VoteType::Vote,
+            None,
         );
         let b = Vote::signing_bytes(
             &TEST_CHAIN,
             EpochNumber(0),
             ViewNumber(1),
+            ValidatorId(0),
             &hash,
             VoteType::Vote2,
+            None,
         );
         assert_ne!(a, b);
     }
@@ -105,15 +137,19 @@ mod tests {
             &TEST_CHAIN,
             EpochNumber(0),
             ViewNumber(1),
+            ValidatorId(0),
             &hash,
             VoteType::Vote,
+            None,
         );
         let b = Vote::signing_bytes(
             &TEST_CHAIN,
             EpochNumber(0),
             ViewNumber(2),
+            ValidatorId(0),
             &hash,
             VoteType::Vote,
+            None,
         );
         assert_ne!(a, b);
     }
@@ -127,15 +163,19 @@ mod tests {
             &chain_a,
             EpochNumber(0),
             ViewNumber(1),
+            ValidatorId(0),
             &hash,
             VoteType::Vote,
+            None,
         );
         let b = Vote::signing_bytes(
             &chain_b,
             EpochNumber(0),
             ViewNumber(1),
+            ValidatorId(0),
             &hash,
             VoteType::Vote,
+            None,
         );
         assert_ne!(a, b);
     }
@@ -147,15 +187,67 @@ mod tests {
             &TEST_CHAIN,
             EpochNumber(0),
             ViewNumber(1),
+            ValidatorId(0),
             &hash,
             VoteType::Vote,
+            None,
         );
         let b = Vote::signing_bytes(
             &TEST_CHAIN,
             EpochNumber(1),
             ViewNumber(1),
+            ValidatorId(0),
             &hash,
             VoteType::Vote,
+            None,
+        );
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_signing_bytes_differ_by_validator() {
+        let hash = BlockHash([1u8; 32]);
+        let a = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            ViewNumber(1),
+            ValidatorId(0),
+            &hash,
+            VoteType::Vote,
+            None,
+        );
+        let b = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            ViewNumber(1),
+            ValidatorId(1),
+            &hash,
+            VoteType::Vote,
+            None,
+        );
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_signing_bytes_differ_by_extension() {
+        let hash = BlockHash([1u8; 32]);
+        let a = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            ViewNumber(1),
+            ValidatorId(0),
+            &hash,
+            VoteType::Vote2,
+            Some(b"extension-a"),
+        );
+        let b = Vote::signing_bytes(
+            &TEST_CHAIN,
+            EpochNumber(0),
+            ViewNumber(1),
+            ValidatorId(0),
+            &hash,
+            VoteType::Vote2,
+            Some(b"extension-b"),
         );
         assert_ne!(a, b);
     }

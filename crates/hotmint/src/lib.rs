@@ -57,7 +57,7 @@ pub use hotmint_network as network;
 pub use hotmint_mempool as mempool;
 
 /// IPC proxy layer for running applications as separate processes
-/// (Unix domain socket, length-prefixed CBOR).
+/// (Unix domain socket, length-prefixed protobuf).
 pub use hotmint_abci as abci;
 
 /// JSON-RPC API for external interaction (status, transaction submission).
@@ -69,9 +69,9 @@ pub use hotmint_staking as staking;
 /// Prelude: commonly used types re-exported for convenience.
 pub mod prelude {
     pub use hotmint_types::{
-        Block, BlockContext, BlockHash, ConsensusMessage, DoubleCertificate, EndBlockResponse,
-        Epoch, EpochNumber, EquivocationProof, Height, QuorumCertificate, Signer,
-        TimeoutCertificate, ValidatorId, ValidatorInfo, ValidatorSet, ValidatorUpdate, Verifier,
-        ViewNumber, Vote, VoteType,
+        AggregateSignature, Block, BlockContext, BlockHash, ConsensusMessage, DoubleCertificate,
+        EndBlockResponse, Epoch, EpochNumber, EquivocationProof, Height, QuorumCertificate,
+        Signature, Signer, TimeoutCertificate, ValidatorId, ValidatorInfo, ValidatorSet,
+        ValidatorUpdate, Verifier, ViewNumber, Vote, VoteType,
     };
 }

@@ -23,6 +23,24 @@ fn shell_escape(s: &str) -> String {
     }
 }
 
+fn remote_home_for_host(host: &HostEntry) -> String {
+    host.home
+        .clone()
+        .unwrap_or_else(|| format!("~/hotmint-v{}", host.validator_id))
+}
+
+fn remote_child_path(dir: &str, name: &str) -> String {
+    format!("{}/{}", dir.trim_end_matches('/'), name)
+}
+
+fn remote_pid_file(remote_home: &str) -> String {
+    remote_child_path(remote_home, "hotmint.pid")
+}
+
+fn remote_log_file(remote_home: &str) -> String {
+    remote_child_path(remote_home, "hotmint.log")
+}
+
 /// Remote host configuration (from hosts.toml).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HostsConfig {
@@ -189,10 +207,7 @@ pub fn deploy(
 
     for host in &hosts.hosts {
         let vid = host.validator_id;
-        let remote_home = host
-            .home
-            .clone()
-            .unwrap_or_else(|| format!("~/hotmint-v{}", vid));
+        let remote_home = remote_home_for_host(host);
         let remote_src = "~/hotmint";
 
         // Validate
@@ -253,15 +268,28 @@ pub fn deploy(
         // 4. Stop any existing node, then start
         println!("  Starting V{}...", vid);
         let bin_path = format!("{}/target/release/{}", remote_src, package);
-        let pid_file = format!("/tmp/hotmint-v{}.pid", vid);
+        let pid_file = remote_pid_file(&remote_home);
+        let log_file = remote_log_file(&remote_home);
         let esc_pid = shell_escape(&pid_file);
         let esc_bin = shell_escape(&bin_path);
         let esc_home = shell_escape(&remote_home);
+        let esc_log = shell_escape(&log_file);
         ssh_exec(
             &host.ssh,
             &format!(
-                "if [ -f {esc_pid} ]; then kill $(cat {esc_pid}) 2>/dev/null; sleep 1; fi; \
-                 nohup {esc_bin} --home {esc_home} > /tmp/hotmint-v{vid}.log 2>&1 & echo $! > {esc_pid}",
+                "mkdir -p {esc_home}; \
+                 if [ -f {esc_pid} ]; then \
+                   pid=$(cat {esc_pid} 2>/dev/null || true); \
+                   case \"$pid\" in ''|*[!0-9]*) ;; *) \
+                     if ps -p \"$pid\" -o command= | grep -F -- {esc_bin} >/dev/null && \
+                        ps -p \"$pid\" -o command= | grep -F -- '--home' >/dev/null && \
+                        ps -p \"$pid\" -o command= | grep -F -- {esc_home} >/dev/null; then \
+                       kill \"$pid\" 2>/dev/null; sleep 1; \
+                     fi ;; \
+                   esac; \
+                   rm -f {esc_pid}; \
+                 fi; \
+                 nohup {esc_bin} --home {esc_home} > {esc_log} 2>&1 & echo $! > {esc_pid}",
             ),
         )?;
         println!("  V{}: started on {}", vid, host.ssh);
@@ -373,7 +401,8 @@ pub fn logs(
         fs::create_dir_all(dir).c(d!("create collect dir"))?;
         for host in &hosts.hosts {
             let vid = host.validator_id;
-            let remote_log = format!("/tmp/hotmint-v{}.log", vid);
+            let remote_home = remote_home_for_host(host);
+            let remote_log = remote_log_file(&remote_home);
             let local_path = dir.join(format!("V{}.log", vid));
             println!(
                 "Collecting V{} ({}) → {}",
@@ -398,7 +427,8 @@ pub fn logs(
     // Tail + optional grep
     for host in &hosts.hosts {
         let vid = host.validator_id;
-        let remote_log = format!("/tmp/hotmint-v{}.log", vid);
+        let remote_home = remote_home_for_host(host);
+        let remote_log = remote_log_file(&remote_home);
         let cmd = if let Some(pattern) = grep {
             format!(
                 "tail -n {} {} | grep --color=never {}",
@@ -432,15 +462,26 @@ pub fn remote_status(base_dir: &Path, hosts_path: &Path) -> Result<()> {
 
     for host in &hosts.hosts {
         let vid = host.validator_id;
-        let pid_file = format!("/tmp/hotmint-v{}.pid", vid);
+        let remote_home = remote_home_for_host(host);
+        let pid_file = remote_pid_file(&remote_home);
+        let esc_pid = shell_escape(&pid_file);
+        let esc_home = shell_escape(&remote_home);
 
         // Check if process is alive
         let pid_info = match ssh_exec(
             &host.ssh,
             &format!(
-                "if [ -f {} ]; then pid=$(cat {}); if kill -0 $pid 2>/dev/null; then echo \"alive:$pid\"; else echo dead; fi; else echo none; fi",
-                shell_escape(&pid_file),
-                shell_escape(&pid_file)
+                "if [ -f {esc_pid} ]; then \
+                   pid=$(cat {esc_pid} 2>/dev/null || true); \
+                   case \"$pid\" in ''|*[!0-9]*) echo stale ;; *) \
+                     if ps -p \"$pid\" -o command= | grep -F -- '--home' >/dev/null && \
+                        ps -p \"$pid\" -o command= | grep -F -- {esc_home} >/dev/null; then \
+                       echo \"alive:$pid\"; \
+                     else \
+                       echo stale; \
+                     fi ;; \
+                   esac; \
+                 else echo none; fi"
             ),
         ) {
             Ok(s) => s.trim().to_string(),
@@ -453,6 +494,8 @@ pub fn remote_status(base_dir: &Path, hosts_path: &Path) -> Result<()> {
             ("DOWN", "-")
         } else if pid_info == "none" {
             ("NONE", "-")
+        } else if pid_info == "stale" {
+            ("STALE", "-")
         } else {
             ("ERR", "-")
         };

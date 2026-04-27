@@ -1,6 +1,6 @@
 use ruc::*;
 
-use std::cmp;
+use std::{cmp, collections::HashSet};
 
 use hotmint_types::crypto::PublicKey;
 use hotmint_types::validator::{ValidatorId, ValidatorSet};
@@ -9,8 +9,11 @@ use hotmint_types::validator_update::ValidatorUpdate;
 use crate::rewards;
 use crate::store::StakingStore;
 use crate::types::{
-    SlashReason, SlashResult, StakeEntry, StakingConfig, UnbondingEntry, ValidatorState,
+    AppliedSlash, SlashReason, SlashResult, StakeEntry, StakingConfig, UnbondingEntry,
+    ValidatorState,
 };
+
+const ED25519_PUBLIC_KEY_LEN: usize = 32;
 
 /// Central staking manager that operates on any [`StakingStore`] backend.
 ///
@@ -51,6 +54,7 @@ impl<S: StakingStore> StakingManager<S> {
         if self.store.get_validator(id).is_some() {
             return Err(eg!("validator {} already registered", id));
         }
+        self.validate_public_key(&pubkey)?;
         if self_stake < self.config.min_self_stake {
             return Err(eg!(
                 "self-stake {} below minimum {}",
@@ -67,29 +71,39 @@ impl<S: StakingStore> StakingManager<S> {
             score: self.config.initial_score,
             jailed: false,
             jail_until_height: 0,
+            tombstoned: false,
+            applied_slashes: Vec::new(),
         };
         self.store.set_validator(id, state);
         Ok(())
     }
 
-    /// Remove a validator from the staking system entirely.
-    /// All delegated stakes are returned (caller handles balance credits).
+    /// Remove a validator only after no slashable stake remains.
+    ///
+    /// If only pending unbondings remain, the validator is tombstoned so later
+    /// evidence can still slash those unbondings before they mature.
     pub fn unregister_validator(&mut self, id: ValidatorId) -> Result<u64> {
-        let state = self
+        let mut state = self
             .store
             .get_validator(id)
             .ok_or_else(|| eg!("validator {} not found", id))?;
-        if state.jailed {
-            return Err(eg!("cannot unregister validator {} while jailed", id));
-        }
         let total = state.total_stake();
-        // Remove all delegation entries
-        let stakers = self.store.stakers_of(id);
-        for (addr, _) in stakers {
-            self.store.remove_stake(&addr, id);
+        if total > 0 {
+            return Err(eg!(
+                "cannot unregister validator {} while slashable stake {} remains",
+                id,
+                total
+            ));
         }
+
+        if self.has_pending_unbondings(id) {
+            state.tombstoned = true;
+            self.store.set_validator(id, state);
+            return Ok(0);
+        }
+
         self.store.remove_validator(id);
-        Ok(total)
+        Ok(0)
     }
 
     // ── Delegation ─────────────────────────────────────────────────
@@ -103,6 +117,9 @@ impl<S: StakingStore> StakingManager<S> {
             .store
             .get_validator(validator)
             .ok_or_else(|| eg!("validator {} not found", validator))?;
+        if vs.tombstoned {
+            return Err(eg!("cannot delegate to tombstoned validator {}", validator));
+        }
 
         vs.delegated_stake = vs
             .delegated_stake
@@ -181,7 +198,9 @@ impl<S: StakingStore> StakingManager<S> {
     /// Returns the completed entries so the application can credit the
     /// released tokens to the stakers' balances.
     pub fn process_unbonding(&mut self, current_height: u64) -> Vec<UnbondingEntry> {
-        self.store.drain_mature_unbondings(current_height)
+        let mature = self.store.drain_mature_unbondings(current_height);
+        self.prune_tombstoned_validators();
+        mature
     }
 
     // ── Slashing ───────────────────────────────────────────────────
@@ -196,31 +215,62 @@ impl<S: StakingStore> StakingManager<S> {
         reason: SlashReason,
         current_height: u64,
     ) -> Result<SlashResult> {
+        self.slash_with_evidence(
+            id,
+            Self::default_evidence_id(reason),
+            reason,
+            current_height,
+        )
+    }
+
+    /// Slash a validator for a specific evidence item.
+    ///
+    /// Reusing the same `evidence_id` is rejected for idempotence, but distinct
+    /// evidence can still apply while the validator is already jailed.
+    pub fn slash_with_evidence(
+        &mut self,
+        id: ValidatorId,
+        evidence_id: impl Into<Vec<u8>>,
+        reason: SlashReason,
+        current_height: u64,
+    ) -> Result<SlashResult> {
+        let evidence_id = evidence_id.into();
+        if evidence_id.is_empty() {
+            return Err(eg!("slash evidence id cannot be empty"));
+        }
+
         let mut vs = self
             .store
             .get_validator(id)
             .ok_or_else(|| eg!("validator {} not found", id))?;
 
-        if vs.jailed {
+        if vs
+            .applied_slashes
+            .iter()
+            .any(|applied| applied.evidence_id == evidence_id)
+        {
             return Err(eg!(
-                "validator {} already jailed, refusing double slash",
-                id
+                "validator {} already slashed for evidence id ({} bytes)",
+                id,
+                evidence_id.len()
             ));
         }
 
-        let rate = match reason {
-            SlashReason::DoubleSign => self.config.slash_rate_double_sign,
-            SlashReason::Downtime => self.config.slash_rate_downtime,
-        };
-
+        let rate = self.slash_rate(reason);
         let self_slash = (vs.self_stake as u128 * rate as u128 / 10_000) as u64;
         let del_slash = (vs.delegated_stake as u128 * rate as u128 / 10_000) as u64;
 
         vs.self_stake = vs.self_stake.saturating_sub(self_slash);
         vs.delegated_stake = vs.delegated_stake.saturating_sub(del_slash);
         vs.jailed = true;
-        vs.jail_until_height = current_height.saturating_add(self.config.jail_duration);
+        vs.jail_until_height = vs
+            .jail_until_height
+            .max(current_height.saturating_add(self.config.jail_duration));
         vs.score = vs.score.saturating_sub(self.config.max_score / 10);
+        vs.applied_slashes.push(AppliedSlash {
+            evidence_id,
+            reason,
+        });
 
         // Proportionally reduce each staker's delegation.
         // The last staker absorbs any rounding remainder so that
@@ -253,7 +303,7 @@ impl<S: StakingStore> StakingManager<S> {
 
         self.store.set_validator(id, vs);
 
-        // Slash pending unbondings for this validator at the same rate
+        // Slash pending unbondings for this validator at the same rate.
         let unbondings = self.store.all_unbondings();
         let mut unbonding_slashed = 0u64;
         let updated: Vec<UnbondingEntry> = unbondings
@@ -277,12 +327,74 @@ impl<S: StakingStore> StakingManager<S> {
         })
     }
 
+    fn slash_rate(&self, reason: SlashReason) -> u32 {
+        match reason {
+            SlashReason::DoubleSign => self.config.slash_rate_double_sign,
+            SlashReason::Downtime => self.config.slash_rate_downtime,
+        }
+    }
+
+    fn default_evidence_id(reason: SlashReason) -> Vec<u8> {
+        match reason {
+            SlashReason::DoubleSign => b"reason:double-sign".to_vec(),
+            SlashReason::Downtime => b"reason:downtime".to_vec(),
+        }
+    }
+
+    fn validate_public_key(&self, pubkey: &PublicKey) -> Result<()> {
+        if pubkey.0.len() != ED25519_PUBLIC_KEY_LEN {
+            return Err(eg!(
+                "invalid Ed25519 public key length: got {}, expected {}",
+                pubkey.0.len(),
+                ED25519_PUBLIC_KEY_LEN
+            ));
+        }
+        if self
+            .store
+            .all_validator_ids()
+            .into_iter()
+            .filter_map(|id| self.store.get_validator(id))
+            .any(|validator| validator.public_key == *pubkey)
+        {
+            return Err(eg!("duplicate validator public key"));
+        }
+        Ok(())
+    }
+
+    fn has_pending_unbondings(&self, id: ValidatorId) -> bool {
+        self.store
+            .all_unbondings()
+            .into_iter()
+            .any(|entry| entry.validator == id && entry.amount > 0)
+    }
+
+    fn prune_tombstoned_validators(&mut self) {
+        let pending: HashSet<ValidatorId> = self
+            .store
+            .all_unbondings()
+            .into_iter()
+            .filter(|entry| entry.amount > 0)
+            .map(|entry| entry.validator)
+            .collect();
+        for id in self.store.all_validator_ids() {
+            let Some(state) = self.store.get_validator(id) else {
+                continue;
+            };
+            if state.tombstoned && state.total_stake() == 0 && !pending.contains(&id) {
+                self.store.remove_validator(id);
+            }
+        }
+    }
+
     /// Unjail a validator if the jail period has passed.
     pub fn unjail(&mut self, id: ValidatorId, current_height: u64) -> Result<()> {
         let mut vs = self
             .store
             .get_validator(id)
             .ok_or_else(|| eg!("validator {} not found", id))?;
+        if vs.tombstoned {
+            return Err(eg!("validator {} is tombstoned", id));
+        }
         if !vs.jailed {
             return Err(eg!("validator {} is not jailed", id));
         }
@@ -331,6 +443,9 @@ impl<S: StakingStore> StakingManager<S> {
             .store
             .get_validator(proposer)
             .ok_or_else(|| eg!("proposer {} not found", proposer))?;
+        if vs.tombstoned {
+            return Err(eg!("proposer {} is tombstoned", proposer));
+        }
         vs.self_stake = vs
             .self_stake
             .checked_add(reward)
@@ -362,16 +477,18 @@ impl<S: StakingStore> StakingManager<S> {
     }
 
     /// Return the top `max_validators` validators sorted by voting power (descending).
-    /// Jailed validators are excluded.
+    /// Ties are broken by `ValidatorId` ascending. Jailed/tombstoned validators are excluded.
     pub fn formal_validator_list(&self) -> Vec<ValidatorState> {
         let mut active: Vec<ValidatorState> = self
             .store
             .all_validator_ids()
             .into_iter()
             .filter_map(|id| self.store.get_validator(id))
-            .filter(|vs| !vs.jailed && vs.self_stake >= self.config.min_self_stake)
+            .filter(|vs| {
+                !vs.jailed && !vs.tombstoned && vs.self_stake >= self.config.min_self_stake
+            })
             .collect();
-        active.sort_by_key(|v| cmp::Reverse(v.voting_power()));
+        active.sort_by_key(|v| (cmp::Reverse(v.voting_power()), v.id.0));
         active.truncate(self.config.max_validators);
         active
     }

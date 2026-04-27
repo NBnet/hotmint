@@ -21,8 +21,11 @@ pub mod cluster;
 pub mod local;
 pub mod remote;
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::thread::sleep;
+use std::time::Duration;
 
 /// Detect the available loopback address (IPv4 preferred, IPv6 fallback).
 ///
@@ -139,7 +142,7 @@ pub fn start_node_process(
 pub fn wait_for_rpc(host: &str, port: u16, timeout_secs: u64) -> bool {
     use std::io::{Read, Write};
     use std::net::TcpStream;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     let addr = format_host_port(host, port);
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
@@ -159,25 +162,97 @@ pub fn wait_for_rpc(host: &str, port: u16, timeout_secs: u64) -> bool {
                 }
             }
         }
-        std::thread::sleep(Duration::from_millis(200));
+        sleep(Duration::from_millis(200));
     }
     false
 }
 
 /// Kill any stale node processes whose `--home` points into `base_dir`.
 ///
-/// Uses `pkill -f` to find and kill processes matching the base_dir path.
-/// This cleans up orphaned nodes from previous test runs that crashed
-/// without proper cleanup. Best-effort: silently ignores errors.
+/// Uses only PID files under `base_dir`, validates the live process command
+/// line, and signals that exact PID. This cleans up orphaned nodes from
+/// previous test runs that crashed without risking broad process matches.
 pub fn kill_stale_nodes(base_dir: &Path) {
-    let pattern = format!("--home {}", base_dir.display());
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", &pattern])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    let Ok(entries) = fs::read_dir(base_dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let pid_file = entry.path();
+        let Some(file_name) = pid_file.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(id) = file_name
+            .strip_prefix('v')
+            .and_then(|name| name.strip_suffix(".pid"))
+            .and_then(|id| id.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        let Some(pid) = read_pid_file(&pid_file) else {
+            let _ = fs::remove_file(&pid_file);
+            continue;
+        };
+        let home_dir = base_dir.join(format!("v{id}"));
+        if is_expected_node_process(pid, &home_dir) {
+            let _ = Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        let _ = fs::remove_file(&pid_file);
+    }
+
     // Brief pause to let OS reclaim resources.
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    sleep(Duration::from_millis(100));
+}
+
+fn read_pid_file(path: &Path) -> Option<u32> {
+    let pid = fs::read_to_string(path).ok()?.trim().parse::<u32>().ok()?;
+    if pid == 0 || pid > i32::MAX as u32 {
+        return None;
+    }
+    Some(pid)
+}
+
+fn process_command_line(pid: u32) -> Option<String> {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let command = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!command.is_empty()).then_some(command)
+}
+
+fn process_name(pid: u32) -> Option<String> {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+fn is_expected_node_process(pid: u32, home_dir: &Path) -> bool {
+    let Some(name) = process_name(pid) else {
+        return false;
+    };
+    let executable_ok = name.contains("cluster-node") || name.contains("hotmint");
+    if !executable_ok {
+        return false;
+    }
+
+    let Some(command) = process_command_line(pid) else {
+        return false;
+    };
+    command.contains("--home") && command.contains(home_dir.to_string_lossy().as_ref())
 }
 
 /// Start cluster node processes with staggered startup to avoid
@@ -191,8 +266,6 @@ pub fn start_cluster_nodes(
     base_dir: &Path,
     extra_args: &[&str],
 ) -> Vec<Child> {
-    use std::time::Duration;
-
     // Clean up orphaned nodes from previous runs.
     kill_stale_nodes(base_dir);
 
@@ -208,11 +281,17 @@ pub fn start_cluster_nodes(
         cmd.arg("--home").arg(&v.home_dir);
         cmd.stdout(log).stderr(log_err);
         let child = cmd.spawn().expect("spawn node process");
+        if let Err(e) = fs::write(
+            base_dir.join(format!("v{}.pid", v.id)),
+            child.id().to_string(),
+        ) {
+            eprintln!("WARNING: failed to write pid file for V{}: {}", v.id, e);
+        }
         children.push(child);
 
         // Stagger startup to avoid simultaneous Noise handshake collisions.
         if i < state.validators.len() - 1 {
-            std::thread::sleep(Duration::from_millis(300));
+            sleep(Duration::from_millis(300));
         }
     }
     children

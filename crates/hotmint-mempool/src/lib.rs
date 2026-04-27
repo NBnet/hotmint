@@ -112,6 +112,11 @@ impl Mempool {
 
     /// Add a transaction with priority and gas_wanted.
     pub async fn add_tx_with_gas(&self, tx: Vec<u8>, priority: u64, gas_wanted: u64) -> bool {
+        if self.max_size == 0 {
+            debug!("mempool admission disabled: max_size is zero");
+            return false;
+        }
+
         if tx.len() > self.max_tx_bytes {
             debug!(size = tx.len(), max = self.max_tx_bytes, "tx too large");
             return false;
@@ -184,7 +189,8 @@ impl Mempool {
     }
 
     /// Collect transactions for a block proposal (up to max_bytes and max_gas total).
-    /// Collected transactions are removed from the pool and the seen set.
+    /// Collected transactions remain in the pool until post-commit recheck removes
+    /// transactions that are no longer valid against committed state.
     /// Transactions are collected in priority order (highest first).
     /// The payload is length-prefixed: `[u32_le len][bytes]...`
     ///
@@ -198,41 +204,54 @@ impl Mempool {
     /// Skips transactions that exceed the remaining gas budget (instead of
     /// stopping) to avoid head-of-line starvation by a single high-gas tx.
     pub async fn collect_payload_with_gas(&self, max_bytes: usize, max_gas: u64) -> Vec<u8> {
-        let mut entries = self.entries.lock().await;
-        let mut seen = self.seen.lock().await;
+        let entries = self.entries.lock().await;
         let mut payload = Vec::new();
         let mut total_gas = 0u64;
-        let mut skipped = Vec::new();
+        let mut skipped = 0usize;
         // B-2/A-5: Cap skipped transactions to bound the loop.
         const MAX_SKIPPED: usize = 200;
 
-        while let Some(entry) = entries.pop_last() {
+        for entry in entries.iter().rev() {
             // Byte limit: skip this tx if it doesn't fit, continue with smaller ones.
-            if payload.len() + 4 + entry.tx.len() > max_bytes {
-                skipped.push(entry);
-                if skipped.len() >= MAX_SKIPPED {
+            let Some(next_len) = payload
+                .len()
+                .checked_add(4)
+                .and_then(|len| len.checked_add(entry.tx.len()))
+            else {
+                skipped += 1;
+                if skipped >= MAX_SKIPPED {
+                    break;
+                }
+                continue;
+            };
+            if next_len > max_bytes {
+                skipped += 1;
+                if skipped >= MAX_SKIPPED {
                     break;
                 }
                 continue;
             }
             // Gas limit: skip this tx but continue collecting smaller ones.
-            if max_gas > 0 && total_gas + entry.gas_wanted > max_gas {
-                skipped.push(entry);
-                if skipped.len() >= MAX_SKIPPED {
-                    break;
+            if max_gas > 0 {
+                let Some(next_gas) = total_gas.checked_add(entry.gas_wanted) else {
+                    skipped += 1;
+                    if skipped >= MAX_SKIPPED {
+                        break;
+                    }
+                    continue;
+                };
+                if next_gas > max_gas {
+                    skipped += 1;
+                    if skipped >= MAX_SKIPPED {
+                        break;
+                    }
+                    continue;
                 }
-                continue;
+                total_gas = next_gas;
             }
-            seen.remove(&entry.hash);
-            total_gas += entry.gas_wanted;
             let len = entry.tx.len() as u32;
             payload.extend_from_slice(&len.to_le_bytes());
             payload.extend_from_slice(&entry.tx);
-        }
-
-        // Re-insert skipped entries back into the pool.
-        for entry in skipped {
-            entries.insert(entry);
         }
 
         payload
@@ -345,6 +364,7 @@ mod tests {
         // Higher priority first
         assert_eq!(txs[0], b"tx2");
         assert_eq!(txs[1], b"tx1");
+        assert_eq!(pool.size().await, 2);
     }
 
     #[tokio::test]
@@ -407,6 +427,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_max_size_zero_rejects_all_transactions() {
+        let pool = Mempool::new(0, 1024);
+        assert!(!pool.add_tx(b"tx1".to_vec(), 10).await);
+        assert_eq!(pool.size().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_collect_keeps_transactions_until_recheck_removes_them() {
+        let pool = Mempool::new(100, 1024);
+        assert!(pool.add_tx(b"tx1".to_vec(), 10).await);
+        assert!(pool.add_tx(b"tx2".to_vec(), 20).await);
+
+        let payload = pool.collect_payload(1024).await;
+        assert_eq!(Mempool::decode_payload(&payload).len(), 2);
+        assert_eq!(pool.size().await, 2);
+
+        pool.recheck(|_| None).await;
+        assert_eq!(pool.size().await, 0);
+    }
+
+    #[tokio::test]
     async fn test_collect_respects_max_bytes() {
         let pool = Mempool::new(100, 1024);
         pool.add_tx(b"aaaa".to_vec(), 1).await;
@@ -421,6 +462,20 @@ mod tests {
         // Highest priority first
         assert_eq!(txs[0], b"cccc");
         assert_eq!(txs[1], b"bbbb");
+    }
+
+    #[tokio::test]
+    async fn test_collect_gas_overflow_skips_transaction() {
+        let pool = Mempool::new(100, 1024);
+        assert!(
+            pool.add_tx_with_gas(b"overflow".to_vec(), 20, u64::MAX)
+                .await
+        );
+        assert!(pool.add_tx_with_gas(b"ok".to_vec(), 10, 1).await);
+
+        let payload = pool.collect_payload_with_gas(1024, 10).await;
+        let txs = Mempool::decode_payload(&payload);
+        assert_eq!(txs, vec![b"ok".to_vec()]);
     }
 
     #[test]
