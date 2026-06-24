@@ -68,7 +68,7 @@ The long-term goal is a **"hexagonal warrior" (六边形战士)** — a framewor
 | **Business Logic** | AI-ported Substrate Pallets — type-safe Rust, audited by top security firms |
 | **Developer Experience** | ABCI-style trait API, Go SDK, cross-language IPC, cluster management tooling |
 
-> 📖 **[Security audit findings →](.claude/audit.md)**
+> 📖 **[Security audit findings →](docs/audit.md)**
 
 ---
 
@@ -286,7 +286,7 @@ Three deployment modes — all interoperable in the same cluster:
 | [Mempool & API](docs/mempool-api.md) | Priority mempool, JSON-RPC (TCP + HTTP + WebSocket) |
 | [Metrics](docs/metrics.md) | Prometheus metrics, health interpretation, Grafana queries |
 | [Wire Protocol](docs/wire-protocol.md) | Codec framing, postcard format, ABCI IPC protocol, block hash spec |
-| [Security Audit & Roadmap](.claude/audit.md) | Security audit findings and resolution history |
+| [Security Audit & Roadmap](docs/audit.md) | Security audit findings and resolution history |
 
 ---
 

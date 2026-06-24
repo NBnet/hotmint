@@ -18,4 +18,4 @@ Comprehensive documentation for the Hotmint BFT consensus framework.
 | [Mempool & API](mempool-api.md) | Transaction mempool and JSON-RPC server |
 | [Metrics](metrics.md) | Prometheus metrics and observability |
 | [Wire Protocol](wire-protocol.md) | Codec framing, postcard format, ABCI IPC protocol, block hash spec |
-| [Security Audit & Roadmap](../.claude/audit.md) | Security audit findings and resolution history |
+| [Security Audit & Roadmap](audit.md) | Security audit findings and resolution history |

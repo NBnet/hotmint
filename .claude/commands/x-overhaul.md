@@ -12,15 +12,15 @@ Execute `/x-review all` — the full audit protocol.
    - Each agent reads all source files in its subsystem, loads the corresponding pattern guide
    - Perform deep analysis: invariants, boundary conditions, failure paths, concurrency, unsafe audit
 3. Aggregate and deduplicate all findings.
-4. Manage `.claude/audit.md` — prune fixed entries, merge new findings sorted by severity.
+4. Manage `docs/audit.md` — prune fixed entries, merge new findings sorted by severity.
 
 ## Phase 2: Fix & Commit
 
 Execute the full `/x-fix` protocol (including its Self-Review and Commit phases).
 
-1. Read `.claude/audit.md`.
+1. Read `docs/audit.md`.
 2. Execute every task in `.claude/commands/x-fix.md` (Phase 1, 2, and 3).
-3. Iterate until `.claude/audit.md` has zero open entries (or only Won't Fix).
+3. Iterate until `docs/audit.md` has zero open entries (or only Won't Fix).
 
 ## Output Format
 
