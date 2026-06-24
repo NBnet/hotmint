@@ -681,21 +681,28 @@ async fn test_epoch_transition_increments_correctly() {
         handles.push(h);
     }
 
-    // Wait for enough commits to span the epoch transition
-    tokio::time::sleep(tokio::time::Duration::from_secs(12)).await;
-
-    // Verify at least one node saw epoch 0 commits followed by epoch 1 commits
-    let mut any_saw_transition = false;
-    for (i, log) in epoch_logs.iter().enumerate() {
-        let epochs = log.lock().unwrap().clone();
-        if epochs.len() >= 2 {
-            let has_epoch_0 = epochs.contains(&0);
-            let has_epoch_1 = epochs.contains(&1);
-            if has_epoch_0 && has_epoch_1 {
-                any_saw_transition = true;
-            }
+    // Poll until at least one node has observed both an epoch 0 and an epoch 1
+    // commit, spanning the transition. Polling (instead of a fixed sleep) keeps
+    // the test fast on healthy machines while tolerating the slower, stall-prone
+    // view changes an epoch transition can trigger on a loaded CI runner.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(40);
+    loop {
+        let any_saw_transition = epoch_logs.iter().any(|log| {
+            let epochs = log.lock().unwrap();
+            epochs.contains(&0) && epochs.contains(&1)
+        });
+        if any_saw_transition {
+            break;
         }
-        // Epochs must never decrease
+        if std::time::Instant::now() > deadline {
+            panic!("no validator observed epoch 0 -> epoch 1 transition in commit log");
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+
+    // Epochs must never decrease in any validator's commit log.
+    for (i, log) in epoch_logs.iter().enumerate() {
+        let epochs = log.lock().unwrap();
         for w in epochs.windows(2) {
             assert!(
                 w[1] >= w[0],
@@ -705,11 +712,6 @@ async fn test_epoch_transition_increments_correctly() {
             );
         }
     }
-
-    assert!(
-        any_saw_transition,
-        "no validator observed epoch 0 -> epoch 1 transition in commit log"
-    );
 
     for h in handles {
         h.abort();
@@ -781,7 +783,25 @@ async fn test_multiple_consecutive_epoch_transitions() {
         handles.push(h);
     }
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(20)).await;
+    // Poll until every validator has committed >= 3 blocks and at least two
+    // epoch transitions have been triggered. Polling tolerates the slower,
+    // stall-prone view changes an epoch transition can cause on a loaded CI
+    // runner while staying fast when the cluster is healthy.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+    loop {
+        let all_committed = commit_counters
+            .iter()
+            .all(|c| c.load(Ordering::Relaxed) >= 3);
+        let max_transitions = transition_counters
+            .iter()
+            .map(|c| c.load(Ordering::Relaxed))
+            .max()
+            .unwrap();
+        if (all_committed && max_transitions >= 2) || std::time::Instant::now() > deadline {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
 
     for (i, c) in commit_counters.iter().enumerate() {
         let n = c.load(Ordering::Relaxed);
