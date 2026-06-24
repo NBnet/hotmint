@@ -300,6 +300,36 @@
 - **What**: Individual verification uses verify_strict() which rejects small-order public keys. Batch verification uses ed25519_dalek::verify_batch() which does not. A validator with one of the 8 small-order Curve25519 points could produce signatures passing batch but failing strict verification.
 - **Reason**: ed25519_dalek's verify_batch API does not expose a strict mode. A workaround (loop of verify_strict) trades ~2× batch throughput. Practical risk is negligible: only 8 small-order points exist, and validator registration controls key acceptance. Tracked for upstream ed25519-dalek enhancement.
 
+### [MEDIUM] network: compressed consensus frames are rate-limited by compressed size before zstd expansion
+- **Where**: crates/hotmint-network/src/service.rs:599 (ingress budget on `notification.len()`); crates/hotmint-network/src/codec.rs:56-66
+- **What**: The per-peer ingress budget charges the compressed frame size, while a frame may expand up to 16 MiB during zstd decode, allowing a known peer to amplify CPU/allocation work relative to its compressed-byte budget.
+- **Reason**: The classic decompression bomb is already bounded — `codec::decode` caps each frame with `Decoder::take(MAX_DECOMPRESSED_SIZE + 1)` and rejects anything over 16 MiB, so per-frame work is bounded. The residual amplification is limited and charging by decompressed size is not possible before decoding. Accepted; revisit if a streaming decompressed-byte budget is added.
+
+### [MEDIUM] staking: register_validator accepts caller-supplied ValidatorId not bound to the public key
+- **Where**: crates/hotmint-staking/src/manager.rs:48-77
+- **What**: Registration stores the caller-supplied `id` after validating only key length/uniqueness; it is later used as the equal-power tie-break (`id.0` ascending), so a caller could bias formal-set selection.
+- **Reason**: `hotmint-staking` is a pluggable reference module; validator ids are assigned by genesis/the embedding application, and the consensus-layer `ValidatorSet` independently rejects duplicate ids and duplicate public keys. Binding `id == ValidatorId::from_public_key(pubkey)` here would force a 64-bit-truncated identity and break the sequential-id convention used throughout genesis and tests. Left to the embedding application to enforce if required.
+
+### [LOW] types: ValidatorId::from_public_key truncates Blake3 to 64 bits
+- **Where**: crates/hotmint-types/src/validator.rs:24-29
+- **What**: Derives a `ValidatorId(u64)` from the first 8 bytes of `blake3(pubkey)`, a 64-bit identity with a ~2^32 birthday bound.
+- **Reason**: `ValidatorId` is a `u64` by type and the helper has no production callers (ids are assigned explicitly; `ValidatorSet::try_from_parts` rejects duplicate ids and pubkeys). Widening the identity is a type-level change out of scope; the helper is latent.
+
+### [HIGH] storage: a mid-commit crash before state persistence requires operator recovery (WAL fail-closed)
+- **Where**: crates/hotmint/src/bin/node.rs:324-340; crates/hotmint-storage/src/wal.rs:39-44; crates/hotmint-consensus/src/engine.rs:1750-1769
+- **What**: `WalRecovery::NeedsReplay` causes startup to refuse to start rather than automatically replaying `last_committed_height+1..=target_height`. The app commit also runs before the block-store auxiliary indices are flushed.
+- **Reason**: This is the explicitly-accepted resolution of a prior finding ("fail closed if replay cannot complete"). Automatic replay requires the application to be safely re-executable (an ABCI-app idempotency contract) which is a protocol-level change. The WAL intent is fsynced before app execution (fatal on failure), so safety is preserved; only automatic liveness recovery is deferred. Not a new regression.
+
+### [HIGH] consensus: liveness/offline tracking is non-deterministic across nodes (per-DC, omitted during sync)
+- **Where**: crates/hotmint-consensus/src/engine.rs:1689-1692; crates/hotmint-consensus/src/sync.rs replay_blocks; liveness.rs
+- **What**: `record_commit` samples liveness once per DoubleCertificate (not per committed height) and is not invoked during sync replay, so a fast-forwarding or state-synced node accumulates different `(missed, total_commits)` than a steady node. If a slashing application acts on `offline_validators()`, app_hash can diverge.
+- **Reason**: A fully deterministic fix requires sampling each committed height from its on-chain commit-QC signer bitfield in all paths (live batch commit, fast-forward, and sync). The current commit structure stores a commit QC only for the DC target, not for ancestor blocks committed by the two-chain rule, so per-height signer data is not available without a protocol/storage change. A partial fix risks making divergence worse. The default `NoopApplication` does not act on offline evidence and consensus safety is unaffected. The doc comment in `liveness.rs` was updated to state the determinism caveat. Tracked for a future protocol version.
+
+### [MEDIUM] consensus/facade: app/consensus divergence is not detected when the application reports height 0
+- **Where**: crates/hotmint-consensus/src/engine.rs:307-328
+- **What**: The startup divergence check only runs when `app.info().last_block_height > 0`, so a wiped application DB (height 0) with consensus state past genesis is not flagged.
+- **Reason**: At the startup check point the engine cannot distinguish a wiped application (true divergence) from a node that is bootstrapping via join/sync, whose application legitimately starts fresh and is replayed up to the persisted consensus height afterwards (exercised by `test_validator_join`). Halting on app height 0 breaks those legitimate flows, so this is intentionally left as-is.
+
 ---
 
 ## Resolved — Round 3 (2026-04-07)

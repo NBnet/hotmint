@@ -372,9 +372,15 @@ pub fn init_node_dir(home: &Path) -> Result<()> {
     let priv_key = PrivValidatorKey::generate();
     priv_key.save(&priv_key_path)?;
 
-    // Generate node key (P2P identity)
-    let node_key = NodeKey::generate();
-    let node_key_path = config_dir.join("node_key.json");
+    // The P2P node key MUST equal the validator key: peers derive each other's
+    // litep2p PeerId from the validator public key in genesis
+    // (`<validator_id>@<addr>` in persistent_peers), so an independent node key
+    // would make this node's connections unrecognized and its consensus
+    // messages dropped as "unknown peer". This mirrors the cluster tooling.
+    let node_key = NodeKey {
+        public_key: priv_key.public_key.clone(),
+        private_key: priv_key.private_key.clone(),
+    };
     node_key.save(&node_key_path)?;
 
     // Create genesis with this single validator

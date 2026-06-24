@@ -169,30 +169,24 @@ pub fn try_commit(
         };
 
         if !response.validator_updates.is_empty() {
-            // Chain epoch transitions: if a prior block in this batch already
-            // produced a pending epoch, apply the new updates on top of that
-            // intermediate validator set rather than the original epoch's set.
-            let base_vs = if let Some(ref ep) = pending_epoch {
-                &ep.validator_set
-            } else {
-                &current_epoch.validator_set
-            };
-            let base_num = if let Some(ref ep) = pending_epoch {
-                ep.number
-            } else {
-                current_epoch.number
-            };
-            let new_vs = base_vs
-                .try_apply_updates(&response.validator_updates)
+            // Chain epoch transitions onto the in-flight pending epoch (if any)
+            // so multiple updates within one commit batch accumulate
+            // deterministically — identically to the engine and sync paths.
+            pending_epoch = Some(
+                chained_pending_epoch(
+                    current_epoch,
+                    pending_epoch.as_ref(),
+                    block.view,
+                    &response.validator_updates,
+                )
                 .unwrap_or_else(|e| {
                     panic!(
                         "FATAL: invalid validator updates at committed height {}: {}",
                         block.height.as_u64(),
                         e
                     )
-                });
-            let epoch_start = ViewNumber(block.view.as_u64() + 2);
-            pending_epoch = Some(Epoch::new(base_num.next(), epoch_start, new_vs));
+                }),
+            );
         }
 
         block_responses.push(response);
@@ -206,6 +200,28 @@ pub fn try_commit(
         last_app_hash,
         block_responses,
     })
+}
+
+/// Compute the pending epoch produced by a committed block's validator updates,
+/// chaining onto an existing in-flight `pending` epoch when present so that
+/// multiple updates committed before activation accumulate deterministically.
+///
+/// All three commit paths (live commit, engine post-processing, and sync
+/// replay) MUST use this helper so a node that catches up via sync derives the
+/// same `(epoch_number, validator_set)` as nodes that ran live.
+pub(crate) fn chained_pending_epoch(
+    current_epoch: &Epoch,
+    pending: Option<&Epoch>,
+    block_view: ViewNumber,
+    updates: &[hotmint_types::validator_update::ValidatorUpdate],
+) -> Result<Epoch> {
+    let (base_number, base_vs) = match pending {
+        Some(ep) => (ep.number, &ep.validator_set),
+        None => (current_epoch.number, &current_epoch.validator_set),
+    };
+    let new_vs = base_vs.try_apply_updates(updates).map_err(|e| eg!(e))?;
+    let epoch_start = ViewNumber(block_view.as_u64() + 2);
+    Ok(Epoch::new(base_number.next(), epoch_start, new_vs))
 }
 
 #[cfg(test)]

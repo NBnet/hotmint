@@ -574,6 +574,16 @@ impl NetworkService {
                 }
             }
             NotificationEvent::NotificationStreamOpened { peer, .. } => {
+                // Enforce the connection cap on notification streams too. An
+                // over-limit non-validator peer is not added to connected_peers
+                // by ConnectionEstablished, so admitting its notification stream
+                // here would let it bypass max_peers and consume relay/sync
+                // resources. Validators are always admitted.
+                let is_validator = self.peer_map.peer_to_validator.contains_key(&peer);
+                if !is_validator && !self.connected_peers.contains(&peer) {
+                    warn!(peer = %peer, "ignoring notification stream from non-admitted peer (over connection limit)");
+                    return;
+                }
                 info!(peer = %peer, "notification stream opened");
                 self.notif_connected_peers.insert(peer);
                 let _ = self
@@ -707,6 +717,13 @@ impl NetworkService {
                     self.sync_handle.reject_request(request_id);
                     return;
                 }
+                // Apply the per-peer ingress budget before decoding, mirroring
+                // the consensus notification/request paths, so an admitted peer
+                // cannot force unbounded decode work.
+                if !self.check_consensus_ingress_budget(peer, request.len()) {
+                    self.sync_handle.reject_request(request_id);
+                    return;
+                }
                 match codec::decode::<SyncRequest>(&request) {
                     Ok(req) => {
                         if let Err(e) = self.sync_req_tx.try_send(IncomingSyncRequest {
@@ -714,7 +731,10 @@ impl NetworkService {
                             peer,
                             request: req,
                         }) {
-                            warn!("sync request dropped: {e}");
+                            // Bounded queue full: reject so the remote gets a
+                            // prompt failure instead of waiting for its timeout.
+                            warn!("sync request dropped (queue full): {e}");
+                            self.sync_handle.reject_request(request_id);
                         }
                     }
                     Err(e) => {

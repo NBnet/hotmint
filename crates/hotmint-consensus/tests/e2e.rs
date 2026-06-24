@@ -247,10 +247,12 @@ async fn test_validator_join() {
         .with_test_writer()
         .try_init();
 
-    let (vs3, signers3) = make_validator_set(3);
+    // Start from a 4-node cluster (quorum 3, tolerates 1). A 3-node start would
+    // require unanimity under the correct BFT threshold and stall.
+    let (vs_init, signers_init) = make_validator_set(4);
     let routing = SharedRouting::new();
 
-    let new_signer = Ed25519Signer::generate(ValidatorId(3));
+    let new_signer = Ed25519Signer::generate(ValidatorId(4));
     let new_validator_update = ValidatorUpdate {
         id: new_signer.validator_id(),
         public_key: new_signer.public_key(),
@@ -262,7 +264,7 @@ async fn test_validator_join() {
     let mut handles = Vec::new();
     let mut stores: Vec<SharedBlockStore> = Vec::new();
 
-    for signer in signers3 {
+    for signer in signers_init {
         let vid = signer.validator_id();
         let commits = Arc::new(AtomicU64::new(0));
         initial_commits.push(commits.clone());
@@ -272,7 +274,7 @@ async fn test_validator_join() {
             new_validator: new_validator_update.clone(),
             join_observed: join_observed.clone(),
         };
-        let (_, store, h) = spawn_node(vid, signer, vs3.clone(), &routing, app);
+        let (_, store, h) = spawn_node(vid, signer, vs_init.clone(), &routing, app);
         stores.push(store);
         handles.push(h);
     }
@@ -286,15 +288,15 @@ async fn test_validator_join() {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 
-    // Build the expanded 4-validator set
+    // Build the expanded 5-validator set
     let new_vid = new_signer.validator_id();
-    let mut vs4_validators = vs3.validators().to_vec();
-    vs4_validators.push(ValidatorInfo {
+    let mut vs_joined_validators = vs_init.validators().to_vec();
+    vs_joined_validators.push(ValidatorInfo {
         id: new_vid,
         public_key: new_signer.public_key(),
         power: 1,
     });
-    let vs4 = ValidatorSet::new(vs4_validators);
+    let vs_joined = ValidatorSet::new(vs_joined_validators);
 
     // Simulate sync: copy committed blocks from an initial node into the
     // joining validator's store and build the correct consensus state.
@@ -325,7 +327,7 @@ async fn test_validator_join() {
 
     // The epoch transition starts at commit_view + 2 (deterministic rule from commit.rs)
     let epoch_start_view = ViewNumber(commit_view.as_u64() + 2);
-    let new_epoch = Epoch::new(EpochNumber(1), epoch_start_view, vs4);
+    let new_epoch = Epoch::new(EpochNumber(1), epoch_start_view, vs_joined);
 
     // Build consensus state as if sync_to_tip had run: the joining node starts
     // at the new epoch with the committed height already applied.
@@ -348,7 +350,7 @@ async fn test_validator_join() {
 
     tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
 
-    // All 3 initial validators should have committed multiple blocks
+    // All 4 initial validators should have committed multiple blocks
     for (i, c) in initial_commits.iter().enumerate() {
         let n = c.load(Ordering::Relaxed);
         assert!(
@@ -443,7 +445,7 @@ async fn test_validator_leave() {
     routing.deregister(to_remove);
     handles[3].abort();
 
-    // Remaining 3 validators (quorum = ceil(2*3/3) = 2) should continue
+    // Remaining 3 validators (quorum = floor(2*3/3)+1 = 3) should continue
     tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
 
     for (i, c) in counters.iter().enumerate().take(3) {
@@ -647,7 +649,10 @@ async fn test_epoch_transition_increments_correctly() {
         .with_test_writer()
         .try_init();
 
-    let (vs, signers) = make_validator_set(3);
+    // A 4-node cluster (quorum 3, tolerates 1) — a 3-node cluster would now
+    // require unanimity (correct BFT for f=0) and cannot absorb the transient
+    // validator-set skew during an epoch transition.
+    let (vs, signers) = make_validator_set(4);
     let routing = SharedRouting::new();
 
     // Use a power change on an existing validator (V0: power 1 → 2).

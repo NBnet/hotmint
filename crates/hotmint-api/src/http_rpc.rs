@@ -140,8 +140,21 @@ const MAX_WS_CONNECTIONS: usize = 1024;
 /// GET /ws handler: upgrade to WebSocket and stream chain events.
 async fn ws_upgrade_handler(
     State(state): State<Arc<HttpRpcState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    // Per-IP rate limit on upgrades so a single IP cannot monopolize the global
+    // WebSocket connection budget.
+    {
+        let mut limiter = state.ip_limiter.lock().await;
+        if !limiter.allow(addr.ip()) {
+            return (
+                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                "rate limit exceeded",
+            )
+                .into_response();
+        }
+    }
     // Atomically increment first, then check — avoids TOCTOU race where
     // multiple concurrent upgrades could all pass a load-then-check.
     let prev = state.ws_connection_count.fetch_add(1, Ordering::Relaxed);

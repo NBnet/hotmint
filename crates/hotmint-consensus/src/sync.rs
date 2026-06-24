@@ -539,25 +539,23 @@ pub fn replay_blocks(
             block.app_hash
         };
 
-        // Handle epoch transitions — defer to start_view (H-7)
+        // Handle epoch transitions — defer to start_view (H-7). Chain onto the
+        // in-flight pending epoch (if any) so multiple updates committed within
+        // this replay batch accumulate identically to the live commit path;
+        // otherwise a synced node would derive a different validator set.
         if !response.validator_updates.is_empty() {
-            let new_vs = state
-                .current_epoch
-                .validator_set
-                .try_apply_updates(&response.validator_updates)
-                .map_err(|e| {
-                    eg!(
-                        "invalid validator updates while replaying height {}: {}",
-                        block.height.as_u64(),
-                        e
-                    )
-                })?;
-            let epoch_start = ViewNumber(block.view.as_u64() + 2);
-            pending_epoch = Some(Epoch::new(
-                state.current_epoch.number.next(),
-                epoch_start,
-                new_vs,
-            ));
+            pending_epoch = Some(
+                commit::chained_pending_epoch(
+                    state.current_epoch,
+                    pending_epoch.as_ref(),
+                    block.view,
+                    &response.validator_updates,
+                )
+                .c(d!(
+                    "invalid validator updates while replaying height {}",
+                    block.height.as_u64()
+                ))?,
+            );
         }
 
         *state.last_committed_height = block.height;

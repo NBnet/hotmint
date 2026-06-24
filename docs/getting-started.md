@@ -28,7 +28,9 @@ cargo build --workspace
 # run all tests
 cargo test --workspace
 
-# initialize and run a production node (connects to ABCI app via Unix socket)
+# initialize a local node and run it. `init` scaffolds a single-validator
+# genesis plus a fullnode config.toml; to run a validator against an ABCI app,
+# set mode = "validator" and proxy_app = "unix:///path/to/app.sock" first.
 cargo run --bin hotmint-node -- init
 cargo run --bin hotmint-node -- node
 ```

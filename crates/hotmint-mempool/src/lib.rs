@@ -212,12 +212,23 @@ impl Mempool {
         const MAX_SKIPPED: usize = 200;
 
         for entry in entries.iter().rev() {
-            // Byte limit: skip this tx if it doesn't fit, continue with smaller ones.
-            let Some(next_len) = payload
-                .len()
-                .checked_add(4)
-                .and_then(|len| len.checked_add(entry.tx.len()))
-            else {
+            let tx_frame = 4usize.saturating_add(entry.tx.len());
+
+            // A transaction larger than the whole block, or wanting more gas
+            // than an entire block allows, can never be included in any block.
+            // Skip it WITHOUT counting toward the skip cap, otherwise a cluster
+            // of such high-priority entries would `break` the scan and
+            // permanently starve fit-able lower-priority transactions.
+            if tx_frame > max_bytes {
+                continue;
+            }
+            if max_gas > 0 && entry.gas_wanted > max_gas {
+                continue;
+            }
+
+            // Byte limit: skip if it doesn't fit the remaining space. This is a
+            // "block nearly full" signal, so count it toward the bounded scan.
+            let Some(next_len) = payload.len().checked_add(tx_frame) else {
                 skipped += 1;
                 if skipped >= MAX_SKIPPED {
                     break;

@@ -280,6 +280,15 @@ pub(crate) async fn handle_request(
         }
     };
 
+    // General per-IP rate limit applied to every method (DoS protection).
+    // submit_tx and query enforce additional tighter limits in their branches.
+    {
+        let mut limiter = ip_limiter.lock().await;
+        if !limiter.allow(peer_ip) {
+            return RpcResponse::err(req.id, -32000, "rate limit exceeded".to_string());
+        }
+    }
+
     match req.method.as_str() {
         "status" => {
             let s = *state.status_rx.borrow();
@@ -295,17 +304,7 @@ pub(crate) async fn handle_request(
         }
 
         "submit_tx" => {
-            // Per-IP rate limiting (C-2: prevents bypass via multiple connections)
-            {
-                let mut limiter = ip_limiter.lock().await;
-                if !limiter.allow(peer_ip) {
-                    return RpcResponse::err(
-                        req.id,
-                        -32000,
-                        "rate limit exceeded for submit_tx".to_string(),
-                    );
-                }
-            }
+            // Rate limited by the general per-IP gate above.
             let Some(tx_hex) = req.params.as_str() else {
                 return RpcResponse::err(req.id, -32602, "params must be a hex string".to_string());
             };

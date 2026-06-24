@@ -1352,11 +1352,15 @@ impl ConsensusEngine {
             }
 
             ConsensusMessage::TimeoutCert(tc) => {
-                if self.pacemaker.should_relay_tc(&tc) {
+                let new_view = ViewNumber(tc.view.as_u64() + 1);
+                // Only relay TCs at or beyond our current view. `verify_message`
+                // skips signature verification for strictly-past messages, so
+                // relaying a past-view TC would amplify unverified/forged
+                // certificates across the network.
+                if new_view >= self.state.current_view && self.pacemaker.should_relay_tc(&tc) {
                     self.network
                         .broadcast(ConsensusMessage::TimeoutCert(tc.clone()));
                 }
-                let new_view = ViewNumber(tc.view.as_u64() + 1);
                 if new_view > self.state.current_view {
                     self.advance_view(ViewEntryTrigger::TimeoutCert(tc)).await;
                 }
@@ -1708,22 +1712,18 @@ impl ConsensusEngine {
             if response.validator_updates.is_empty() {
                 continue;
             }
-            let (base_number, base_validator_set) = if let Some(ref epoch) = pending_epoch {
-                (epoch.number, &epoch.validator_set)
-            } else {
-                (self.state.current_epoch.number, &self.state.validator_set)
-            };
-            let new_vs = base_validator_set
-                .try_apply_updates(&response.validator_updates)
-                .map_err(|e| {
-                    eg!(
-                        "invalid validator updates at committed height {}: {}",
-                        block.height.as_u64(),
-                        e
-                    )
-                })?;
-            let epoch_start = ViewNumber(block.view.as_u64() + 2);
-            pending_epoch = Some(Epoch::new(base_number.next(), epoch_start, new_vs));
+            pending_epoch = Some(
+                crate::commit::chained_pending_epoch(
+                    &self.state.current_epoch,
+                    pending_epoch.as_ref(),
+                    block.view,
+                    &response.validator_updates,
+                )
+                .c(d!(
+                    "invalid validator updates at committed height {}",
+                    block.height.as_u64()
+                ))?,
+            );
         }
         self.pending_epoch = pending_epoch;
         Ok(())

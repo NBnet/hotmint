@@ -6,9 +6,13 @@ use hotmint_types::validator::{ValidatorId, ValidatorSet};
 /// Tracks validator liveness within an epoch by counting missed commit-QC
 /// signatures.
 ///
-/// **Deterministic**: All nodes derive liveness data from committed QC signer
-/// bitfields stored on-chain, so the same set of offline validators is
-/// reported deterministically at epoch boundaries.
+/// **Determinism caveat**: liveness is recorded once per committed
+/// DoubleCertificate from its commit-QC signer bitfield. In steady state (one
+/// block per DC) this is one sample per height and agrees across nodes, but a
+/// node that fast-forwards or state-syncs a range commits multiple heights per
+/// DC (or replays without sampling), so its counts can differ. Applications
+/// that act on `offline_validators()` (downtime slashing) must therefore treat
+/// the result as advisory unless every node commits at the same granularity.
 pub struct LivenessTracker {
     /// Number of committed blocks each validator missed signing.
     missed: HashMap<ValidatorId, u64>,

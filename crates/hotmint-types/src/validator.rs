@@ -161,12 +161,16 @@ impl ValidatorSet {
         self.total_power
     }
 
-    /// Quorum threshold: ceil(2n/3) where n = total_power
+    /// Quorum threshold: the smallest integer strictly greater than 2/3 of
+    /// `total_power`, i.e. `floor(2n/3) + 1`. Strict majority (> 2/3, not ≥ 2/3)
+    /// is required so any two quorums intersect in honest power even when
+    /// `total_power` is divisible by 3.
     pub fn quorum_threshold(&self) -> u64 {
         self.total_power
             .checked_mul(2)
             .expect("total_power overflow in quorum_threshold")
-            .div_ceil(3)
+            / 3
+            + 1
     }
 
     /// Maximum faulty power: total_power - quorum_threshold
@@ -281,8 +285,19 @@ mod tests {
 
     #[test]
     fn test_quorum_3_equal() {
+        // total_power divisible by 3: quorum must be strictly > 2/3, i.e. 3
+        // (unanimity), tolerating 0 Byzantine. ceil(2n/3)=2 would let a single
+        // equivocator form two conflicting 2-of-3 QCs.
         let vs = make_vs(&[1, 1, 1]);
-        assert_eq!(vs.quorum_threshold(), 2);
+        assert_eq!(vs.quorum_threshold(), 3);
+        assert_eq!(vs.max_faulty_power(), 0);
+    }
+
+    #[test]
+    fn test_quorum_6_equal() {
+        // total_power divisible by 3: > 2/3 of 6 is 5, tolerating 1 Byzantine.
+        let vs = make_vs(&[1, 1, 1, 1, 1, 1]);
+        assert_eq!(vs.quorum_threshold(), 5);
         assert_eq!(vs.max_faulty_power(), 1);
     }
 

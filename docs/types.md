@@ -195,7 +195,7 @@ let vs = ValidatorSet::new(vec![
 ]);
 
 assert_eq!(vs.validator_count(), 4);
-assert_eq!(vs.quorum_threshold(), 3);    // ceil(2*4/3)
+assert_eq!(vs.quorum_threshold(), 3);    // floor(2*4/3) + 1 = strictly > 2/3
 assert_eq!(vs.max_faulty_power(), 1);    // floor((4-1)/3)
 
 // round-robin leader election

@@ -216,7 +216,7 @@ fn read_pid_file(path: &Path) -> Option<u32> {
     Some(pid)
 }
 
-fn process_command_line(pid: u32) -> Option<String> {
+pub(crate) fn process_command_line(pid: u32) -> Option<String> {
     let output = Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "command="])
         .output()
@@ -244,15 +244,41 @@ fn is_expected_node_process(pid: u32, home_dir: &Path) -> bool {
     let Some(name) = process_name(pid) else {
         return false;
     };
-    let executable_ok = name.contains("cluster-node") || name.contains("hotmint");
-    if !executable_ok {
+    if !(name.contains("cluster-node") || name.contains("hotmint")) {
         return false;
     }
 
     let Some(command) = process_command_line(pid) else {
         return false;
     };
-    command.contains("--home") && command.contains(home_dir.to_string_lossy().as_ref())
+    command_targets_home(&command, home_dir)
+}
+
+/// Returns true if `command` passes `--home <home_dir>` (or `--home=<home_dir>`)
+/// as an exact argument token. Matching the path token rather than a substring
+/// prevents `/base/v1` from matching a process running with `--home /base/v10`.
+pub(crate) fn command_targets_home(command: &str, home_dir: &Path) -> bool {
+    let mut tokens = command.split_whitespace();
+    while let Some(tok) = tokens.next() {
+        let candidate = if tok == "--home" {
+            tokens.next()
+        } else {
+            tok.strip_prefix("--home=")
+        };
+        if let Some(path) = candidate
+            && paths_equal(Path::new(path), home_dir)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn paths_equal(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => a == b,
+    }
 }
 
 /// Start cluster node processes with staggered startup to avoid

@@ -170,7 +170,8 @@ cargo build --workspace && cargo test --workspace
 # run the 4-node in-process demo
 cargo run --bin hotmint-demo
 
-# or initialize and run a production node
+# or scaffold a local node and run it (`init` writes a fullnode config;
+# set mode = "validator" and proxy_app in config.toml to run a validator)
 cargo run --bin hotmint-node -- init
 cargo run --bin hotmint-node -- node
 ```

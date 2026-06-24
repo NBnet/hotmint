@@ -88,18 +88,28 @@ fn is_running(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
-/// Verify a PID belongs to a cluster-node process (prevents killing unrelated processes
-/// if the PID was recycled after the node exited).
-fn is_cluster_node(pid: u32) -> bool {
-    // On macOS/BSD/Linux, check /proc or ps for the process name
-    process::Command::new("ps")
+/// Verify a PID belongs to *this* cluster-node process (prevents killing
+/// unrelated processes if the PID was recycled after the node exited). Both the
+/// executable name and the exact `--home` argument are checked.
+fn is_cluster_node(pid: u32, home_dir: &Path) -> bool {
+    // On macOS/BSD/Linux, check ps for the process name first.
+    let name_ok = process::Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "comm="])
         .output()
         .map(|out| {
             let name = String::from_utf8_lossy(&out.stdout);
             name.trim().contains("cluster-node") || name.trim().contains("hotmint")
         })
-        .unwrap_or(false)
+        .unwrap_or(false);
+    if !name_ok {
+        return false;
+    }
+    // Confirm the process was launched with THIS node's --home so a recycled
+    // PID belonging to a different node (e.g. v10 vs v1) is never signaled.
+    match crate::process_command_line(pid) {
+        Some(cmd) => crate::command_targets_home(&cmd, home_dir),
+        None => false,
+    }
 }
 
 mod libc {
@@ -174,7 +184,7 @@ pub fn stop(base_dir: &Path, node: Option<u32>) -> Result<()> {
 
     for v in &nodes {
         if let Some(pid) = read_pid(base_dir, v.id) {
-            if is_running(pid) && is_cluster_node(pid) {
+            if is_running(pid) && is_cluster_node(pid, Path::new(&v.home_dir)) {
                 // SAFETY: The pid has been validated by is_running() (process exists)
                 // and is_cluster_node() (confirmed to be a hotmint/cluster-node process).
                 // Signal 15 (SIGTERM) is a standard, catchable termination signal.

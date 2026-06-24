@@ -292,6 +292,20 @@ pub fn decode_request(buf: &[u8]) -> Result<Request, prost::DecodeError> {
 
 // ---- Protobuf encode/decode for Response ----
 
+/// Encode an application error into the wire `error` field.
+///
+/// An empty `error` string is the wire sentinel for "no error" (success), so a
+/// genuine `Err` carrying an empty message is mapped to a non-empty sentinel —
+/// otherwise the decoder would silently treat a failed, consensus-critical
+/// callback as success.
+fn encode_app_error<T>(result: &std::result::Result<T, String>) -> String {
+    match result {
+        Ok(_) => String::new(),
+        Err(msg) if msg.is_empty() => "unspecified application error".to_string(),
+        Err(msg) => msg.clone(),
+    }
+}
+
 pub fn encode_response(resp: &Response) -> Vec<u8> {
     let proto_resp = match resp {
         Response::Info(info) => pb::Response {
@@ -306,7 +320,7 @@ pub fn encode_response(resp: &Response) -> Vec<u8> {
                     .ok()
                     .map(|hash| hash.0.to_vec())
                     .unwrap_or_default(),
-                error: result.as_ref().err().cloned().unwrap_or_default(),
+                error: encode_app_error(result),
             })),
         },
         Response::CreatePayload(payload) => pb::Response {
@@ -336,24 +350,24 @@ pub fn encode_response(resp: &Response) -> Vec<u8> {
             response: Some(pb::response::Response::ExecuteBlock(
                 pb::ExecuteBlockResponse {
                     result: result.as_ref().ok().map(|r| r.into()),
-                    error: result.as_ref().err().cloned().unwrap_or_default(),
+                    error: encode_app_error(result),
                 },
             )),
         },
         Response::OnCommit(result) => pb::Response {
             response: Some(pb::response::Response::OnCommit(pb::OnCommitResponse {
-                error: result.as_ref().err().cloned().unwrap_or_default(),
+                error: encode_app_error(result),
             })),
         },
         Response::OnEvidence(result) => pb::Response {
             response: Some(pb::response::Response::OnEvidence(pb::OnEvidenceResponse {
-                error: result.as_ref().err().cloned().unwrap_or_default(),
+                error: encode_app_error(result),
             })),
         },
         Response::OnOfflineValidators(result) => pb::Response {
             response: Some(pb::response::Response::OnOfflineValidators(
                 pb::OnOfflineValidatorsResponse {
-                    error: result.as_ref().err().cloned().unwrap_or_default(),
+                    error: encode_app_error(result),
                 },
             )),
         },
