@@ -2,7 +2,7 @@
 
 IPC protocol benchmark for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
-Measures the overhead of the ABCI IPC layer (Unix socket + CBOR framing) by running consensus with an out-of-process application handler.
+Measures the overhead of the ABCI IPC layer (Unix socket + length-prefixed protobuf framing) by running consensus with an out-of-process application handler.
 
 ## Run
 

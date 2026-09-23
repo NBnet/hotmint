@@ -413,7 +413,7 @@
 ## Won't Fix
 
 ### [HIGH] light: BlockHeader fields not cryptographically bound to QC-verified hash
-- **Where**: crates/hotmint-light/src/lib.rs:87-93
+- **Where**: crates/hotmint-light/src/lib.rs:149-156,196-198
 - **What**: verify_header checks qc.block_hash == header.hash but never verifies header fields produce that hash. Block::compute_hash() mixes in payload and evidence which BlockHeader omits. An attacker with a valid QC can craft a BlockHeader with arbitrary field values (e.g. forged app_hash) and set header.hash to the real hash.
 - **Reason**: Requires architectural redesign — either adding a fields_hash to Block/BlockHeader and restructuring compute_hash() as hash(header_fields_hash || payload_hash || evidence_hash), or carrying the full payload/evidence hashes in BlockHeader. Both approaches change the block serialization format and affect many subsystems. Tracked for a future protocol version.
 
@@ -456,7 +456,7 @@
 
 ## Resolved — Round 3 (2026-04-07)
 
-> **Scope:** Full codebase (~16K LOC), all crates
+> **Scope:** Full codebase at this round's base commit (~16K LOC), all crates
 > **Findings:** 12 total (0 critical, 5 high, 5 medium, 2 low)
 
 | Subsystem | Findings | Severity |
@@ -522,7 +522,7 @@
 ### [x] A3-11. ValidatorId Not Derived From Public Key `[LOW — Staking]`
 - **Where:** `crates/hotmint/src/bin/node.rs` — ValidatorId lookup
 - **What:** ValidatorId assigned manually via flag, not derived from public key hash.
-- **Fix:** Derive ValidatorId from public key hash at registration time.
+- **Superseded:** the later Won't Fix entry 'register_validator accepts caller-supplied ValidatorId not bound to the public key' records the accepted design; ids remain caller-supplied and no derivation exists in the code.
 
 ### [x] A3-12. Missing SAFETY Comments on Unsafe Blocks `[LOW — Mgmt]`
 - **Where:** `crates/hotmint-mgmt/src/local.rs` — two `libc::kill` blocks
@@ -548,7 +548,7 @@
 
 ## Resolved — Round 4 (2026-04-12)
 
-> **Scope:** Full codebase (~16K LOC), all crates
+> **Scope:** Full codebase at this round's base commit (~16K LOC), all crates
 > **Base Commit:** `4044a24` (v0.8.6)
 > **Findings:** 8 total (0 critical, 1 high, 0 medium, 7 low)
 

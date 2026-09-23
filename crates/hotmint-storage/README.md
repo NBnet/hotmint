@@ -13,6 +13,8 @@ Implements the `BlockStore` trait from `hotmint-consensus` using [vsdb](https://
 |:----------|:------------|
 | `VsdbBlockStore` | Persistent block storage backed by vsdb `MapxOrd` |
 | `PersistentConsensusState` | Persists view number, locked QC, highest QC, committed height |
+| `ConsensusWal` | Write-ahead log for commit crash recovery |
+| `PersistentEvidenceStore` | Persistent equivocation-evidence storage |
 
 ## Usage
 
@@ -22,11 +24,16 @@ Implements the `BlockStore` trait from `hotmint-consensus` using [vsdb](https://
 use hotmint_consensus::store::BlockStore;
 use hotmint_storage::block_store::VsdbBlockStore;
 
-let store = VsdbBlockStore::new();
+// must be called after `vsdb_set_base_dir`
+let store = VsdbBlockStore::open(&data_dir)?;
 // genesis block is inserted automatically
+//
+// for unit tests, use the in-memory, test-only variant instead:
+// let store = VsdbBlockStore::new();
 
 // use as a drop-in replacement for MemoryBlockStore
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 let shared_store = Arc::new(RwLock::new(Box::new(store) as Box<dyn BlockStore>));
 let engine = ConsensusEngine::new(
@@ -42,7 +49,7 @@ let engine = ConsensusEngine::new(
 use hotmint_consensus::state::ConsensusState;
 use hotmint_storage::consensus_state::PersistentConsensusState;
 
-let pstate = PersistentConsensusState::new();
+let pstate = PersistentConsensusState::open(&data_dir)?;
 
 // restore after restart
 let mut state = ConsensusState::new(vid, validator_set);
@@ -66,7 +73,10 @@ The storage backends explicitly use the default vsdb namespace configured by
 `vsdb_set_base_dir`. Their sidecar metadata continues to store 64-bit map IDs;
 ambient namespace scopes do not change where these backends create collections.
 
-vsdb stores data in the process working directory by default. Configure a custom location via environment variable or programmatically:
+vsdb does not store data in the process working directory: it resolves the
+location from `$VSDB_BASE_DIR`, falling back to `$HOME/.vsdb`, and finally to a
+process-private temporary directory. Configure a custom location via environment
+variable or programmatically:
 
 ```bash
 export VSDB_BASE_DIR=/var/lib/hotmint/data

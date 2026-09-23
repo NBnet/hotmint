@@ -15,9 +15,11 @@ hotmint/
 │   ├── hotmint-network/           # P2P networking (litep2p)
 │   ├── hotmint-mempool/           # priority mempool with RBF and gas accounting
 │   ├── hotmint-abci/              # IPC proxy for out-of-process apps
+│   ├── hotmint-abci-proto/        # generated protobuf definitions for the ABCI IPC protocol
 │   ├── hotmint-api/               # HTTP/WebSocket/TCP JSON-RPC API
 │   ├── hotmint-staking/           # staking: validator registration, delegation, slashing, rewards
 │   ├── hotmint-light/             # light client: header verification, validator set tracking
+│   ├── hotmint-mgmt/              # cluster management: init, start, stop, deploy (local + SSH)
 │   └── hotmint/                   # top-level library facade
 └── docs/
 ```
@@ -25,19 +27,20 @@ hotmint/
 ## Dependency Graph
 
 ```
-hotmint (library facade — re-exports everything)
-  ├── hotmint-consensus ──> hotmint-types
+hotmint (library facade — re-exports types, crypto, consensus, storage, network,
+         mempool, abci, api and staking; does not re-export hotmint-light)
+  ├── hotmint-consensus ──> hotmint-types, hotmint-crypto
   ├── hotmint-crypto    ──> hotmint-types
-  ├── hotmint-storage   ──> hotmint-consensus, vsdb
-  ├── hotmint-network   ──> hotmint-consensus, litep2p
-  ├── hotmint-abci      ──> hotmint-consensus, hotmint-types
+  ├── hotmint-storage   ──> hotmint-types, hotmint-consensus, vsdb
+  ├── hotmint-network   ──> hotmint-types, hotmint-consensus, litep2p
+  ├── hotmint-abci      ──> hotmint-types, hotmint-consensus, hotmint-abci-proto
   ├── hotmint-staking   ──> hotmint-types
   ├── hotmint-light     ──> hotmint-types, hotmint-crypto
   ├── hotmint-mempool   (standalone, no consensus/network/storage deps)
-  └── hotmint-api       ──> hotmint-mempool, hotmint-consensus, hotmint-network, hotmint-light
+  └── hotmint-api       ──> hotmint-types, hotmint-crypto, hotmint-consensus, hotmint-mempool, hotmint-network, hotmint-light
 ```
 
-Key design rule: **the consensus engine has no dependency on any concrete networking or storage crate**. It communicates with the outside world exclusively through trait objects (`Box<dyn BlockStore>`, `Box<dyn NetworkSink>`, `Box<dyn Application>`, `Box<dyn Signer>`), connected via `tokio::mpsc` channels.
+Key design rule: **the consensus engine has no dependency on any concrete networking or storage crate**. It communicates with the outside world exclusively through trait objects (`Box<dyn BlockStore>`, `Box<dyn NetworkSink>`, `Box<dyn Application>`, `Box<dyn Signer>`, `Box<dyn Verifier>`), plus optional `StatePersistence`, `EvidenceStore` and `Wal` handles supplied through `EngineConfig`; inbound messages arrive on a `tokio::mpsc` channel. The block store itself is handed over as `SharedBlockStore = Arc<parking_lot::RwLock<Box<dyn BlockStore>>>` so the node can share it with the API layer.
 
 ## Crate Responsibilities
 
@@ -81,7 +84,7 @@ Also defines the pluggable trait interfaces:
 - `NetworkSink` — message transport
 - `Application` — ABCI-like application lifecycle
 
-Each trait includes an in-memory/no-op stub implementation for development use. The `hotmint-abci` crate provides `IpcApplicationClient`, which implements `Application` by forwarding calls over a Unix domain socket to an out-of-process application.
+`BlockStore` ships `MemoryBlockStore` and `Application` ships `NoopApplication` for development use; `NetworkSink` has no library stub (the only in-crate implementation is the test-only `DevNullNetwork`, and production uses `Litep2pNetworkSink` from `hotmint-network`). The `hotmint-abci` crate provides `IpcApplicationClient`, which implements `Application` by forwarding calls over a Unix domain socket to an out-of-process application.
 
 ### hotmint-abci
 
@@ -108,8 +111,9 @@ Real P2P networking using litep2p:
 - `Litep2pNetworkSink` — implements `NetworkSink` for production use
 - `PeerMap` — bidirectional `ValidatorId ↔ PeerId` mapping
 
-Uses four sub-protocols:
+Uses five sub-protocols:
 - `/hotmint/consensus/notif/1` — notification protocol for broadcast
+- `/hotmint/mempool/notif/1` — notification protocol for transaction gossip
 - `/hotmint/consensus/reqresp/1` — request-response protocol for directed messages
 - `/hotmint/sync/1` — request-response protocol for block synchronization
 - `/hotmint/pex/1` — peer exchange protocol for peer discovery
@@ -133,7 +137,7 @@ HTTP/WebSocket/TCP JSON-RPC server:
 - `RpcServer` — TCP-based JSON-RPC server (newline-delimited)
 - Event subscription via WebSocket with `SubscribeFilter` (event types, height range, tx hash)
 - Methods: `status`, `submit_tx`, `get_block`, `get_block_by_hash`, `get_header`, `get_commit_qc`, `get_tx`, `get_block_results`, `get_validators`, `get_epoch`, `get_peers`, `query`, `verify_header`
-- Per-IP rate limiting on `submit_tx`
+- Per-IP token-bucket rate limiting on every method (100 req/s), with a tighter 50 req/s bucket for `query`
 
 ### hotmint-staking
 
@@ -154,7 +158,7 @@ Light client verification:
 
 ## Core Trait Abstractions
 
-The four pluggable traits define the boundary between the consensus engine and the outside world:
+The four pluggable traits below define the boundary between the consensus engine and the outside world; a fifth, `Verifier`, is required in `EngineConfig` (`EngineConfig::new(verifier)` — nodes pass `Ed25519Verifier`):
 
 ```rust
 // Cryptographic signing — swap implementations without touching consensus
@@ -184,6 +188,10 @@ trait BlockStore: Send + Sync {
 trait NetworkSink: Send + Sync {
     fn broadcast(&self, msg: ConsensusMessage);
     fn send_to(&self, target: ValidatorId, msg: ConsensusMessage);
+    // The three below have default no-op bodies for test stubs.
+    fn on_epoch_change(&self, epoch: EpochNumber, new_validator_set: &ValidatorSet);
+    fn broadcast_evidence(&self, proof: &EquivocationProof);
+    fn broadcast_tx(&self, tx_bytes: Vec<u8>);
 }
 
 // Application lifecycle — your business logic

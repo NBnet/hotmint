@@ -56,7 +56,7 @@ For each HIGH or CRITICAL change, perform deep analysis:
 - **Agreement**: No two honest nodes commit different blocks at the same height
 - **Validity**: Every committed block was proposed by a valid leader
 - **Locked QC rule**: Vote only for blocks extending locked block, or with QC.view > locked_view
-- **2f+1 threshold**: QCs and TCs require exactly 2f+1 distinct valid signatures
+- **Quorum threshold**: QCs and TCs require voting power strictly greater than 2/3 — `floor(total_power * 2 / 3) + 1` (crates/hotmint-types/src/validator.rs:168). A single validator holding > 2/3 of the power alone forms a quorum; 2f+1 is only the equal-power shorthand
 - **Domain separation**: Every signed message includes chain_id + epoch + view
 - **Commit finality**: Once a DC is formed, the block and all ancestors are final
 
@@ -64,7 +64,7 @@ For each HIGH or CRITICAL change, perform deep analysis:
 - **View progress**: Every honest node eventually advances to a new view
 - **Timeout escalation**: Pacemaker timeout increases monotonically until cap
 - **Sync convergence**: A lagging node eventually catches up
-- **TC advancement**: 2f+1 timeouts trigger view advance without leader proposal
+- **TC advancement**: wishes covering more than 2/3 of the voting power trigger view advance without leader proposal
 
 **Persistence invariants:**
 - **Crash atomicity**: Consensus state is persisted before commit returns

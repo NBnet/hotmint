@@ -25,7 +25,7 @@ pub trait Verifier: Send + Sync {
 }
 ```
 
-`verify_aggregate` checks an `AggregateSignature` against the validator set — it iterates over the bitfield, retrieves each signer's public key from the `ValidatorSet`, and verifies their individual signature.
+`verify_aggregate` checks an `AggregateSignature` against the validator set — it walks the signer bitfield, pairs each set bit with the corresponding validator's public key and the next signature in index order, then verifies them all in one pass with ed25519-dalek's batch verifier. A mismatch between the number of set bits and the number of signatures is rejected.
 
 ## Ed25519 Implementation
 
@@ -102,7 +102,7 @@ let hash = compute_block_hash(&block);
 let hash = block.compute_hash();
 ```
 
-The hash covers all block fields except the hash itself: `height || parent_hash || view || proposer || payload`.
+The hash covers every block field except the hash itself: `height || parent_hash || view || proposer || timestamp || app_hash || evidence || payload`, with variable-length items (payload, signatures, vote extensions) length-prefixed as little-endian u64. See [wire-protocol.md](wire-protocol.md#4-block-hash-computation) for the exact byte layout.
 
 ## Implementing a Custom Signer
 
@@ -110,6 +110,7 @@ To use a different signature scheme (e.g., BLS, ECDSA), implement the `Signer` a
 
 ```rust
 use hotmint::prelude::*;
+use hotmint::types::PublicKey;
 
 struct MySigner {
     secret_key: MySecretKey,
@@ -161,4 +162,4 @@ impl Verifier for MyVerifier {
 }
 ```
 
-Then pass `Box::new(MySigner { ... })` to `ConsensusEngine::new()`.
+Then pass `Box::new(MySigner { ... })` to `ConsensusEngine::new()` (or `.signer(...)` on `ConsensusEngineBuilder`), alongside a `Verifier` — the two traits are separate, so a custom scheme normally implements both.

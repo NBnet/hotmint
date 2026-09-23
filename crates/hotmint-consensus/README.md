@@ -26,7 +26,7 @@ ConsensusEngine
 |:------|:--------|:--------------|
 | `Application` | ABCI-like app lifecycle | `NoopApplication` |
 | `BlockStore` | Block persistence | `MemoryBlockStore` |
-| `NetworkSink` | Message transport + tx gossip | `Litep2pNetworkSink` |
+| `NetworkSink` | Message transport + tx gossip | `DevNullNetwork` (test-only; `Litep2pNetworkSink` lives in `hotmint-network`) |
 
 ## Key Design Points
 

@@ -45,13 +45,13 @@ Hotmint is not just a consensus engine. It is the foundation for a **next-genera
 
 ### Phase 1 — Production-Ready AppChain Engine *(complete)*
 
-A battle-hardened BFT consensus engine that any Rust developer can embed to build application-specific blockchains, with the same ABCI-style ergonomics that made Tendermint successful — but with lower latency, stronger type safety, and zero C/C++ dependencies in the critical path.
+A battle-hardened BFT consensus engine that any Rust developer can embed to build application-specific blockchains, with the same ABCI-style ergonomics that made Tendermint successful — but with lower latency, stronger type safety, and no C/C++ dependencies in the consensus state machine, crypto, or storage stack (only the P2P codec links zstd, for payload compression).
 
-### Phase 2 — EVM-Compatible Chain *(complete — lives in [nbnet](https://github.com/rust-util-collections/nbnet))*
+### Phase 2 — EVM-Compatible Chain *(complete — lives in [nbnet](https://github.com/NBnet/nbnet))*
 
 A production-grade EVM-compatible chain built on Hotmint consensus. Extracted into its own repository:
 
-- **[nbnet](https://github.com/rust-util-collections/nbnet)** — Ethereum-compatible chain: revm execution, Ethereum JSON-RPC, EVM tx pool, custom precompiles
+- **[nbnet](https://github.com/NBnet/nbnet)** — Ethereum-compatible chain: revm execution, Ethereum JSON-RPC, EVM tx pool, custom precompiles
 - **[alloy](https://github.com/alloy-rs)** — modern Ethereum primitives, RLP codec, and Web3 RPC types
 - **AI-ported [Substrate Pallets](https://github.com/niccolocorsini/polkadot-sdk/tree/master/substrate/frame)** — battle-tested economic models (staking, governance, multi-asset) ported into Hotmint's `std + vsdb + serde` environment
 
@@ -78,7 +78,7 @@ Unlike frameworks that aggregate third-party C/C++ components for their most cri
 
 ### 🔷 Consensus — Hotmint *(this project)*
 
-HotStuff-2 two-chain commit protocol, implemented from scratch. The consensus state machine has **zero I/O dependencies** — all storage, networking, and application logic is injected through four pluggable traits. Domain-separated signing (`chain_id_hash + epoch + view + block_hash`) prevents all cross-chain, cross-epoch, and cross-message replay attacks.
+HotStuff-2 two-chain commit protocol, implemented from scratch. The consensus state machine has **zero I/O dependencies** — all storage, networking, and application logic is injected through four pluggable traits (`BlockStore`, `NetworkSink`, `Application`, `Signer`; a `Verifier` is supplied alongside them). Domain-separated signing (`domain_tag + chain_id_hash + epoch + view + validator_id + block_hash + vote_type + extension digest`) prevents all cross-chain, cross-epoch, and cross-message replay attacks.
 
 ### 🔷 Storage — [vsdb](https://github.com/rust-util-collections/vsdb) + [mmdb](https://github.com/rust-util-collections/mmdb)
 
@@ -109,7 +109,7 @@ Chained error tracing library, also independently developed. Provides rich error
 Hotmint implements the HotStuff-2 two-chain commit protocol ([arXiv:2301.03253](https://arxiv.org/abs/2301.03253)):
 
 ```
-Block  ←──  QC (2f+1 votes)  ←──  Double Cert (2f+1 votes on QC)  ──→  Commit
+Block  ←──  QC (>2/3 of voting power)  ←──  Double Cert (QC + >2/3 votes on it)  ──→  Commit
 ```
 
 Each view follows a 5-step protocol:
@@ -132,15 +132,16 @@ Enter  →  Propose  →  Vote  →  Prepare (QC)  →  Vote2  →  [DC triggers
 
 | Crate | Description |
 |:------|:------------|
-| [hotmint](https://crates.io/crates/hotmint) | Library facade — re-exports all crates; includes `hotmint-node` binary |
+| [hotmint](https://crates.io/crates/hotmint) | Library facade — re-exports types, crypto, consensus, storage, network, mempool, abci, api and staking; includes the `hotmint-node` binary |
 | [hotmint-types](https://crates.io/crates/hotmint-types) | Core data types: Block, QC, DC, TC, Vote, ValidatorSet, Epoch |
 | [hotmint-crypto](https://crates.io/crates/hotmint-crypto) | Ed25519 signing + batch verification, Blake3 hashing |
 | [hotmint-consensus](https://crates.io/crates/hotmint-consensus) | Consensus state machine: engine, pacemaker, vote collector, sync |
 | [hotmint-storage](https://crates.io/crates/hotmint-storage) | Persistent storage backends (vsdb) |
-| [hotmint-network](https://crates.io/crates/hotmint-network) | P2P networking (litep2p): 4 sub-protocols (consensus, reqresp, sync, PEX) |
+| [hotmint-network](https://crates.io/crates/hotmint-network) | P2P networking (litep2p): 5 sub-protocols (consensus notif, mempool notif, consensus reqresp, sync, PEX) |
 | [hotmint-mempool](https://crates.io/crates/hotmint-mempool) | Priority mempool with RBF, gas-aware selection, deduplication |
 | [hotmint-api](https://crates.io/crates/hotmint-api) | HTTP/WebSocket JSON-RPC + TCP JSON-RPC server |
 | [hotmint-abci](https://crates.io/crates/hotmint-abci) | IPC proxy for out-of-process apps (Unix socket + protobuf) |
+| [hotmint-abci-proto](https://crates.io/crates/hotmint-abci-proto) | Generated protobuf definitions for the ABCI IPC protocol |
 | [hotmint-staking](https://crates.io/crates/hotmint-staking) | Staking toolkit: validator registration, delegation, slashing, rewards |
 | [hotmint-light](https://crates.io/crates/hotmint-light) | Light client: header verification and validator set tracking |
 | [hotmint-mgmt](https://crates.io/crates/hotmint-mgmt) | Cluster management library: init, start, stop, deploy (local + SSH) |
@@ -153,9 +154,11 @@ The consensus engine is fully decoupled from all I/O through pluggable traits:
 |:------|:--------|:-------------------------|
 | `Application` | ABCI-like app lifecycle | `NoopApplication`, `IpcApplicationClient` |
 | `BlockStore` | Block persistence | `MemoryBlockStore`, `VsdbBlockStore` |
-| `NetworkSink` | Message transport | `Litep2pNetworkSink` |
-| `MempoolAdapter` | Pluggable transaction pool | `Mempool` (priority-based) |
+| `NetworkSink` | Message transport | `Litep2pNetworkSink` (in `hotmint-network`) |
 | `Signer` | Cryptographic signing | `Ed25519Signer` |
+| `Verifier` | Individual and aggregate signature verification | `Ed25519Verifier` |
+
+`MempoolAdapter` — the interface to the priority mempool — is wired up by the node binary rather than injected into the consensus engine.
 
 📖 **[Architecture →](docs/architecture.md)** · **[Core types →](docs/types.md)** · **[Wire protocol →](docs/wire-protocol.md)**
 
@@ -167,7 +170,7 @@ The consensus engine is fully decoupled from all I/O through pluggable traits:
 # build and test
 cargo build --workspace && cargo test --workspace
 
-# run the 4-node in-process demo
+# run the 4-node demo (spawns four cluster-node processes in a temp dir)
 cargo run --bin hotmint-demo
 
 # or scaffold a local node and run it (`init` writes a fullnode config;
@@ -184,9 +187,9 @@ cargo run --bin hotmint-node -- node
 
 | Example | Description | Run |
 |:--------|:------------|:----|
-| [demo](examples/demo) | Minimal 4-node cluster with a counting app | `cargo run --bin hotmint-demo` |
-| [utxo-chain](examples/utxo-chain) | Bitcoin-style UTXO chain with ed25519 sigs + SMT proofs | `cargo run --bin hotmint-utxo-chain` |
-| [cluster-node](examples/cluster-node) | Production-style P2P node with persistent storage, sync, PEX | `cargo run --bin hotmint-cluster-node` |
+| [demo](examples/demo) | Minimal 4-node cluster: starts four `cluster-node` processes and polls their RPC status | `cargo run --bin hotmint-demo` |
+| [utxo-chain](examples/utxo-chain) | Bitcoin-style UTXO application with ed25519 sigs + SMT proofs (library; not yet wired into a node binary) | `cargo run --bin utxo-chain-example` |
+| [cluster-node](examples/cluster-node) | Production-style P2P node with persistent storage, sync, PEX | `cargo run --bin cluster-node` |
 | [bench-consensus](examples/bench-consensus) | Raw consensus throughput benchmark | `make bench-consensus` |
 | [bench-ipc](examples/bench-ipc) | ABCI IPC overhead benchmark (Unix socket + protobuf) | `make bench-ipc` |
 
@@ -209,7 +212,7 @@ Add `hotmint` as a dependency:
 [dependencies]
 hotmint = "0.8"
 tokio = { version = "1", features = ["full"] }
-ruc = "9.3"
+ruc = "11.0.1"
 ```
 
 Implement the `Application` trait — all methods have default no-op implementations:
@@ -237,7 +240,7 @@ impl Application for MyApp {
 Build a cluster and run:
 
 ```rust
-// see examples/demo for the complete working code
+// see examples/cluster-node for the complete working code
 let engine = ConsensusEngine::new(state, store, network, app, signer, rx, config);
 tokio::spawn(async move { engine.run().await });
 ```
@@ -286,7 +289,7 @@ Three deployment modes — all interoperable in the same cluster:
 | [Mempool & API](docs/mempool-api.md) | Priority mempool, JSON-RPC (TCP + HTTP + WebSocket) |
 | [Metrics](docs/metrics.md) | Prometheus metrics, health interpretation, Grafana queries |
 | [Wire Protocol](docs/wire-protocol.md) | Codec framing, postcard format, ABCI IPC protocol, block hash spec |
-| [Security Audit & Roadmap](docs/audit.md) | Security audit findings and resolution history |
+| [Security Audit](docs/audit.md) | Audit findings and resolution history |
 
 ---
 

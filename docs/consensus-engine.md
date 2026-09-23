@@ -25,6 +25,9 @@ pub struct ConsensusEngine {
     liveness_tracker: LivenessTracker,
     wal: Option<Box<dyn Wal>>,
     msg_rate_limiter: HashMap<ValidatorId, (Instant, u32)>,
+    /// Previous epoch's validator set, retained for verifying in-flight
+    /// messages (especially TCs) formed before the epoch transition.
+    previous_epoch: Option<Epoch>,
 }
 ```
 
@@ -53,7 +56,7 @@ let engine = ConsensusEngineBuilder::new()
     .expect("all required fields must be set");
 ```
 
-The `msg_rx` channel is the engine's sole input. All consensus messages — whether from the network or from loopback — arrive through this channel as `(Option<sender_id>, message)` tuples. The sender is `Some(ValidatorId)` for authenticated validators and `None` for unknown/unauthenticated peers.
+The `msg_rx` channel is the engine's sole input. All consensus messages — whether from the network or from loopback — arrive through this channel as `(Option<sender_id>, message)` tuples. The sender is `Some(ValidatorId)` for authenticated validators; `NetworkService` drops messages from unknown peers before they reach the channel, so `None` only ever comes from a custom sink that passes its own admission checks first.
 
 ## Running
 
@@ -66,12 +69,17 @@ The event loop:
 
 ```rust
 loop {
+    let deadline = self.pacemaker.sleep_until_deadline();
+    tokio::pin!(deadline);
+
     tokio::select! {
         Some((sender, msg)) = self.msg_rx.recv() => {
-            self.handle_message(sender, msg);
+            if let Err(e) = self.handle_message(sender, msg).await {
+                warn!(error = %e, "error handling message");
+            }
         }
-        _ = self.pacemaker.sleep_until_deadline() => {
-            self.handle_timeout();
+        _ = &mut deadline => {
+            self.handle_timeout().await;
         }
     }
 }
@@ -89,7 +97,6 @@ pub struct ConsensusState {
     /// to prevent cross-chain signature replay.
     pub chain_id_hash: [u8; 32],
     pub current_view: ViewNumber,
-    pub current_epoch: Epoch,
     pub role: ViewRole,               // Leader or Replica
     pub step: ViewStep,               // progress within the current view
     pub locked_qc: Option<QuorumCertificate>,
@@ -97,6 +104,9 @@ pub struct ConsensusState {
     pub highest_qc: Option<QuorumCertificate>,
     pub last_committed_height: Height,
     pub last_app_hash: BlockHash,     // state root after executing the most recently committed block
+    pub current_epoch: Epoch,
+    /// Vote extensions gathered for the next proposal (ABCI++).
+    pub pending_vote_extensions: Vec<(ValidatorId, Vec<u8>)>,
 }
 ```
 
@@ -139,13 +149,13 @@ Tracks progress through the view protocol:
 pub enum ViewStep {
     Entered,             // just entered the view
     WaitingForStatus,    // leader: waiting for replica status messages
-    Proposed,            // leader: proposal sent
+    Proposed,            // declared but never assigned — the leader moves to CollectingVotes
     WaitingForProposal,  // replica: waiting for leader's proposal
     Voted,               // replica: sent phase-1 vote
     CollectingVotes,     // leader: collecting phase-1 votes
     Prepared,            // leader: QC formed, Prepare sent
     SentVote2,           // replica: sent phase-2 vote
-    Done,                // view protocol complete
+    Done,                // declared but never assigned — no code path marks a view complete
 }
 ```
 
@@ -171,7 +181,7 @@ VoteMsg ──> vote_collector::add_vote()
          ──> broadcast Prepare{QC}
 ```
 
-The leader aggregates votes. When 2f+1 are collected, a QC is formed and broadcast in a Prepare message.
+The leader aggregates votes. Once the aggregate covers more than 2/3 of the voting power, a QC is formed and broadcast in a Prepare message.
 
 ### Prepare
 
@@ -202,7 +212,7 @@ Wish ──> pacemaker::add_wish()
 ### TimeoutCert
 
 ```
-TimeoutCert ──> advance to TC's target view
+TimeoutCert ──> advance to view `tc.view + 1`
              ──> relay TC to other validators (if not seen before)
 ```
 
@@ -213,20 +223,33 @@ StatusCert ──> leader collects status from replicas
             ──> when enough received: try_propose()
 ```
 
+### Evidence
+
+```
+Evidence ──> look the accused validator up in the current validator set
+         ──> reject if the two block hashes are identical
+         ──> rebuild Vote::signing_bytes (using the proof's own epoch) and verify both signatures
+         ──> persist in the EvidenceStore and flush immediately
+```
+
+Evidence arrives as `ConsensusMessage::Evidence(EquivocationProof)`. Anything that fails a
+check — unknown validator, identical block hashes, invalid signatures — is dropped with a
+warning and has no local effect. Evidence the node detects itself takes the other path
+(`handle_equivocation`): store, flush, and `broadcast_evidence` to peers.
+
 ## Vote Collection
 
 The `VoteCollector` manages vote aggregation for both phases:
 
 ```rust
 pub struct VoteCollector {
-    // phase-1 votes: view -> block_hash -> votes
-    // phase-2 votes: view -> qc_block_hash -> votes
+    // (epoch, view, block_hash, vote_type) -> votes
 }
 ```
 
-When a quorum (2f+1 weighted votes) is reached:
+When a quorum (more than 2/3 of the voting power) is reached:
 - Phase 1: forms a `QuorumCertificate` with an `AggregateSignature`
-- Phase 2: forms a `DoubleCertificate`
+- Phase 2: forms the outer QC; the engine pairs it with the view's inner QC to assemble the `DoubleCertificate`
 
 The collector prunes stale votes for old views to prevent memory growth.
 
@@ -238,11 +261,12 @@ When a double certificate is formed:
 2. Walk the chain from the committed block backward to `last_committed_height + 1`
 3. **WAL: log commit intent** (if WAL is configured)
 4. For each block in ascending height order:
+   - `app.on_evidence(proof)` once per embedded proof, before anything else
    - Decode payload into transactions
-   - `app.execute_block(txs, ctx)` (where `txs` is `&[&[u8]]` and `ctx` is a `BlockContext` with height, view, proposer, epoch, epoch_start_view, validator_set, vote_extensions; returns `EndBlockResponse` which may contain validator updates, events, and app_hash)
+   - `app.execute_block(txs, ctx)` (where `txs` is `&[&[u8]]` and `ctx` is a `BlockContext` with height, view, proposer, epoch, epoch_start_view, validator_set, timestamp, vote_extensions; returns `EndBlockResponse` which may contain validator updates, events, and app_hash)
    - `app.on_commit(block, ctx)`
    - Store commit QC, tx index, and block results in the block store
-   - Record QC signers in the `LivenessTracker` for offline detection
+   - Record the commit QC's signer bitfield in the `LivenessTracker` (one sample per DoubleCertificate) for offline detection
 5. Update `last_committed_height` and persist consensus state
 6. **WAL: log commit done** (triggers WAL truncation)
 7. At epoch boundaries: query `LivenessTracker::offline_validators()` and call `app.on_offline_validators()`
@@ -251,9 +275,9 @@ When a double certificate is formed:
 
 The pacemaker manages view timeouts independently of message processing:
 
-- **Base timeout**: 2 seconds
-- **Backoff**: 1.5× per consecutive timeout, capped at 30 seconds
-- **Reset**: on any successful view transition (QC formed, commit, etc.)
+- **Base timeout**: 2 seconds (`BASE_TIMEOUT_MS`)
+- **Backoff**: 1.5× per consecutive timeout, capped at 30 seconds (`MAX_TIMEOUT_MS`)
+- **Reset**: only when a view advance is driven by a `DoubleCert` (`Pacemaker::reset_on_progress`). TC-driven advances call `reset_timer()`, which restarts the timer but keeps the consecutive-timeout count, so backoff survives repeated view changes.
 
 On timeout, the engine:
 1. Builds and broadcasts a `Wish` message

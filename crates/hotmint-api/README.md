@@ -14,6 +14,13 @@ Provides a TCP-based newline-delimited JSON-RPC server and an HTTP/WebSocket ser
 | `status` | Node status (view, height, epoch, mempool size) | `StatusInfo` |
 | `submit_tx` | Submit hex-encoded transaction to mempool + gossip to peers | `TxResult { accepted }` |
 | `get_block` | Query block by height | `BlockInfo` |
+| `get_block_by_hash` | Query block by 32-byte Blake3 hash (hex) | `BlockInfo` |
+| `get_header` | Block header by height (lightweight, no payload) | `HeaderInfo` |
+| `get_commit_qc` | Commit QC stored at a height (block hash, view, signer count, epoch) | `CommitQcInfo` |
+| `get_block_results` | End-block results at a height (events, tx hashes, app hash) | `BlockResultsInfo` |
+| `get_tx` | Look up a transaction by 32-byte hash (hex) | `TxInfo` |
+| `query` | Forward a query path + hex data to the application | `QueryResponseInfo` |
+| `verify_header` | Verify a header + QC with the light client | `VerifyHeaderResult` |
 | `get_validators` | Current validator set | `Vec<ValidatorInfoResponse>` |
 | `get_peers` | Connected peer status | `Vec<PeerStatus>` |
 | `get_epoch` | Current epoch info | `EpochInfo` |
@@ -32,10 +39,10 @@ The mempool and network sink are trait objects, allowing any chain to plug in it
 
 ```bash
 # query status
-echo '{"method":"status","params":{},"id":1}' | nc 127.0.0.1 26657
+echo '{"method":"status","params":{},"id":1}' | nc 127.0.0.1 20001
 
 # submit transaction (hex-encoded)
-echo '{"method":"submit_tx","params":"deadbeef","id":2}' | nc 127.0.0.1 26657
+echo '{"method":"submit_tx","params":"deadbeef","id":2}' | nc 127.0.0.1 20001
 ```
 
 ## License

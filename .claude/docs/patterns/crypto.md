@@ -3,13 +3,14 @@
 ## Files
 - `crates/hotmint-crypto/src/lib.rs` — Ed25519 signing/verification, Blake3 hashing
 - `crates/hotmint-types/src/` — signable types, domain separation
-- `crates/hotmint-light/src/lib.rs` — batch signature verification
+- `crates/hotmint-light/src/lib.rs` — light client header/proof verification (verifies each QC signer's signature individually, no batch API)
+- `crates/hotmint-crypto/src/signer.rs` — `Ed25519Verifier`, including `verify_aggregate` (batch verification)
 
 ## Architecture
 - Ed25519 (ed25519-dalek) for all signatures
 - Blake3 for non-cryptographic hashing (block hash, tx hash)
 - Domain-separated signing: payload includes chain_id_hash + epoch + view + message_type + block_hash
-- Batch verification for light client header checks
+- Batch verification for aggregated signatures (`Ed25519Verifier::verify_aggregate` in crypto/src/signer.rs, backed by ed25519-dalek `verify_batch`)
 
 ## Critical Invariants
 
@@ -37,7 +38,7 @@ ValidatorId must be deterministically derived from the public key. Non-determini
 
 ### Missing Chain ID in Signature (technical-patterns.md 7.1)
 Vote signed without chain_id. Replayed on another chain with same validator set.
-**Check**: Verify chain_id_hash is the FIRST field in the signed payload.
+**Check**: Verify chain_id_hash is present in the signed payload. It is NOT the first field — the domain tag `HOTMINT_VOTE_V3\0` leads, and validator_id is also bound (crates/hotmint-types/src/vote.rs:53-74).
 
 ### Batch Verify Returns True on Partial Success (technical-patterns.md 7.2)
 Light client accepts header if 1 of N signatures verifies.

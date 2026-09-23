@@ -75,7 +75,7 @@ For each finding: cross-reference with `technical-patterns.md` and `false-positi
 
 ### Task 5: Unsafe Code Audit
 
-If any `unsafe` block is added (currently only 2 in mgmt):
+If any `unsafe` block is added (the codebase currently has only the three unsafe constructs in `crates/hotmint-mgmt/src/local.rs` — two `libc::kill` call sites plus an `unsafe extern "C"` declaration block; none on the consensus path):
 1. Verify SAFETY comment exists
 2. Check for UB
 
@@ -165,7 +165,7 @@ Launch one Agent per subsystem group in parallel.
 ```
 ## Full Audit Report
 
-**Scope**: All crates (~16K LOC)
+**Scope**: All crates (~19K LOC excluding tests, ~23K with tests)
 **Subsystems Audited**: <list>
 **Total Findings**: N (X critical, Y high, Z medium, W low)
 

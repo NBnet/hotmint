@@ -9,9 +9,10 @@ Checks block headers against quorum certificates (QCs) using a trusted validator
 
 ## Features
 
-- **Header verification** — verify that a QC was signed by 2f+1 of the known validator set
+- **Header verification** — verify that a QC was signed by more than 2/3 of the known validator set's voting power
 - **Validator set tracking** — replace the validator set at an externally trusted checkpoint
 - **Hash chain tracking** — require each header to extend the last accepted checkpoint
+- **State-proof verification** — `LightClient::verify_state_proof` checks MPT proofs (`MptProof`, re-exported from vsdb) against a trusted header's `app_hash`
 
 Header fields are not independently authenticated: the header omits the payload and evidence needed to recompute the certified block hash. Supply headers from a trusted source before relying on their fields, including `app_hash` for state proofs.
 

@@ -1,6 +1,8 @@
 # Metrics
 
-Hotmint exposes Prometheus metrics via the `prometheus-client` crate for monitoring consensus health and performance.
+Hotmint describes its consensus metrics via the `prometheus-client` crate, so that embedders can expose them for monitoring consensus health and performance.
+
+> **Scope:** `ConsensusMetrics` is a library API, not a wired-up exporter. No consensus code path records into these metrics, `ConsensusMetrics::new` is not called anywhere in the workspace, and the node ships no `/metrics` endpoint. An embedder must instantiate the struct and record values at its own call sites, then expose the registry (see [Exposing Metrics](#exposing-metrics)).
 
 ## Setup
 
@@ -27,6 +29,8 @@ All metrics are registered under the `hotmint_` prefix.
 | `hotmint_double_certs_formed` | Counter | Total number of Double Certificates formed (triggers commit) |
 | `hotmint_view_timeouts` | Counter | Total number of view timeouts |
 | `hotmint_tcs_formed` | Counter | Total number of Timeout Certificates formed |
+| `hotmint_epoch_transitions` | Counter | Total number of epoch transitions |
+| `hotmint_equivocations_detected` | Counter | Total number of equivocations detected |
 
 ### Gauges
 
@@ -35,6 +39,7 @@ All metrics are registered under the `hotmint_` prefix.
 | `hotmint_current_view` | Gauge | Current view number |
 | `hotmint_current_height` | Gauge | Latest committed block height |
 | `hotmint_consecutive_timeouts` | Gauge | Number of consecutive timeouts (0 = healthy) |
+| `hotmint_current_epoch` | Gauge | Current epoch number |
 
 ### Histograms
 
@@ -77,7 +82,7 @@ async fn metrics_handler(registry: &Registry) -> String {
 }
 ```
 
-### Example: HTTP Metrics Endpoint with Hyper
+### Example: HTTP Metrics Endpoint (axum)
 
 ```rust
 use std::sync::Arc;
@@ -114,4 +119,4 @@ Key panels to include in a Grafana dashboard:
 Alert on:
 - `hotmint_consecutive_timeouts > 3` — consensus may be stalled
 - `rate(hotmint_blocks_committed[5m]) == 0` — no blocks committed in 5 minutes
-- `hotmint_view_duration_seconds{quantile="0.99"} > 10` — views taking too long
+- `histogram_quantile(0.99, rate(hotmint_view_duration_seconds_bucket[5m])) > 10` — views taking too long

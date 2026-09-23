@@ -13,6 +13,11 @@ Every consensus message and sync message on the wire uses a 1-byte tag prefix:
 [0x01][zstd-compressed postcard] — zstd level 3
 ```
 
+Two exceptions matter to an implementer:
+
+- Both notification protocols exchange a **32-byte chain-ID hash** as the substream handshake before any framed payload. Peers whose handshake does not match are rejected, which is how chain isolation is enforced.
+- The consensus request-response protocol acknowledges a request with an **empty (0-byte) response frame** — no tag byte, no payload.
+
 ### Encoding Rules
 
 | Condition | Action |
@@ -43,6 +48,7 @@ Every consensus message and sync message on the wire uses a 1-byte tag prefix:
 | Protocol | Uses codec framing |
 |----------|--------------------|
 | `/hotmint/consensus/notif/1` | Yes |
+| `/hotmint/mempool/notif/1` | No (raw transaction bytes, not postcard) |
 | `/hotmint/consensus/reqresp/1` | Yes |
 | `/hotmint/sync/1` | Yes |
 | `/hotmint/pex/1` | No (raw postcard, small peer-exchange messages) |
@@ -92,11 +98,32 @@ Engine (Rust) <- [4-byte LE len][protobuf Response] <- Application (Go/Rust)
 ## 4. Block Hash Computation
 
 ```
-block_hash = Blake3(height_le64 || parent_hash_32 || view_le64 || proposer_le64 || app_hash_32 || payload)
+block_hash = Blake3(
+      height_le64
+   || parent_hash[32]
+   || view_le64
+   || proposer_le64
+   || timestamp_le64                 # ms since the Unix epoch
+   || app_hash[32]
+   || evidence_count_le64
+   || evidence[0] .. evidence[evidence_count - 1]
+   || payload_len_le64 || payload
+)
+
+evidence[i] = validator_le64 || view_le64 || vote_type[1]
+           || epoch_le64
+           || block_hash_a[32] || sig_a_len_le64 || sig_a
+           || ext_a_present[1]  [ || ext_a_len_le64 || ext_a ]
+           || block_hash_b[32] || sig_b_len_le64 || sig_b
+           || ext_b_present[1]  [ || ext_b_len_le64 || ext_b ]
 ```
 
-All fields are serialized in little-endian byte order. The `hash` field
-itself is excluded from the computation to avoid circularity.
+`vote_type` is `0x00` for a `Vote` and `0x01` for a `Vote2`. Every
+variable-length item (payload, signatures, vote extensions) carries an
+8-byte little-endian length prefix; fixed-size items do not.
+
+All integer fields are little-endian. The `hash` field itself is excluded
+from the computation to avoid circularity.
 
 `app_hash` is the application state root after executing the **parent** block
 (delayed inclusion, following the CometBFT model).
@@ -105,3 +132,7 @@ itself is excluded from the computation to avoid circularity.
 
 | Version | Changes |
 |---------|---------|
+| 1 | Current revision, as described above: 1-byte tag codec (`0x00` raw postcard / `0x01` zstd level 3), postcard payloads, 32-byte chain-ID notification handshake, empty-frame acknowledgement on the consensus request-response protocol. |
+
+There is no in-band version negotiation: the protocol revision is carried by
+the `/1` suffix in each protocol path, and all five paths currently use `/1`.

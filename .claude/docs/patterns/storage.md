@@ -1,7 +1,11 @@
 # Storage Subsystem Review Patterns
 
 ## Files
-- `crates/hotmint-storage/src/lib.rs` — VsdbBlockStore, StatePersistence, WAL, evidence store
+- `crates/hotmint-storage/src/lib.rs` — contains only `pub mod` declarations; the real files are:
+- `crates/hotmint-storage/src/block_store.rs` — `VsdbBlockStore`
+- `crates/hotmint-storage/src/consensus_state.rs` — `PersistentConsensusState`, which implements the `StatePersistence` trait defined in `crates/hotmint-consensus/src/engine.rs:31`
+- `crates/hotmint-storage/src/wal.rs` — `ConsensusWal`
+- `crates/hotmint-storage/src/evidence_store.rs` — memory + persistent evidence stores
 
 ## Architecture
 - VsdbBlockStore wraps vsdb collections for block persistence

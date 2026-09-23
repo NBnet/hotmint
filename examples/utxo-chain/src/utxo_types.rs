@@ -58,7 +58,7 @@ pub struct UtxoTx {
 impl UtxoTx {
     /// Compute the signing hash (used for both txid and signature verification).
     ///
-    /// Process: clone the tx, zero all signatures, CBOR-encode, blake3-hash.
+    /// Process: clone the tx, zero all signatures, postcard-encode, blake3-hash.
     pub fn signing_hash(&self) -> [u8; 32] {
         let mut tx_copy = self.clone();
         for input in &mut tx_copy.inputs {
@@ -73,12 +73,12 @@ impl UtxoTx {
         self.signing_hash()
     }
 
-    /// CBOR-encode this transaction.
+    /// Postcard-encode this transaction.
     pub fn encode(&self) -> Vec<u8> {
         postcard::to_allocvec(self).unwrap_or_default()
     }
 
-    /// Decode a transaction from CBOR bytes.
+    /// Decode a transaction from postcard bytes.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         postcard::from_bytes(bytes).ok()
     }

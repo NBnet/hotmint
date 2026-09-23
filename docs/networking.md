@@ -9,11 +9,17 @@ pub trait NetworkSink: Send + Sync {
     fn broadcast(&self, msg: ConsensusMessage);
     fn send_to(&self, target: ValidatorId, msg: ConsensusMessage);
     fn on_epoch_change(&self, _epoch: EpochNumber, _new_validator_set: &ValidatorSet) {}
+    fn broadcast_evidence(&self, _proof: &EquivocationProof) {}
+    fn broadcast_tx(&self, _tx_bytes: Vec<u8>) {}
 }
 ```
 
 - `broadcast` — send a message to all validators (used for proposals, prepare, wishes, TCs)
 - `send_to` — send a message to a specific validator (used for votes)
+- `on_epoch_change` — inform the network layer of a validator set change (used to refresh the peer map)
+- `broadcast_evidence` / `broadcast_tx` — gossip equivocation evidence and raw transactions to peers
+
+The last three have default no-op bodies, so a custom sink only has to implement the first two.
 
 ## litep2p NetworkService
 
@@ -25,8 +31,10 @@ For multi-process and multi-machine deployments, `NetworkService` provides real 
 NetworkService
   ├── litep2p instance (manages TCP connections)
   ├── Notification protocol: /hotmint/consensus/notif/1 (broadcast)
+  ├── Notification protocol: /hotmint/mempool/notif/1 (transaction gossip)
   ├── Request-Response protocol: /hotmint/consensus/reqresp/1 (directed)
   ├── Sync protocol: /hotmint/sync/1 (block synchronization)
+  ├── Request-Response protocol: /hotmint/pex/1 (peer exchange)
   ├── PeerMap (ValidatorId <-> PeerId mapping, supports runtime add/remove)
   └── mpsc channels (bridge to ConsensusEngine)
 ```
@@ -82,11 +90,12 @@ let NetworkServiceHandles {
     peer_info_rx,
     connected_count_rx,
     notif_connected_count_rx,
+    mempool_tx_rx,
 } = NetworkService::create(NetworkConfig {
     listen_addr,
     peer_map,
     known_addresses,
-    keypair: None,             // Option<litep2p::crypto::ed25519::Keypair> — None generates a random keypair
+    keypair: None,             // Option<litep2p::crypto::ed25519::Keypair>; None leaves the identity to litep2p's default
     peer_book,                 // Arc<tokio::sync::RwLock<PeerBook>> (persistent peer address store)
     pex_config,                // PexConfig (peer exchange settings)
     relay_consensus: false,    // whether to relay consensus messages to other peers
@@ -99,7 +108,7 @@ let NetworkServiceHandles {
 1. `listen_addr` — P2P listen address (multiaddr)
 2. `peer_map` — mapping of `ValidatorId` ↔ `PeerId`
 3. `known_addresses` — bootstrap peer addresses
-4. `keypair` — `Option<litep2p::crypto::ed25519::Keypair>` (`None` generates a random keypair)
+4. `keypair` — `Option<litep2p::crypto::ed25519::Keypair>` (`None` leaves the identity to litep2p's default)
 5. `peer_book` — persistent peer address store (`Arc<tokio::sync::RwLock<PeerBook>>`)
 6. `pex_config` — peer exchange settings
 7. `relay_consensus: bool` — whether to relay consensus messages to other validators
@@ -109,12 +118,13 @@ let NetworkServiceHandles {
 It returns a `NetworkServiceHandles` struct with named fields:
 1. `service: NetworkService` — the service itself, must be `.run()` on a tokio task
 2. `sink: Litep2pNetworkSink` — implements `NetworkSink`, pass to `ConsensusEngine`
-3. `msg_rx: Receiver<(Option<ValidatorId>, ConsensusMessage)>` — incoming consensus messages; sender is `None` for unknown peers
+3. `msg_rx: Receiver<(Option<ValidatorId>, ConsensusMessage)>` — incoming consensus messages; `NetworkService` drops messages from unknown peers, so the sender is always `Some` here (`None` is only produced by custom sinks)
 4. `sync_req_rx: Receiver<IncomingSyncRequest>` — incoming sync requests from peers
 5. `sync_resp_rx: Receiver<SyncResponse>` — incoming sync responses from peers
 6. `peer_info_rx: watch::Receiver<Vec<PeerStatus>>` — live peer connection status updates
 7. `connected_count_rx: watch::Receiver<usize>` — number of TCP-connected peers
 8. `notif_connected_count_rx: watch::Receiver<usize>` — number of peers with an open notification substream (ready for consensus)
+9. `mempool_tx_rx: Receiver<Vec<u8>>` — transactions gossipped from peers via the mempool protocol
 
 ### PeerBook
 
@@ -156,17 +166,21 @@ tokio::spawn(async move { engine.run().await });
 
 ### Message Serialization
 
-All `ConsensusMessage` values are serialized with postcard before transmission and deserialized on receipt. This is handled automatically by the `NetworkService`.
+All `ConsensusMessage` values are postcard-serialized and then framed by the wire codec (1-byte tag; zstd level 3 when the postcard payload exceeds 256 bytes — see [wire-protocol.md](wire-protocol.md)). This is handled automatically by the `NetworkService`, so a custom sink that bypasses the codec produces frames other nodes cannot decode.
 
 ### Sub-Protocols
 
-| Protocol | Path | Use |
-|:---------|:-----|:----|
-| Notification | `/hotmint/consensus/notif/1` | `broadcast()` — sends to all connected peers |
-| Request-Response | `/hotmint/consensus/reqresp/1` | `send_to()` — sends to a specific peer |
-| Sync | `/hotmint/sync/1` | Block synchronization — request-response for `SyncRequest`/`SyncResponse` |
+| Protocol | Path | Kind | Use |
+|:---------|:-----|:-----|:----|
+| Consensus Notification | `/hotmint/consensus/notif/1` | Notification | `broadcast()` — sends to every peer with an open notification substream |
+| Mempool Notification | `/hotmint/mempool/notif/1` | Notification | `broadcast_tx()` — transaction gossip (raw bytes, no codec tag) |
+| Consensus Request-Response | `/hotmint/consensus/reqresp/1` | Request-Response | `send_to()` — sends to a specific peer |
+| Sync | `/hotmint/sync/1` | Request-Response | Block synchronization — `SyncRequest`/`SyncResponse` |
+| Peer Exchange | `/hotmint/pex/1` | Request-Response | `PexRequest`/`PexResponse` peer discovery |
 
-The notification protocol is fire-and-forget. The request-response protocol sends a message and expects an acknowledgment (empty response). The sync protocol is a dedicated request-response channel used by the block sync subsystem to request missing blocks from peers.
+The notification protocols are fire-and-forget. The request-response protocols send a message and expect an acknowledgment (the consensus protocol's acknowledgment is an empty response frame). The sync protocol is a dedicated request-response channel used by the block sync subsystem to request missing blocks from peers.
+
+Both notification protocols perform a handshake on substream setup: the 32-byte chain ID hash. Peers whose handshake does not match are rejected, which is how chain isolation is enforced.
 
 ## Full P2P Node Example
 
@@ -191,9 +205,10 @@ async fn run_validator(
     app: impl hotmint::consensus::application::Application + 'static,
     chain_id: &str,
 ) {
-    // persistent storage
-    let store = VsdbBlockStore::new();
-    let pstate = PersistentConsensusState::new();
+    // persistent storage — `open` requires vsdb_set_base_dir(data_dir) first;
+    // `new()` is the test-only in-memory constructor and would discard all state
+    let store = VsdbBlockStore::open(&data_dir).unwrap();
+    let pstate = PersistentConsensusState::open(&data_dir).unwrap();
 
     // recover state (with chain ID for cross-chain replay prevention)
     let mut state = ConsensusState::with_chain_id(vid, validator_set, chain_id);
@@ -220,6 +235,7 @@ async fn run_validator(
         peer_info_rx,
         connected_count_rx,
         notif_connected_count_rx,
+        mempool_tx_rx: _,
     } = NetworkService::create(NetworkConfig {
         listen_addr,
         peer_map,
@@ -275,7 +291,7 @@ impl NetworkSink for MyNetworkSink {
 }
 ```
 
-You also need to provide the `mpsc::Receiver<(Option<ValidatorId>, ConsensusMessage)>` to the engine. When your network layer receives a message, deserialize it and send it through the channel. Use `Some(sender_id)` for known validators and `None` for unknown/unauthenticated peers:
+You also need to provide the `mpsc::Receiver<(Option<ValidatorId>, ConsensusMessage)>` to the engine. When your network layer receives a message, deserialize it and send it through the channel. Use `Some(sender_id)` for known validators; the engine also accepts `None` (an unauthenticated peer) from custom sinks, and applies its own admission checks before trusting the message:
 
 ```rust
 let (msg_tx, msg_rx) = tokio::sync::mpsc::channel(8192);
@@ -309,6 +325,8 @@ These methods send commands through an internal channel to the `NetworkService`,
 ## Block Synchronization
 
 The `/hotmint/sync/1` request-response protocol enables new or lagging nodes to catch up with the network by requesting missing blocks from peers.
+
+Sync requests are served only to peers that already hold an open `/hotmint/consensus/notif/1` substream — that substream is what proves the chain-ID handshake. A node implementation that opens only the sync protocol has its requests rejected, so it can never sync.
 
 The protocol uses `SyncRequest` and `SyncResponse` messages (defined in `hotmint_types::sync`) serialized with postcard. The `Litep2pNetworkSink` provides methods for initiating sync:
 

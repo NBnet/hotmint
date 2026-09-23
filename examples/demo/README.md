@@ -2,7 +2,7 @@
 
 Minimal consensus demo for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
-Spawns 4 in-process validators connected via channels and runs a simple counting application that logs each committed block.
+Builds the `cluster-node` binary and spawns 4 separate OS processes in a temp directory (running `NoopApplication`), then polls each node's RPC `status` every 3s for 30s, printing the committed height and view.
 
 ## Run
 

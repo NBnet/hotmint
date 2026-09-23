@@ -2,7 +2,7 @@
 
 ## What is this project?
 
-Hotmint is a production-ready BFT consensus engine implementing the **HotStuff-2 two-chain commit protocol**. It combines Tendermint's ABCI ergonomics with HotStuff's optimal latency, in a pure-Rust implementation with zero C/C++ dependencies on the consensus path.
+Hotmint is a production-ready BFT consensus engine implementing the **HotStuff-2 two-chain commit protocol**. It combines Tendermint's ABCI ergonomics with HotStuff's optimal latency, in a pure-Rust implementation with no C/C++ dependencies in the consensus state machine, crypto, or storage stack (the P2P codec links zstd for payload compression).
 
 ## Workspace Layout
 
@@ -10,7 +10,7 @@ Hotmint is a production-ready BFT consensus engine implementing the **HotStuff-2
 crates/
 ├── hotmint              # Library facade + node binary
 ├── hotmint-types        # Core data types (Block, Vote, QC, DC, TC, Epoch)
-├── hotmint-consensus    # HotStuff-2 state machine (largest: ~5.5K LOC)
+├── hotmint-consensus    # HotStuff-2 state machine (largest: ~6.4K LOC in src, ~7.7K incl. tests/)
 ├── hotmint-crypto       # Ed25519 + Blake3 signing/verification
 ├── hotmint-storage      # vsdb persistence layer
 ├── hotmint-network      # litep2p P2P networking (5 sub-protocols)
@@ -30,7 +30,7 @@ make all          # fmt + lint + build + test + doc
 make lint         # cargo clippy --workspace --all-targets -- -D warnings
 make test         # cargo test --workspace
 make bench        # cargo bench --workspace
-make demo         # 4-node in-process demo
+make demo         # 4-node multi-process demo
 ```
 
 System dependency: `protobuf-compiler` (for proto code generation)
@@ -41,16 +41,16 @@ System dependency: `protobuf-compiler` (for proto code generation)
 |-----------|-----------|---------|
 | View Protocol | `consensus/src/view_protocol.rs` | Enter → Propose → Vote → Prepare → Vote2 → Commit |
 | State Machine | `consensus/src/state.rs` | Current view, locked QC, epoch tracking |
-| Vote Collector | `consensus/src/vote_collector.rs` | 2f+1 aggregation, QC/TC formation |
+| Vote Collector | `consensus/src/vote_collector.rs` | Quorum aggregation (>2/3 of voting power), QC/TC formation |
 | Commit Logic | `consensus/src/commit.rs` | Double Certificate triggers ancestor chain commit |
 | Pacemaker | `consensus/src/pacemaker.rs` | Timeout scheduling, exponential backoff (1.5x, cap 30s) |
 | Sync Layer | `consensus/src/sync.rs` | State sync + block catch-up |
-| Storage | `storage/src/lib.rs` | VsdbBlockStore, StatePersistence, WAL |
+| Storage | `storage/src/block_store.rs`, `storage/src/consensus_state.rs`, `storage/src/wal.rs` | VsdbBlockStore, PersistentConsensusState, ConsensusWal |
 | Network | `network/src/service.rs` | litep2p multi-protocol event loop |
 | Mempool | `mempool/src/lib.rs` | BTreeSet priority pool with RBF + eviction |
-| API | `api/src/rpc.rs` | JSON-RPC (TCP + HTTP + WebSocket) |
+| API | `api/src/rpc.rs`, `api/src/http_rpc.rs` | JSON-RPC (TCP dispatch in rpc.rs; HTTP + WebSocket via axum in http_rpc.rs) |
 | ABCI | `abci/src/` | Unix socket + protobuf framing |
-| Light Client | `light/src/lib.rs` | Header verification, batch signature checking |
+| Light Client | `light/src/lib.rs` | Header verification (per-signer QC checks), MPT state proofs |
 | Staking | `staking/src/` | Validator registration, delegation, slashing |
 | Crypto | `crypto/src/lib.rs` | Ed25519 domain-separated signing, Blake3 hashing |
 
@@ -78,5 +78,5 @@ Supporting documentation in `.claude/docs/`:
 - `tokio` async runtime (full features)
 - `ruc` for error handling
 - `postcard` for compact binary serialization
-- Only 2 unsafe blocks (both `libc::kill` in cluster management, not on consensus path)
+- Only 3 unsafe constructs (two `libc::kill` call sites plus the `unsafe extern "C"` declaration of `kill`), all in `crates/hotmint-mgmt/src/local.rs`; none on the consensus path
 - Pluggable trait design: `Application`, `BlockStore`, `NetworkSink`, `Signer`, `Verifier`

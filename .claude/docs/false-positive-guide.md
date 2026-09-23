@@ -7,7 +7,7 @@ Before reporting any finding, check it against this guide.
 ## FP-1: Rust Ownership System Already Prevents It
 
 **Pattern**: Reporting memory safety issues in safe Rust code.
-**Rule**: Only report memory safety inside `unsafe` blocks (only 2 exist: `libc::kill` in mgmt). The consensus path has zero unsafe.
+**Rule**: Only report memory safety inside `unsafe` blocks (only three unsafe constructs exist, all in `crates/hotmint-mgmt/src/local.rs`: two `libc::kill` call sites and an `unsafe extern "C"` declaration block). The consensus path has zero unsafe.
 
 ## FP-2: Lock Held Across Entire Operation
 

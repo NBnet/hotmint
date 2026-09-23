@@ -5,7 +5,7 @@
 
 Core data types for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
-This crate defines all shared primitives used across the Hotmint ecosystem with minimal dependencies (`serde`, `ruc`, and `blake3`). It is the foundation that every other Hotmint crate depends on.
+This crate defines all shared primitives used across the Hotmint ecosystem with minimal dependencies (`serde`, `ruc`, and `blake3`). It is the foundation that nearly every other Hotmint crate depends on.
 
 ## Types
 
@@ -14,10 +14,10 @@ This crate defines all shared primitives used across the Hotmint ecosystem with 
 | `Block`, `BlockHash`, `Height` | Chain primitives — block structure, 32-byte Blake3 hash, block height |
 | `ViewNumber` | Monotonically increasing consensus view number |
 | `Vote`, `VoteType` | Phase-1 and phase-2 voting messages |
-| `QuorumCertificate` | Aggregate proof from 2f+1 validators on a block |
+| `QuorumCertificate` | Aggregate proof covering >2/3 of voting power for a block |
 | `DoubleCertificate` | QC-of-QC that triggers commit (two-chain rule) |
 | `TimeoutCertificate` | Aggregated timeout proof for view change |
-| `ConsensusMessage` | Wire protocol enum (Propose, Vote, Prepare, Wish, TC, StatusCert, Evidence) |
+| `ConsensusMessage` | Wire protocol enum (Propose, VoteMsg, Prepare, Vote2Msg, Wish, TimeoutCert, StatusCert, Evidence) |
 | `ValidatorId`, `ValidatorInfo`, `ValidatorSet` | Validator identity, metadata, and set management |
 | `Signature`, `PublicKey`, `AggregateSignature` | Cryptographic primitives |
 | `Signer`, `Verifier` | Abstract traits for pluggable signature schemes |

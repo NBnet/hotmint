@@ -1,6 +1,6 @@
 # Core Types
 
-Reference for all data types defined in `hotmint-types`.
+Reference for the core data types defined in `hotmint-types` (blocks, certificates, votes, validators, epochs, and the wire message enum). Supporting types live in their own modules — `BlockContext`/`OwnedBlockContext`/`TxContext` in `context.rs`, `EndBlockResponse`/`Event`/`ValidatorUpdate` in `validator_update.rs`, `EquivocationProof` in `evidence.rs`, and the state-sync types (`SyncRequest`, `SyncResponse`, `SnapshotInfo`, …) in `sync.rs`.
 
 ## Primitives
 
@@ -82,7 +82,7 @@ pub struct QuorumCertificate {
 }
 ```
 
-Corresponds to `C_v(B_k)` — an aggregate signature from 2f+1 validators on a block hash. Formed when the leader collects sufficient phase-1 votes.
+Corresponds to `C_v(B_k)` — an aggregate signature covering more than 2/3 of the voting power on a block hash. Formed when the leader collects sufficient phase-1 votes.
 
 ### DoubleCertificate (DC)
 
@@ -109,13 +109,16 @@ pub struct TimeoutCertificate {
 }
 ```
 
-Corresponds to `TC_v` — proof that 2f+1 validators timed out in `view`. Contains an aggregate signature over the timeout messages and each signer's `highest_qc` (indexed by validator position in the set) to help the next leader pick the best chain to extend.
+Corresponds to `TC_v` — proof that validators holding more than 2/3 of the voting power timed out in `view`. Contains an aggregate signature over the timeout messages and each signer's `highest_qc` (indexed by validator position in the set) to help the next leader pick the best chain to extend.
 
 ## Vote
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vote {
+    /// Epoch in which this vote was signed. Selects the validator set used
+    /// for verification and QC formation, and is covered by the signature.
+    pub epoch: EpochNumber,
     pub block_hash: BlockHash,
     pub view: ViewNumber,
     pub validator: ValidatorId,
@@ -141,14 +144,29 @@ pub fn signing_bytes(
     chain_id_hash: &[u8; 32],
     epoch: EpochNumber,
     view: ViewNumber,
+    validator: ValidatorId,
     block_hash: &BlockHash,
     vote_type: VoteType,
+    extension: Option<&[u8]>,
 ) -> Vec<u8>
 ```
 
-The layout is: `domain_tag || chain_id_hash || epoch (8 bytes LE) || view (8 bytes LE) || block_hash (32 bytes) || vote_type (1 byte)`.
+The layout is:
 
-The `chain_id_hash` (a 32-byte Blake3 hash of the chain ID string), epoch number, and the domain tag together prevent cross-chain, cross-epoch, and cross-message-type signature replay attacks.
+```
+domain_tag (HOTMINT_VOTE_V3\0)
+  || chain_id_hash (32 bytes)
+  || epoch (8 bytes LE)
+  || view (8 bytes LE)
+  || validator_id (8 bytes LE)
+  || block_hash (32 bytes)
+  || vote_type (1 byte: Vote = 0, Vote2 = 1)
+  || extension_marker (1 byte)
+  || extension_len (8 bytes LE)
+  || extension_hash (32 bytes: Blake3 of the extension, zero-filled when absent)
+```
+
+The `chain_id_hash` (a 32-byte Blake3 hash of the chain ID string), epoch number, validator id, vote type, extension digest, and the domain tag together prevent cross-chain, cross-epoch, cross-validator, cross-message-type, and vote-extension replay attacks.
 
 ### Domain Separator Tags
 
@@ -156,11 +174,11 @@ Each signed message type uses a unique null-terminated domain tag prefix:
 
 | Message | Tag |
 |:--------|:----|
-| Vote / Vote2 | `HOTMINT_VOTE_V2\0` |
+| Vote / Vote2 | `HOTMINT_VOTE_V3\0` |
 | Proposal | `HOTMINT_PROPOSAL_V1\0` |
 | Prepare | `HOTMINT_PREPARE_V1\0` |
 | Wish (timeout) | `HOTMINT_WISH_V1\0` |
-| StatusCert | `HOTMINT_STATUS_V1\0` |
+| StatusCert | `HOTMINT_STATUS_V2\0` |
 
 All signing byte layouts follow the same pattern: `tag || chain_id_hash || message-specific fields`.
 
@@ -196,7 +214,7 @@ let vs = ValidatorSet::new(vec![
 
 assert_eq!(vs.validator_count(), 4);
 assert_eq!(vs.quorum_threshold(), 3);    // floor(2*4/3) + 1 = strictly > 2/3
-assert_eq!(vs.max_faulty_power(), 1);    // floor((4-1)/3)
+assert_eq!(vs.max_faulty_power(), 1);    // total_power - quorum_threshold
 
 // round-robin leader election
 let leader = vs.leader_for_view(ViewNumber(5)).unwrap(); // validators[5 % 4] = validators[1]
@@ -278,6 +296,9 @@ pub enum ConsensusMessage {
         justify: Box<QuorumCertificate>,
         double_cert: Option<Box<DoubleCertificate>>,
         signature: Signature,
+        /// Uncommitted ancestors referenced by `double_cert`, so a replica
+        /// that missed them can still walk the commit chain.
+        ancestor_blocks: Vec<Block>,
     },
 
     // Replica -> Leader: phase-1 vote on a proposed block

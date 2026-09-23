@@ -2,7 +2,7 @@
 
 Consensus throughput benchmark for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
-Measures raw consensus throughput (blocks/sec) using 4 in-process validators with 1 KB fixed payloads, isolating consensus overhead from application execution.
+Measures consensus throughput (blocks/sec) by building and running 4 separate `cluster-node` processes over real P2P for ~10s. The nodes run `NoopApplication`, whose `create_payload` returns an empty vector, so the measurement isolates consensus from application execution. (The 1 KB fixed payload belongs to `bench-ipc`.)
 
 ## Run
 

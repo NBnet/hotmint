@@ -2,7 +2,8 @@
 
 ## Prerequisites
 
-- **Rust** 2024 edition (nightly or stable with edition support)
+- **Rust** 1.88 or newer on a stable toolchain (edition 2024). CI builds with `dtolnay/rust-toolchain@stable`; no `rust-version` is pinned, so treat 1.88 as a floor rather than a guarantee.
+- **protobuf-compiler** — required at build time by the proto code generation used by `hotmint-abci-proto` and litep2p (e.g. `apt-get install protobuf-compiler`).
 
 ## Installation
 
@@ -12,7 +13,7 @@ Add `hotmint` as a dependency:
 [dependencies]
 hotmint = { git = "https://github.com/NBnet/hotmint" }
 tokio = { version = "1", features = ["full"] }
-ruc = "9.3"
+ruc = "11.0.1"
 ```
 
 ## Quick Start
@@ -77,7 +78,17 @@ let genesis = GenesisDoc::load(&config_dir.join("genesis.json"))?;
 // Create P2P network
 let (peer_map, known_addresses) =
     config::parse_persistent_peers(&config.p2p.persistent_peers, &genesis)?;
-let handles = NetworkService::create(listen_addr, peer_map, known_addresses, ...)?;
+let handles = NetworkService::create(NetworkConfig {
+    listen_addr,                 // Multiaddr parsed from config.p2p.laddr
+    peer_map,
+    known_addresses,
+    keypair: Some(litep2p_keypair),   // derived from node_key.json
+    peer_book,                   // Arc<tokio::sync::RwLock<PeerBook>>
+    pex_config: config.pex.clone(),
+    relay_consensus: config.node.relay_consensus,
+    initial_validators,          // Vec<(ValidatorId, PublicKey)>
+    chain_id_hash: state.chain_id_hash,
+})?;
 
 // Create and run consensus engine with your embedded application
 let engine = ConsensusEngine::new(
@@ -106,7 +117,18 @@ All three modes are interoperable — a cluster can mix different deployment mod
 
 ## CLI Flags
 
-The `hotmint-node` binary accepts the following flags:
+The `hotmint-node` binary takes six subcommands:
+
+| Subcommand | Description |
+|:-----------|:------------|
+| `init` | Scaffold `<home>` with `config.toml`, `genesis.json`, and keys |
+| `node` | Run the consensus node (flags below) |
+| `gen-validator-key` | Generate an Ed25519 validator key (`-o <FILE>`, `--validator-id <N>`) |
+| `gen-node-key` | Generate an Ed25519 P2P identity key (`-o <FILE>`) |
+| `show-validator` | Print validator info from a key file (`-f <FILE>`) |
+| `show-node-id` | Print the node's `PeerId` from a key file (`-f <FILE>`) |
+
+`--home <PATH>` is a global flag and may appear before or after the subcommand. The `node` subcommand accepts the following flags:
 
 | Flag | Description | Default |
 |:-----|:------------|:--------|

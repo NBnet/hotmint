@@ -1,6 +1,6 @@
 [package]
 name = "hotmint-mempool"
-description = "Transaction mempool with FIFO ordering and deduplication for Hotmint"
+description = "Transaction mempool with priority ordering, RBF and deduplication for Hotmint"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

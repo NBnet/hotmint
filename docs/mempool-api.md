@@ -54,7 +54,7 @@ impl Application for MyApp {
 }
 ```
 
-`collect_payload` drains transactions in priority order (highest first) until the byte or gas limit is reached. Transactions that exceed the remaining gas budget are skipped (not dropped). Transactions are encoded in a length-prefixed format:
+`collect_payload` selects transactions in priority order (highest first) until the byte or gas limit is reached. Transactions that exceed the remaining gas budget are skipped (not dropped), and collection is non-destructive — the selected transactions stay in the pool until the post-commit `recheck()` evicts the ones that are no longer valid. Transactions are encoded in a length-prefixed format:
 
 ```
 [u32_le: tx1_len][tx1_bytes][u32_le: tx2_len][tx2_bytes]...
@@ -117,15 +117,16 @@ The `RpcServer` provides a TCP-based JSON-RPC interface for external clients to 
 use std::sync::Arc;
 use tokio::sync::watch;
 use hotmint::mempool::Mempool;
-use hotmint::api::rpc::{RpcServer, RpcState};
+use hotmint::api::rpc::{ConsensusStatus, RpcServer, RpcState};
 
 let mempool = Arc::new(Mempool::default());
 
-// status channel: (current_view, last_committed_height, epoch, validator_count, epoch_start_view)
-// update this from your Application::on_commit handler
-let (status_tx, status_rx) = watch::channel((0u64, 0u64, 0u64, 4usize, 0u64));
+// status channel: ConsensusStatus { current_view, last_committed_height,
+// epoch_number, validator_count, epoch_start_view } — update it from your
+// Application::on_commit handler
+let (status_tx, status_rx) = watch::channel(ConsensusStatus::new(0, 0, 0, 4, 0));
 
-use std::sync::RwLock;
+use parking_lot::RwLock;   // SharedBlockStore uses parking_lot, not std
 use hotmint::consensus::engine::SharedBlockStore;
 use hotmint::consensus::store::MemoryBlockStore;
 
@@ -142,6 +143,11 @@ let rpc_state = RpcState {
     store,
     peer_info_rx,
     validator_set_rx,
+    app: None,                   // Arc<dyn Application>, used to validate submitted txs
+    query_app: None,             // Arc<dyn Application>, served to public `query` calls
+    query_semaphore: RpcState::new_query_semaphore(),
+    network_sink: None,          // Some(sink) to gossip submitted txs to peers
+    chain_id_hash: [0u8; 32],    // enables light-client `verify_header`
 };
 
 let server = RpcServer::bind("127.0.0.1:20001", rpc_state).await.unwrap();
@@ -156,17 +162,17 @@ Wire the status channel into your application's commit handler:
 ```rust
 struct MyApp {
     mempool: Arc<Mempool>,
-    status_tx: watch::Sender<(u64, u64, u64, usize, u64)>,
+    status_tx: watch::Sender<ConsensusStatus>,
 }
 
 impl Application for MyApp {
     fn on_commit(&self, block: &Block, ctx: &BlockContext) -> ruc::Result<()> {
-        let _ = self.status_tx.send((
+        let _ = self.status_tx.send(ConsensusStatus::new(
             block.view.as_u64(),
             block.height.as_u64(),
             ctx.epoch.as_u64(),
             ctx.validator_set.validator_count(),
-            0, // epoch_start_view
+            ctx.epoch_start_view.as_u64(),
         ));
         Ok(())
     }
@@ -207,7 +213,7 @@ Error:
 ```json
 {
     "result": null,
-    "error": { "code": -32601, "message": "method not found" },
+    "error": { "code": -32601, "message": "unknown method: foo" },
     "id": 1
 }
 ```
@@ -230,6 +236,8 @@ Response:
         "validator_id": 0,
         "current_view": 42,
         "last_committed_height": 15,
+        "epoch": 1,
+        "validator_count": 4,
         "mempool_size": 3
     },
     "error": null,
@@ -255,7 +263,7 @@ Response:
 }
 ```
 
-The transaction is hex-decoded and added to the mempool. `accepted: false` means the transaction was rejected (duplicate, pool full, or failed `Application::validate_tx`).
+The transaction is hex-decoded and added to the mempool. `accepted: false` means the transaction was not added (duplicate, lower-priority resubmission, pool full, or oversized). Malformed input and `Application::validate_tx` rejections are returned as JSON-RPC errors (`-32602`) instead.
 
 #### `get_block`
 
@@ -268,11 +276,11 @@ echo '{"method":"get_block","params":{"height":5},"id":3}' | nc 127.0.0.1 20001
 
 #### `get_block_by_hash`
 
-Returns a committed block by its hash (hex-encoded).
+Returns a committed block by its hash (hex-encoded). `params` is the bare hex string, not an object.
 
 Request:
 ```bash
-echo '{"method":"get_block_by_hash","params":{"hash":"abcd1234..."},"id":4}' | nc 127.0.0.1 20001
+echo '{"method":"get_block_by_hash","params":"abcd1234…","id":4}' | nc 127.0.0.1 20001
 ```
 
 #### `get_validators`
@@ -322,11 +330,11 @@ echo '{"method":"get_commit_qc","params":{"height":5},"id":9}' | nc 127.0.0.1 20
 
 #### `get_tx`
 
-Query a committed transaction by its Blake3 hash (hex-encoded). Returns the transaction data, height, and index within the block.
+Query a committed transaction by its Blake3 hash (hex-encoded). Returns the transaction data, height, and index within the block. `params` is the bare hex string, not an object.
 
 Request:
 ```bash
-echo '{"method":"get_tx","params":{"hash":"abcd1234..."},"id":10}' | nc 127.0.0.1 20001
+echo '{"method":"get_tx","params":"abcd1234…","id":10}' | nc 127.0.0.1 20001
 ```
 
 #### `get_block_results`
@@ -349,16 +357,16 @@ echo '{"method":"query","params":{"path":"balance","data":"616c696365"},"id":12}
 
 #### `verify_header`
 
-Light client header verification — verifies QC signatures and validator set.
+Light client header verification — verifies QC signatures and the validator set. Takes the header and commit QC as objects, not a height, and returns `{"valid": bool, "error": string|null}`.
 
 Request:
 ```bash
-echo '{"method":"verify_header","params":{"height":5},"id":13}' | nc 127.0.0.1 20001
+echo '{"method":"verify_header","params":{"header":{…BlockHeader…},"qc":{…QuorumCertificate…}},"id":13}' | nc 127.0.0.1 20001
 ```
 
 ### Rate Limiting
 
-The `submit_tx` method is rate-limited per IP address (default: 100 requests/second) using a token-bucket algorithm. Stale entries are pruned every 60 seconds.
+Every method is rate-limited per IP address using a token-bucket limiter: a general gate of 100 requests/second covers all methods, and `query` additionally enforces its own tighter 50 requests/second bucket. Buckets are pruned every 60 seconds (entries idle for 30 seconds or more are dropped), and at most 100,000 source IPs are tracked.
 
 ### Types
 
@@ -407,11 +415,11 @@ use hotmint::consensus::state::ConsensusState;
 use hotmint::consensus::store::MemoryBlockStore;
 use hotmint::crypto::Ed25519Signer;
 use hotmint::mempool::Mempool;
-use hotmint::api::rpc::{RpcServer, RpcState};
+use hotmint::api::rpc::{ConsensusStatus, RpcServer, RpcState};
 
 struct TxCounterApp {
     mempool: Arc<Mempool>,
-    status_tx: watch::Sender<(u64, u64, u64, usize, u64)>,
+    status_tx: watch::Sender<ConsensusStatus>,
 }
 
 impl Application for TxCounterApp {
@@ -430,12 +438,12 @@ impl Application for TxCounterApp {
 
     fn on_commit(&self, block: &Block, ctx: &BlockContext) -> Result<()> {
         let txs = Mempool::decode_payload(&block.payload);
-        let _ = self.status_tx.send((
+        let _ = self.status_tx.send(ConsensusStatus::new(
             block.view.as_u64(),
             block.height.as_u64(),
             ctx.epoch.as_u64(),
             ctx.validator_set.validator_count(),
-            0, // epoch_start_view
+            ctx.epoch_start_view.as_u64(),
         ));
         println!(
             "height={} txs={} view={}",
@@ -450,9 +458,14 @@ impl Application for TxCounterApp {
 #[tokio::main]
 async fn main() {
     let mempool = Arc::new(Mempool::default());
-    let (status_tx, status_rx) = watch::channel((0u64, 0u64, 0u64, 4usize, 0u64));
+    let (status_tx, status_rx) = watch::channel(ConsensusStatus::new(0, 0, 0, 4, 0));
 
-    use std::sync::RwLock;
+    let app: Arc<dyn Application> = Arc::new(TxCounterApp {
+        mempool: mempool.clone(),
+        status_tx,
+    });
+
+    use parking_lot::RwLock;
     use hotmint::consensus::engine::SharedBlockStore;
     use hotmint::consensus::store::MemoryBlockStore;
 
@@ -469,15 +482,15 @@ async fn main() {
         store,
         peer_info_rx,
         validator_set_rx,
+        app: Some(app.clone()),      // validates submitted txs and serves queries
+        query_app: Some(app.clone()),
+        query_semaphore: RpcState::new_query_semaphore(),
+        network_sink: None,
+        chain_id_hash: [0u8; 32],
     };
     let server = RpcServer::bind("127.0.0.1:20001", rpc_state).await.unwrap();
     println!("RPC listening on {}", server.local_addr());
     tokio::spawn(async move { server.run().await });
-
-    let app = TxCounterApp {
-        mempool: mempool.clone(),
-        status_tx,
-    };
 
     // ... set up validators and consensus engine as shown in getting-started.md
     // ... pass `app` to ConsensusEngine::new()

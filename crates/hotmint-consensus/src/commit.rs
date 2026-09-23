@@ -46,7 +46,7 @@ pub fn decode_payload(payload: &[u8]) -> Vec<&[u8]> {
 /// When we get C_v(C_v(B_k)), commit the inner QC's block and all uncommitted ancestors.
 ///
 /// For each committed block, runs the full application lifecycle:
-/// begin_block → deliver_tx (×N) → end_block → on_commit
+/// on_evidence (per embedded proof) → execute_block → on_commit
 ///
 /// # Safety
 /// Caller MUST verify both inner_qc and outer_qc aggregate signatures

@@ -4,7 +4,7 @@
 - `crates/hotmint-consensus/src/engine.rs` (~2.3K LOC) — main engine, message dispatch
 - `crates/hotmint-consensus/src/view_protocol.rs` — view step sequencing
 - `crates/hotmint-consensus/src/state.rs` — current view, locked QC, epoch
-- `crates/hotmint-consensus/src/vote_collector.rs` — 2f+1 aggregation
+- `crates/hotmint-consensus/src/vote_collector.rs` — quorum aggregation
 - `crates/hotmint-consensus/src/commit.rs` — DC detection, ancestor chain commit
 - `crates/hotmint-consensus/src/pacemaker.rs` — timeout scheduling
 - `crates/hotmint-consensus/src/sync.rs` — state sync, block catch-up
@@ -23,13 +23,13 @@ A node votes for block B at view V only if:
 2. B carries a QC with view > node's locked_view
 **Check**: Verify in view_protocol.rs that the vote decision checks BOTH conditions.
 
-### INV-CS2: 2f+1 Quorum
-QCs and TCs require exactly `2 * (n - 1) / 3 + 1` distinct valid signatures from the current epoch's validator set.
-**Check**: Verify threshold formula in vote_collector.rs. Verify dedup by validator_id.
+### INV-CS2: Quorum by Voting Power
+QCs and TCs require signers holding strictly more than 2/3 of the current epoch's voting power: `ValidatorSet::quorum_threshold() = floor(total_power * 2 / 3) + 1` (crates/hotmint-types/src/validator.rs:168), enforced via `hotmint_crypto::aggregate::has_quorum` (crypto/src/aggregate.rs:21). For equal-power sets this is 2f+1 only when n ≡ 1 (mod 3), so state the power-based rule rather than a signature count.
+**Check**: Verify vote_collector.rs derives its threshold from `quorum_threshold()`/`has_quorum` rather than a hard-coded signature count. Verify dedup by validator_id.
 
 ### INV-CS3: Double Certificate Validity
-A DC is valid only if: both QCs reference the same block hash, QC2.view == QC1.view + 1, and both have valid 2f+1 signatures.
-**Check**: Verify DC validation in commit.rs checks all three conditions.
+A DC is valid only if: both QCs reference the same block hash AND the same view (`outer_qc.view == inner_qc.view` — NOT consecutive views), the epochs are equal, the inner QC aggregates `VoteType::Vote` and the outer aggregates `VoteType::Vote2`, and both aggregates reach quorum.
+**Check**: Verify DC validation in `engine.rs::validate_double_cert` checks all of these conditions. (commit.rs trusts the DC — it performs no cryptographic checks.)
 
 ### INV-CS4: Commit Completeness
 When a DC is formed for block at height H, ALL blocks from last_committed_height+1 through H must be committed in order.
@@ -56,7 +56,7 @@ Vote cast for a block that conflicts with locked block and doesn't carry a highe
 **Trigger**: Receive proposal with QC.view < locked_view, vote anyway.
 
 ### QC With Insufficient Signers (technical-patterns.md 3.2)
-Duplicate vote counted, forming QC with fewer than 2f+1 distinct signers.
+Duplicate vote counted, forming a QC whose aggregate covers less power than a real quorum.
 **Trigger**: Same validator sends vote twice (replay or honest resend), both counted.
 
 ### Pacemaker Never Fires (technical-patterns.md 2.1)
@@ -65,8 +65,8 @@ Timer scheduled but tokio::select! never picks the timeout branch because anothe
 
 ## Review Checklist
 - [ ] Voting rule checks locked_view AND extending chain
-- [ ] Quorum threshold = 2*(n-1)/3 + 1, deduped by validator_id
-- [ ] DC: same block hash, consecutive views, both QCs valid
+- [ ] Quorum = `floor(total_power * 2 / 3) + 1`, deduped by validator_id
+- [ ] DC: same block hash, same view, Vote/Vote2 types, both aggregates at quorum (engine.rs)
 - [ ] Commit walks full ancestor chain from DC block to last committed
 - [ ] View number never decreases
 - [ ] Pacemaker timeout fires reliably in tokio::select! loop

@@ -46,12 +46,14 @@ pub struct BlockContext<'a> {
     pub epoch: EpochNumber,
     pub epoch_start_view: ViewNumber,
     pub validator_set: &'a ValidatorSet,
+    /// Block timestamp in milliseconds since the Unix epoch.
+    pub timestamp: u64,
     /// Aggregated vote extensions from previous round's Vote2 messages.
     pub vote_extensions: Vec<(ValidatorId, Vec<u8>)>,
 }
 ```
 
-This gives the application access to the current epoch number, the active validator set, and vote extensions from the previous round without maintaining separate state.
+This gives the application access to the block timestamp, the current epoch number, the active validator set, and vote extensions from the previous round without maintaining separate state.
 
 ### TxContext
 
@@ -64,7 +66,7 @@ pub struct TxContext {
 }
 ```
 
-When called from the mempool (pre-consensus), `ctx` is `Some` with the current chain tip info. During block re-validation it may be `None`.
+Hotmint currently calls `validate_tx` with `ctx = None` — on RPC submission, on received transaction gossip, and during the post-commit recheck. The parameter exists for applications that want height- or epoch-aware validation; embedders and ABCI clients may populate it.
 
 ## Lifecycle
 
@@ -77,9 +79,9 @@ execute_block(txs, ctx)  →  EndBlockResponse { validator_updates, events }
 on_commit(block, ctx)
 ```
 
-The payload in the committed block is decoded into individual transactions (using `Mempool::decode_payload`), and all transactions are passed at once to `execute_block` as `&[&[u8]]` along with the current `BlockContext`. This single-call design replaces the old three-step `begin_block` / `deliver_tx` / `end_block` lifecycle, enabling more efficient implementations (batch DB writes, parallel signature verification, etc.).
+The payload in the committed block is decoded into individual transactions (the same length-prefixed format as `Mempool::decode_payload`, decoded by `hotmint::consensus::commit::decode_payload`), and all transactions are passed at once to `execute_block` as `&[&[u8]]` along with the current `BlockContext`. This single-call design replaces the old three-step `begin_block` / `deliver_tx` / `end_block` lifecycle, enabling more efficient implementations (batch DB writes, parallel signature verification, etc.).
 
-If `execute_block` returns an `EndBlockResponse` with non-empty `validator_updates`, an epoch transition is scheduled. The new validator set takes effect at the next view boundary.
+If `execute_block` returns an `EndBlockResponse` with non-empty `validator_updates`, an epoch transition is scheduled. The new validator set takes effect at the new epoch's `start_view` — set deterministically to `commit_view + 2` so every honest node switches at the same view.
 
 ## Method Reference
 
@@ -235,10 +237,14 @@ pub struct EquivocationProof {
     pub validator: ValidatorId,
     pub view: ViewNumber,
     pub vote_type: VoteType,
+    /// Epoch in which the equivocation occurred (part of the signing bytes).
+    pub epoch: EpochNumber,
     pub block_hash_a: BlockHash,
     pub signature_a: Signature,
+    pub extension_a: Option<Vec<u8>>,
     pub block_hash_b: BlockHash,
     pub signature_b: Signature,
+    pub extension_b: Option<Vec<u8>>,
 }
 ```
 
@@ -252,7 +258,7 @@ Called at epoch boundaries with validators detected as offline by the `LivenessT
 fn on_offline_validators(&self, offline: &[OfflineEvidence]) -> Result<()> {
     for ev in offline {
         tracing::warn!(validator = ?ev.validator, missed = ev.missed_commits, "offline — slashing");
-        self.staking.slash(ev.validator, SlashReason::Downtime, ev.evidence_height);
+        self.staking.slash(ev.validator, SlashReason::Downtime, ev.evidence_height.as_u64());
     }
     Ok(())
 }
@@ -350,7 +356,7 @@ When `validator_updates` is non-empty, the consensus engine schedules an **epoch
 
 1. The engine applies the updates to the current `ValidatorSet` to produce a new set.
 2. A new `Epoch` is constructed with an incremented `EpochNumber` and the updated validator set.
-3. The transition takes effect at the next view boundary (in `advance_view_to`).
+3. The transition takes effect at the new epoch's `start_view` (applied in `advance_view_to` when `current_view >= start_view`).
 4. The new epoch is persisted via `PersistentConsensusState::save_current_epoch`.
 
 Example: removing a slashed validator at a specific block height:
@@ -392,6 +398,7 @@ use std::sync::Mutex;
 use ruc::*;
 use hotmint::prelude::*;
 use hotmint::consensus::application::Application;
+use hotmint::types::QueryResponse;
 
 struct KvStoreApp {
     store: Mutex<HashMap<String, String>>,

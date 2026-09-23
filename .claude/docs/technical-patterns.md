@@ -20,10 +20,10 @@ Load this document FIRST before performing any review or debug analysis.
 **Check**: Verify the voting rule: a node may only vote for a block that (1) extends the locked block, OR (2) has a QC with view > locked_view.
 
 ### 1.3 Double Certificate Forgery
-**Pattern**: A DoubleCertificate (DC) is accepted without verifying that both QCs are for the same block at consecutive views.
-**Where**: `consensus/src/commit.rs` — DC validation.
+**Pattern**: A DoubleCertificate (DC) is accepted without verifying that both QCs are for the same block in the same view, carry the expected vote types, and reach quorum.
+**Where**: `consensus/src/engine.rs` — `validate_double_cert` (commit.rs trusts the DC and performs no cryptographic checks).
 **Impact**: Premature commit of an unconfirmed block.
-**Check**: Verify DC validation checks: same block hash, view_qc2 == view_qc1 + 1, both QCs have valid 2f+1 signatures.
+**Check**: Verify DC validation checks: same block hash, `outer_qc.view == inner_qc.view` (same view — NOT consecutive), equal epochs, inner QC aggregating `VoteType::Vote` and outer QC aggregating `VoteType::Vote2`, and both aggregates at quorum.
 
 ### 1.4 Commit Without Ancestor Chain
 **Pattern**: A block is committed but its ancestors (back to the last committed block) are not committed first.
@@ -45,7 +45,7 @@ Load this document FIRST before performing any review or debug analysis.
 **Pattern**: All honest nodes are waiting for a message from the leader, but the leader is waiting for votes from the previous view that will never arrive.
 **Where**: `consensus/src/view_protocol.rs` — view enter logic, `pacemaker.rs`.
 **Impact**: Cluster hangs until timeout cascades.
-**Check**: Verify TimeoutCertificate (TC) handling allows view advancement without the leader's proposal. Verify TC requires 2f+1 timeout messages.
+**Check**: Verify TimeoutCertificate (TC) handling allows view advancement without the leader's proposal. Verify TC requires wishes covering more than 2/3 of the voting power.
 
 ### 2.3 Sync Loop
 **Pattern**: A node falls behind (e.g., after restart) and the sync protocol enters an infinite loop requesting the same blocks repeatedly.
@@ -58,10 +58,10 @@ Load this document FIRST before performing any review or debug analysis.
 ## Category 3: Vote Collection Bugs
 
 ### 3.1 Threshold Calculation Error
-**Pattern**: The 2f+1 quorum threshold is computed incorrectly. For n=3f+1 validators, quorum should be 2f+1 = (2n+1)/3 rounded up.
+**Pattern**: The quorum threshold is computed incorrectly. Quorum is `floor(total_power * 2 / 3) + 1` — strictly more than 2/3 of the voting power (`2f+1` is only the equal-power shorthand, and only exact when n ≡ 1 (mod 3)).
 **Where**: `consensus/src/vote_collector.rs` — threshold computation.
 **Impact**: QCs formed with insufficient votes (safety) or requiring too many votes (liveness).
-**Check**: Verify `threshold = 2 * (n - 1) / 3 + 1` or equivalent for general n.
+**Check**: Verify `threshold = total_power * 2 / 3 + 1` (for equal power: `2n/3 + 1`), i.e. strictly more than 2/3 of voting power.
 
 ### 3.2 Duplicate Vote Counting
 **Pattern**: The same validator's vote is counted multiple times toward the quorum.
@@ -137,7 +137,7 @@ Load this document FIRST before performing any review or debug analysis.
 
 ### 6.1 State Persistence Gap
 **Pattern**: The node commits a block to the application but crashes before persisting the updated consensus state (current_view, locked_qc, app_hash).
-**Where**: `storage/` — StatePersistence, `consensus/src/commit.rs`.
+**Where**: `consensus/src/engine.rs` — the `StatePersistence` trait (implemented by `PersistentConsensusState` in `storage/src/consensus_state.rs`), `consensus/src/commit.rs`.
 **Impact**: On restart, the node re-enters a view it already committed, potentially voting for a conflicting block.
 **Check**: Verify consensus state is persisted BEFORE the commit response is returned. Verify WAL is fsynced.
 
@@ -159,13 +159,13 @@ Load this document FIRST before performing any review or debug analysis.
 
 ### 7.1 Domain Separation Missing
 **Pattern**: Vote signing does not include chain_id, epoch, or view in the signed message, enabling cross-chain or cross-epoch replay.
-**Where**: `crypto/src/lib.rs` — sign/verify, `types/src/` — signable types.
+**Where**: `crypto/src/signer.rs` and `crypto/src/hash.rs` — sign/verify (`crypto/src/lib.rs` only re-exports), `types/src/vote.rs` — signed payload layout.
 **Impact**: A vote from chain A can be replayed on chain B.
-**Check**: Verify signed payload includes: `chain_id_hash || epoch || view || message_type || block_hash`.
+**Check**: Verify the signed payload is exactly `HOTMINT_VOTE_V3\0 || chain_id_hash || epoch (LE) || view (LE) || validator_id (LE) || block_hash || vote_type (1) || ext_marker (1) || ext_len (LE) || ext_hash (32)` — the domain tag leads, validator_id is bound, and vote_type comes last.
 
 ### 7.2 Batch Verification Short-Circuit
 **Pattern**: Batch signature verification passes if ANY signature is valid, instead of requiring ALL to be valid.
-**Where**: `light/src/lib.rs` — batch verification.
+**Where**: `crypto/src/signer.rs` — `Ed25519Verifier::verify_aggregate` (ed25519-dalek `verify_batch`). The light client verifies each signer's signature individually.
 **Impact**: Light client accepts a header with forged signatures.
 **Check**: Verify batch verification returns true only if ALL signatures in the batch are valid.
 

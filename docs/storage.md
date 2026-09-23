@@ -12,11 +12,13 @@ Hotmint provides two `BlockStore` implementations and a `PersistentConsensusStat
 
 ## vsdb Overview
 
-[vsdb](https://crates.io/crates/vsdb) is a high-performance embedded key-value database whose API mirrors Rust standard collections (HashMap / BTreeMap). Under the hood it uses MMDB (a pure-Rust memory-mapped database engine) with no C library dependencies.
+[vsdb](https://crates.io/crates/vsdb) is a high-performance embedded key-value database whose API mirrors Rust standard collections (HashMap / BTreeMap). Under the hood it uses MMDB, a pure-Rust LSM-Tree storage engine, so there are no C library dependencies.
+
+Hotmint pins `vsdb = "16.3.9"`.
 
 ### Core Types
 
-Core vsdb v12.x types used by Hotmint:
+Core vsdb v16.x types used by Hotmint:
 
 | Type | Description | Rust Equivalent |
 |:-----|:------------|:----------------|
@@ -27,7 +29,7 @@ Core vsdb v12.x types used by Hotmint:
 Common `MapxOrd` methods:
 
 ```rust
-// Create
+// Create (a namespace-scoped handle; Hotmint uses `MapxOrd::new_in(&Namespace::default_ns())`)
 let mut map: MapxOrd<u64, String> = MapxOrd::new();
 
 // Write
@@ -54,9 +56,8 @@ map.clear();
 
 ### Serialization Requirements
 
-- Keys must implement `KeyEnDeOrdered` (ordered encoding)
-- Values must implement `ValueEnDe`
-- Any type implementing serde `Serialize + Deserialize` automatically satisfies both requirements
+- Values must implement `ValueEnDe` — any `Serialize + Deserialize` type does, via a blanket impl
+- Keys must implement `KeyEnDeOrdered` (ordered encoding), which is **not** blanket-implemented for arbitrary serde types: `String`, `RawBytes`/`Box<[u8]>`, integers, and integer arrays/vecs have built-in ordered encodings, and a custom key type needs an explicit `KeyEnDeOrdered` impl
 
 ### Key Functions
 
@@ -125,6 +126,7 @@ let shared_store = MemoryBlockStore::new_shared();
 Internal structure:
 - `by_hash: HashMap<BlockHash, Block>` — O(1) hash lookup
 - `by_height: BTreeMap<u64, BlockHash>` — ordered height lookup
+- `commit_qcs: HashMap<u64, QuorumCertificate>` — commit QC by height
 
 ## VsdbBlockStore
 
@@ -133,8 +135,15 @@ A persistent block store backed by vsdb `MapxOrd`. Blocks survive process restar
 ```rust
 use hotmint::storage::block_store::VsdbBlockStore;
 
-let store = VsdbBlockStore::new();
-// Automatically includes the genesis block
+// Production: call vsdb_set_base_dir(data_dir) first; opens or creates
+// data_dir/block_store.meta so the collections are recovered on restart.
+let store = VsdbBlockStore::open(&data_dir)?;
+
+// Test-only: a fresh in-memory store with no meta file — nothing from a
+// previous run is visible.
+// let store = VsdbBlockStore::new();
+
+// Both constructors seed the store with the genesis block on creation.
 
 // Check whether a block exists
 if store.contains(&block_hash) {
@@ -157,7 +166,7 @@ pub struct VsdbBlockStore {
 }
 ```
 
-The store auto-migrates from v1 (3 collections) to v2 (5 collections) on first open. The five indexes work together:
+`open()` persists the five collections' instance IDs in `data_dir/block_store.meta` (five little-endian `u64` map IDs, 40 bytes) and restores them with `MapxOrd::from_meta` on the next open; a meta file that is not 40 bytes is rejected as corrupt rather than migrated. The five indexes work together:
 - `put_block()` writes to both maps
 - `get_block()` looks up directly in `by_hash`
 - `get_block_by_height()` resolves the hash via `by_height`, then fetches the block from `by_hash`
@@ -171,7 +180,7 @@ use hotmint::consensus::engine::{ConsensusEngineBuilder, SharedBlockStore};
 use hotmint::crypto::Ed25519Verifier;
 
 let store: SharedBlockStore =
-    Arc::new(RwLock::new(Box::new(VsdbBlockStore::new())));
+    Arc::new(RwLock::new(Box::new(VsdbBlockStore::open(&data_dir)?)));
 
 let engine = ConsensusEngineBuilder::new()
     .state(state)
@@ -213,6 +222,8 @@ const KEY_HIGHEST_QC: u64 = 3;
 const KEY_LAST_COMMITTED_HEIGHT: u64 = 4;
 const KEY_CURRENT_EPOCH: u64 = 5;
 const KEY_LAST_APP_HASH: u64 = 6;
+const KEY_PENDING_EPOCH: u64 = 7;    // in-flight epoch transition (crash recovery)
+const KEY_PREVIOUS_EPOCH: u64 = 8;   // previous epoch, kept for verifying in-flight messages
 ```
 
 ### API
@@ -220,7 +231,9 @@ const KEY_LAST_APP_HASH: u64 = 6;
 ```rust
 use hotmint::storage::consensus_state::PersistentConsensusState;
 
-let mut pstate = PersistentConsensusState::new();
+// Production: requires vsdb_set_base_dir(data_dir) first; `new()` is the
+// test-only in-memory constructor.
+let mut pstate = PersistentConsensusState::open(&data_dir)?;
 
 // Save state (typically called after view changes or commits)
 pstate.save_current_view(ViewNumber(42));
@@ -229,6 +242,8 @@ pstate.save_highest_qc(&highest_qc);
 pstate.save_last_committed_height(Height(10));
 pstate.save_current_epoch(&epoch);
 pstate.save_last_app_hash(app_hash);
+pstate.save_pending_epoch(Some(&pending_epoch));     // in-flight epoch transition
+pstate.save_previous_epoch(Some(&previous_epoch));   // previous epoch's validator set
 pstate.flush();
 
 // Load state (at startup / crash recovery)
@@ -238,6 +253,8 @@ let highest = pstate.load_highest_qc();          // Option<QuorumCertificate>
 let committed = pstate.load_last_committed_height(); // Option<Height>
 let epoch = pstate.load_current_epoch();         // Option<Epoch>
 let app_hash = pstate.load_last_app_hash();      // Option<BlockHash>
+let pending = pstate.load_pending_epoch();       // Option<Epoch>
+let previous = pstate.load_previous_epoch();     // Option<Epoch>
 ```
 
 ### Crash Recovery Example
@@ -248,8 +265,8 @@ use hotmint::storage::block_store::VsdbBlockStore;
 use hotmint::storage::consensus_state::PersistentConsensusState;
 
 fn recover_or_init(vid: ValidatorId, vs: ValidatorSet) -> (ConsensusState, VsdbBlockStore) {
-    let store = VsdbBlockStore::new();
-    let pstate = PersistentConsensusState::new();
+    let store = VsdbBlockStore::open(&data_dir)?;
+    let pstate = PersistentConsensusState::open(&data_dir)?;
 
     let mut state = ConsensusState::new(vid, vs);
 
@@ -292,7 +309,8 @@ let wal = ConsensusWal::open(&data_dir)?;
 // Check for crash recovery at startup
 match ConsensusWal::check_recovery(&data_dir)? {
     WalRecovery::Clean => { /* normal startup */ }
-    WalRecovery::ReplayFrom(height) => { /* re-execute from height */ }
+    // re-execute blocks from last_committed_height + 1 up to target_height
+    WalRecovery::NeedsReplay { target_height } => { /* replay */ }
 }
 
 // Two-phase commit
@@ -324,13 +342,13 @@ store.mark_committed(view, validator_id);
 
 Uses two vsdb collections internally:
 - `proofs: MapxOrd<u64, EquivocationProof>` — keyed by auto-increment ID
-- `committed: MapxOrd<u64, u8>` — committed-set keyed by `Blake3(view || validator)`
+- `committed: MapxOrd<u64, u8>` — committed-set keyed by the low 64 bits (little-endian) of `Blake3(view_le || validator_le)`; `mark_committed` also drops the proof from the `proofs` map
 
 A `MemoryEvidenceStore` implementation is provided for testing.
 
 ## Data Directory Configuration
 
-By default vsdb stores data in the process working directory. There are two ways to specify a custom path:
+vsdb resolves its base directory from `$VSDB_BASE_DIR`, falling back to `$HOME/.vsdb` and finally to a process-private temporary directory — never the process working directory. Hotmint's persistent stores expect `vsdb_set_base_dir(<data_dir>)` to be called before `open()`, and keep their own metadata files in that same directory (`block_store.meta`, `consensus_state.meta`, `evidence_store.meta`, `consensus.wal`). There are two ways to point vsdb at a custom path:
 
 ### Environment Variable
 
@@ -360,7 +378,7 @@ Both `VsdbBlockStore` and `PersistentConsensusState` expose a `.flush()` method 
 
 ## Advanced vsdb Features
 
-Beyond basic KV storage, vsdb v10.x offers several advanced features that may be useful for future Hotmint extensions:
+Beyond basic KV storage, vsdb v16.x offers several advanced features that may be useful for future Hotmint extensions:
 
 ### VerMap — Versioned Storage
 
@@ -393,7 +411,7 @@ Potential use case: optimistic execution and rollback of application state.
 
 `MptCalc` (Merkle Patricia Trie) and `SmtCalc` (Sparse Merkle Tree) provide stateless Merkle root computation and proof generation.
 
-`VerMapWithProof` combines versioned storage with Merkle root computation, producing a 32-byte state root on each commit.
+`VerMapWithProof` combines versioned storage with Merkle root computation: `merkle_root(branch)` returns the 32-byte state root, updating an ephemeral trie incrementally from its last synced commit rather than recomputing the whole tree.
 
 Potential use cases:
 - Light client state verification
@@ -407,6 +425,7 @@ To use a different storage backend (e.g., SQLite, sled, or a remote database):
 ```rust
 use hotmint::prelude::*;
 use hotmint::consensus::store::BlockStore;
+use hotmint::crypto::compute_block_hash;
 
 struct SqliteBlockStore {
     conn: rusqlite::Connection,

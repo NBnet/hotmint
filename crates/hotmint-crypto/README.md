@@ -13,6 +13,8 @@ Provides concrete implementations of the `Signer` and `Verifier` traits defined 
 |:----------|:------------|
 | `Ed25519Signer` | Implements `Signer` using ed25519-dalek |
 | `Ed25519Verifier` | Implements `Verifier` for single and aggregate signature verification |
+| `aggregate_votes()` | Collect individual vote signatures into an `AggregateSignature` |
+| `has_quorum()` | >2/3 voting-power quorum check on an aggregate |
 | `compute_block_hash()` | Blake3 hashing of block fields |
 
 ## Usage

@@ -10,7 +10,7 @@
 - JSON-RPC over TCP (raw socket) and HTTP (axum)
 - WebSocket subscriptions for block/tx events
 - ABCI IPC via Unix socket + protobuf (length-prefixed frames)
-- Rate limiting per IP with exponential backoff
+- Rate limiting per IP via token buckets (submit_tx 100/s, query 50/s), 100k tracked-IP cap, idle buckets pruned
 - SharedBlockStore: `Arc<parking_lot::RwLock<Box<dyn BlockStore>>>`
 
 ## Critical Invariants
@@ -21,7 +21,7 @@ RPC/API handlers must never mutate consensus state. They only read from BlockSto
 
 ### INV-API2: Rate Limiting
 HTTP endpoints must enforce per-IP rate limits to prevent DoS.
-**Check**: Verify rate limiter is applied as middleware (axum layer), not per-handler.
+**Check**: The limiter is NOT an axum middleware layer (`http_rpc.rs` installs only `DefaultBodyLimit` and CORS) — it is taken inside the handlers via `state.ip_limiter`. Verify every request path enforces the limiter with no bypass route.
 
 ### INV-API3: ABCI Frame Integrity
 IPC frames must be length-prefixed and validated. An incorrect length field could cause deserialization of garbage.
@@ -47,7 +47,7 @@ HTTP rate limiting applied but WebSocket connections bypass it.
 
 ## Review Checklist
 - [ ] API handlers only acquire read locks on BlockStore
-- [ ] HTTP rate limiting applied as middleware
+- [ ] Every request path enforces the per-IP limiter (no bypass route)
 - [ ] ABCI IPC frame size bounded
 - [ ] WebSocket subscriptions cleaned up on disconnect
 - [ ] Rate limiting covers WebSocket, not just HTTP

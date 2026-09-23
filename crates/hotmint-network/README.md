@@ -5,7 +5,7 @@
 
 P2P networking layer for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
-Implements the `NetworkSink` trait from `hotmint-consensus` using [litep2p](https://crates.io/crates/litep2p) for real multi-process / multi-machine deployments. Messages are serialized with CBOR, with optional zstd compression for large frames.
+Implements the `NetworkSink` trait from `hotmint-consensus` using [litep2p](https://crates.io/crates/litep2p) for real multi-process / multi-machine deployments. Messages are serialized with postcard, with optional zstd compression for large frames.
 
 ## Sub-Protocols
 
@@ -13,9 +13,9 @@ Implements the `NetworkSink` trait from `hotmint-consensus` using [litep2p](http
 |:---------|:-----|:----|
 | Consensus Notification | `/hotmint/consensus/notif/1` | `broadcast()` — fire-and-forget to all peers |
 | Consensus Request-Response | `/hotmint/consensus/reqresp/1` | `send_to()` — directed message to a specific peer |
-| Sync Request-Response | `/hotmint/sync/reqresp/1` | Block sync protocol |
+| Sync Request-Response | `/hotmint/sync/1` | Block sync protocol |
 | Mempool Notification | `/hotmint/mempool/notif/1` | `broadcast_tx()` — transaction gossip |
-| PEX Notification | `/hotmint/pex/notif/1` | Peer exchange for discovery |
+| PEX Request-Response | `/hotmint/pex/1` | Peer exchange for discovery |
 
 ## NetworkSink Trait Methods
 

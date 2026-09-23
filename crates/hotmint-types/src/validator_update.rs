@@ -26,7 +26,7 @@ pub struct EventAttribute {
     pub value: String,
 }
 
-/// Response from `Application::end_block()`.
+/// Response from `Application::execute_block()`.
 /// If `validator_updates` is non-empty, an epoch transition is scheduled.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EndBlockResponse {

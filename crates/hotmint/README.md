@@ -29,7 +29,8 @@ use hotmint::prelude::*;
 //          QuorumCertificate, DoubleCertificate, TimeoutCertificate,
 //          ValidatorId, ValidatorInfo, ValidatorSet,
 //          Signer, Verifier, Signature, AggregateSignature, Epoch, EpochNumber,
-//          ConsensusMessage
+//          ConsensusMessage, BlockContext, EndBlockResponse, EquivocationProof,
+//          ValidatorUpdate
 ```
 
 ## Quick Start
@@ -38,7 +39,7 @@ use hotmint::prelude::*;
 [dependencies]
 hotmint = { git = "https://github.com/NBnet/hotmint" }
 tokio = { version = "1", features = ["full"] }
-ruc = "9.3"
+ruc = "11.0.1"
 ```
 
 ```rust

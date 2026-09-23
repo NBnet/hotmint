@@ -53,7 +53,7 @@ pub use hotmint_storage as storage;
 /// P2P networking via litep2p (notification + request-response protocols).
 pub use hotmint_network as network;
 
-/// Transaction mempool with FIFO ordering and deduplication.
+/// Transaction mempool with priority ordering, RBF and deduplication.
 pub use hotmint_mempool as mempool;
 
 /// IPC proxy layer for running applications as separate processes

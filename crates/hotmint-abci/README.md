@@ -5,14 +5,14 @@
 
 IPC proxy layer (Application Binary Consensus Interface) for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
-Enables running the application logic in a separate process from the consensus engine, communicating over Unix domain sockets with length-prefixed CBOR frames.
+Enables running the application logic in a separate process from the consensus engine, communicating over Unix domain sockets with length-prefixed protobuf frames.
 
 ## Architecture
 
 ```
 ┌──────────────┐  Unix socket  ┌──────────────────┐
 │  Consensus   │◄─────────────►│   Application    │
-│   Engine     │  CBOR frames  │    Process       │
+│   Engine     │  protobuf msg │    Process       │
 │              │               │                  │
 │ IpcApp       │               │ IpcApp           │
 │  Client      │               │  Server          │
@@ -26,17 +26,17 @@ Enables running the application logic in a separate process from the consensus e
 | `IpcApplicationClient` | Implements `Application` trait, forwards calls over IPC |
 | `IpcApplicationServer` | Unix socket listener, dispatches requests to handler |
 | `ApplicationHandler` | Callback trait for the application process |
-| `Request` / `Response` | Protocol message types (CBOR-serialized) |
+| `Request` / `Response` | Protocol message types (protobuf-serialized) |
 
 ## Protocol
 
-Requests and responses are exchanged as length-prefixed CBOR frames over a Unix domain socket:
+Requests and responses are exchanged as length-prefixed protobuf frames over a Unix domain socket:
 
 ```
-[4 bytes: payload length (LE)] [payload: CBOR-encoded Request/Response]
+[4 bytes: payload length (LE)] [payload: protobuf-encoded Request/Response]
 ```
 
-Supported operations: `CreatePayload`, `ValidateBlock`, `ValidateTx`, `ExecuteBlock`, `OnCommit`, `OnEvidence`, `Query`.
+Supported operations: `Info`, `InitChain`, `CreatePayload`, `ValidateBlock`, `ValidateTx`, `ExecuteBlock`, `OnCommit`, `OnEvidence`, `OnOfflineValidators`, `ExtendVote`, `VerifyVoteExtension`, `Query`, `ListSnapshots`, `LoadSnapshotChunk`, `OfferSnapshot`, `ApplySnapshotChunk`, `TracksAppHash`.
 
 ## Usage
 
@@ -44,18 +44,20 @@ Supported operations: `CreatePayload`, `ValidateBlock`, `ValidateTx`, `ExecuteBl
 
 ```rust
 use hotmint_abci::{ApplicationHandler, IpcApplicationServer};
+use hotmint_types::context::OwnedBlockContext;
 
 struct MyApp;
 
 impl ApplicationHandler for MyApp {
-    fn create_payload(&self, height: u64, view: u64) -> Vec<u8> {
+    fn create_payload(&self, ctx: OwnedBlockContext) -> Vec<u8> {
+        // ctx carries the block height and view for this payload
         vec![] // your payload logic
     }
     // ... implement other callbacks
 }
 
-let server = IpcApplicationServer::new(MyApp);
-server.listen("/tmp/myapp.sock").await.unwrap();
+let server = IpcApplicationServer::new("/tmp/myapp.sock", MyApp);
+server.run().await.unwrap();
 ```
 
 ### Consensus Process (Client)
