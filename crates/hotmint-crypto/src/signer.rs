@@ -18,7 +18,7 @@ impl Ed25519Signer {
     }
 
     pub fn generate(validator_id: ValidatorId) -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let signing_key = SigningKey::generate(&mut rng);
         Self::new(signing_key, validator_id)
     }

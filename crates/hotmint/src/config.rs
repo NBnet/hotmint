@@ -191,7 +191,7 @@ pub struct PrivValidatorKey {
 
 impl PrivValidatorKey {
     pub fn generate() -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let signing_key = SigningKey::generate(&mut rng);
         let public_key = signing_key.verifying_key();
         Self {
@@ -283,7 +283,7 @@ pub struct NodeKey {
 impl NodeKey {
     /// Generate a new random Ed25519 keypair for node identity.
     pub fn generate() -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let signing_key = SigningKey::generate(&mut rng);
         let public_key = signing_key.verifying_key();
         Self {

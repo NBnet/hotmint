@@ -178,7 +178,7 @@ pub fn init_cluster(
     // Generate keys for all validators
     let mut keys: Vec<(u64, SigningKey, String, String)> = Vec::new();
     for i in 0..validator_count {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let signing_key = SigningKey::generate(&mut rng);
         let public_key = signing_key.verifying_key();
         let pk_hex = hex::encode(public_key.to_bytes());

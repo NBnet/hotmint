@@ -2,7 +2,7 @@ use hotmint_types::{BlockHash, Epoch, Height, QuorumCertificate, ViewNumber};
 use ruc::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use vsdb::MapxOrd;
+use vsdb::{MapxOrd, Namespace};
 
 /// Key constants for the consensus state KV store
 const KEY_CURRENT_VIEW: u64 = 1;
@@ -54,8 +54,8 @@ impl PersistentConsensusState {
                 store: MapxOrd::from_meta(store_id).c(d!("restore consensus store"))?,
             })
         } else {
-            let store: MapxOrd<u64, StateValue> = MapxOrd::new();
-            let store_id = store.save_meta().c(d!())?;
+            let store: MapxOrd<u64, StateValue> = MapxOrd::new_in(&Namespace::default_ns());
+            let store_id = store.save_meta().c(d!())?.map_id;
             {
                 use std::io::Write;
                 let mut f =
@@ -72,7 +72,7 @@ impl PersistentConsensusState {
     /// Intended for unit tests only; use [`Self::open`] in production.
     pub fn new() -> Self {
         Self {
-            store: MapxOrd::new(),
+            store: MapxOrd::new_in(&Namespace::default_ns()),
         }
     }
 

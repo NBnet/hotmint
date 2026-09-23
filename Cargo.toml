@@ -22,39 +22,38 @@ members = [
 ]
 
 [workspace.package]
-version = "0.8.11"
+version = "0.8.12"
 edition = "2024"
 license = "GPL-3.0-only"
 repository = "https://github.com/NBnet/hotmint"
 keywords = ["consensus", "tendermint", "hotstuff", "hotstuff2", "bft"]
 
 [workspace.dependencies]
-serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["full"] }
-tracing = "0.1"
-tracing-subscriber = "0.3"
+serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1.53.1", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
 ruc = "11.0.1"
-postcard = { version = "1.1", features = ["alloc"] }
-blake3 = "1"
-ed25519-dalek = { version = "2.2", features = ["serde", "rand_core", "batch"] }
-# rand stays at 0.8 for ed25519-dalek 2.x compat (uses rand_core 0.6)
-rand = "0.8"
-vsdb = "14.0.1"
-litep2p = "0.14.3"
-async-trait = "0.1"
-futures = "0.3"
-prometheus-client = "0.23"
-serde_json = "1"
+postcard = { version = "1.1.3", features = ["alloc"] }
+blake3 = "1.8.7"
+ed25519-dalek = { version = "3.0.0", features = ["serde", "rand_core", "batch"] }
+rand = "0.10.3"
+vsdb = "16.3.9"
+litep2p = "0.15.2"
+async-trait = "0.1.92"
+futures = "0.3.34"
+prometheus-client = "0.25.1"
+serde_json = "1.0.151"
 criterion = { version = "0.8.2", features = ["html_reports"] }
-clap = { version = "4", features = ["derive"] }
-toml = "0.8"
-dirs = "6"
-hex = "0.4"
-prost = "0.13"
-zstd = "0.13"
-axum = { version = "0.8", features = ["ws"] }
-tower-http = { version = "0.6", features = ["cors"] }
-parking_lot = "0.12"
+clap = { version = "4.6.7", features = ["derive"] }
+toml = "1.1.6"
+dirs = "7.0.0"
+hex = "0.4.3"
+prost = "0.14.4"
+zstd = "0.14.0"
+axum = { version = "0.8.9", features = ["ws"] }
+tower-http = { version = "0.7.1", features = ["cors"] }
+parking_lot = "0.12.5"
 
 hotmint = { version = "0.8.7", path = "crates/hotmint" }
 hotmint-types = { version = "0.8.7", path = "crates/hotmint-types" }

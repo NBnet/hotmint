@@ -960,7 +960,7 @@ impl NetworkService {
         }
         // Pick a random connected peer
         let peers: Vec<PeerId> = self.connected_peers.iter().copied().collect();
-        let idx = rand::random::<usize>() % peers.len();
+        let idx = rand::random_range(0..peers.len());
         let target = peers[idx];
 
         if let Ok(bytes) = postcard_encode(&PexRequest::GetPeers) {

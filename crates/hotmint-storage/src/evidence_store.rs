@@ -6,7 +6,7 @@ use hotmint_types::evidence::EquivocationProof;
 use hotmint_types::validator::ValidatorId;
 use hotmint_types::view::ViewNumber;
 use ruc::*;
-use vsdb::MapxOrd;
+use vsdb::{MapxOrd, Namespace};
 
 /// In-memory evidence store backed by a `Vec` and a committed-set.
 pub struct MemoryEvidenceStore {
@@ -102,10 +102,10 @@ impl PersistentEvidenceStore {
                 next_id,
             })
         } else {
-            let proofs: MapxOrd<u64, EquivocationProof> = MapxOrd::new();
-            let committed: MapxOrd<u64, u8> = MapxOrd::new();
-            let proofs_id = proofs.save_meta().c(d!())?;
-            let committed_id = committed.save_meta().c(d!())?;
+            let proofs: MapxOrd<u64, EquivocationProof> = MapxOrd::new_in(&Namespace::default_ns());
+            let committed: MapxOrd<u64, u8> = MapxOrd::new_in(&Namespace::default_ns());
+            let proofs_id = proofs.save_meta().c(d!())?.map_id;
+            let committed_id = committed.save_meta().c(d!())?.map_id;
             let next_id = 0u64;
             let mut meta = Vec::with_capacity(24);
             meta.extend_from_slice(&proofs_id.to_le_bytes());
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn persistent_next_id_is_derived_from_durable_proof_keys() {
-        let mut proofs: MapxOrd<u64, EquivocationProof> = MapxOrd::new();
+        let mut proofs: MapxOrd<u64, EquivocationProof> = MapxOrd::new_in(&Namespace::default_ns());
         assert_eq!(PersistentEvidenceStore::next_id_from_proofs(&proofs), 0);
 
         proofs.insert(&7, &dummy_proof(7, 0));

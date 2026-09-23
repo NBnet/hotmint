@@ -329,7 +329,7 @@ pub fn push_all(hosts_path: &Path, local: &Path, remote_dest: &str) -> Result<()
                     &format!(
                         "tar czf - -C {} . | ssh -o BatchMode=yes {} 'mkdir -p {} && cd {} && tar xzf -'",
                         local.display(),
-                        &host.ssh,
+                        host.ssh,
                         shell_escape(remote_dest),
                         shell_escape(remote_dest),
                     ),
@@ -521,7 +521,7 @@ pub fn remote_status(base_dir: &Path, hosts_path: &Path) -> Result<()> {
         println!(
             "{:<6} {:<20} {:<8} {:<10} {:<8} {:<8}",
             format!("V{}", vid),
-            &host.ssh,
+            host.ssh,
             if status_str == "UP" {
                 pid_str
             } else {

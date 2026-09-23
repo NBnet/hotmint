@@ -120,7 +120,7 @@ impl PeerBook {
     pub fn get_random_peers(&self, n: usize) -> Vec<&PeerInfo> {
         let mut candidates: Vec<&PeerInfo> =
             self.peers.values().filter(|p| !p.is_banned()).collect();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         candidates.shuffle(&mut rng);
         candidates.truncate(n);
         candidates

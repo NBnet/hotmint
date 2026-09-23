@@ -1,6 +1,6 @@
 use std::io;
 
-use hotmint_abci_proto::pb;
+use hotmint_abci_proto::{DecodeError, pb};
 use hotmint_consensus::application::AppInfo;
 use hotmint_consensus::liveness::OfflineEvidence;
 use hotmint_types::context::{OwnedBlockContext, TxContext};
@@ -205,11 +205,11 @@ pub fn encode_request(req: &Request) -> Vec<u8> {
     proto_req.encode_to_vec()
 }
 
-pub fn decode_request(buf: &[u8]) -> Result<Request, prost::DecodeError> {
+pub fn decode_request(buf: &[u8]) -> Result<Request, DecodeError> {
     let proto_req = pb::Request::decode(buf)?;
     let req = match proto_req
         .request
-        .ok_or_else(|| prost::DecodeError::new("missing request oneof"))?
+        .ok_or_else(|| DecodeError::new("missing request oneof"))?
     {
         pb::request::Request::Info(_) => Request::Info,
         pb::request::Request::InitChain(r) => Request::InitChain(r.app_state),
@@ -217,11 +217,11 @@ pub fn decode_request(buf: &[u8]) -> Result<Request, prost::DecodeError> {
         pb::request::Request::ValidateBlock(r) => Request::ValidateBlock {
             block: r
                 .block
-                .ok_or_else(|| prost::DecodeError::new("missing block"))?
+                .ok_or_else(|| DecodeError::new("missing block"))?
                 .try_into()?,
             ctx: r
                 .ctx
-                .ok_or_else(|| prost::DecodeError::new("missing ctx"))?
+                .ok_or_else(|| DecodeError::new("missing ctx"))?
                 .try_into()?,
         },
         pb::request::Request::ValidateTx(r) => Request::ValidateTx {
@@ -232,17 +232,17 @@ pub fn decode_request(buf: &[u8]) -> Result<Request, prost::DecodeError> {
             txs: r.txs,
             ctx: r
                 .ctx
-                .ok_or_else(|| prost::DecodeError::new("missing ctx"))?
+                .ok_or_else(|| DecodeError::new("missing ctx"))?
                 .try_into()?,
         },
         pb::request::Request::OnCommit(r) => Request::OnCommit {
             block: r
                 .block
-                .ok_or_else(|| prost::DecodeError::new("missing block"))?
+                .ok_or_else(|| DecodeError::new("missing block"))?
                 .try_into()?,
             ctx: r
                 .ctx
-                .ok_or_else(|| prost::DecodeError::new("missing ctx"))?
+                .ok_or_else(|| DecodeError::new("missing ctx"))?
                 .try_into()?,
         },
         pb::request::Request::OnEvidence(proof) => Request::OnEvidence(proof.try_into()?),
@@ -255,11 +255,11 @@ pub fn decode_request(buf: &[u8]) -> Result<Request, prost::DecodeError> {
         pb::request::Request::ExtendVote(r) => Request::ExtendVote {
             block: r
                 .block
-                .ok_or_else(|| prost::DecodeError::new("missing block"))?
+                .ok_or_else(|| DecodeError::new("missing block"))?
                 .try_into()?,
             ctx: r
                 .ctx
-                .ok_or_else(|| prost::DecodeError::new("missing ctx"))?
+                .ok_or_else(|| DecodeError::new("missing ctx"))?
                 .try_into()?,
         },
         pb::request::Request::VerifyVoteExtension(r) => Request::VerifyVoteExtension {
@@ -278,7 +278,7 @@ pub fn decode_request(buf: &[u8]) -> Result<Request, prost::DecodeError> {
         },
         pb::request::Request::OfferSnapshot(r) => Request::OfferSnapshot(
             r.snapshot
-                .ok_or_else(|| prost::DecodeError::new("missing snapshot"))?
+                .ok_or_else(|| DecodeError::new("missing snapshot"))?
                 .try_into()?,
         ),
         pb::request::Request::ApplySnapshotChunk(r) => Request::ApplySnapshotChunk {
@@ -433,15 +433,14 @@ pub fn encode_response(resp: &Response) -> Vec<u8> {
     proto_resp.encode_to_vec()
 }
 
-pub fn decode_response(buf: &[u8]) -> Result<Response, prost::DecodeError> {
+pub fn decode_response(buf: &[u8]) -> Result<Response, DecodeError> {
     let proto_resp = pb::Response::decode(buf)?;
     let resp = match proto_resp
         .response
-        .ok_or_else(|| prost::DecodeError::new("missing response oneof"))?
+        .ok_or_else(|| DecodeError::new("missing response oneof"))?
     {
         pb::response::Response::Info(r) => Response::Info(app_info_from_proto(
-            r.info
-                .ok_or_else(|| prost::DecodeError::new("missing app info"))?,
+            r.info.ok_or_else(|| DecodeError::new("missing app info"))?,
         )?),
         pb::response::Response::InitChain(r) => {
             if r.error.is_empty() {
@@ -461,9 +460,7 @@ pub fn decode_response(buf: &[u8]) -> Result<Response, prost::DecodeError> {
             if r.error.is_empty() {
                 let ebr = r
                     .result
-                    .ok_or_else(|| {
-                        prost::DecodeError::new("missing execute_block result for success")
-                    })?
+                    .ok_or_else(|| DecodeError::new("missing execute_block result for success"))?
                     .try_into()?;
                 Response::ExecuteBlock(Ok(ebr))
             } else {
@@ -537,7 +534,7 @@ fn app_info_to_proto(info: &AppInfo) -> pb::AppInfo {
     }
 }
 
-fn app_info_from_proto(info: pb::AppInfo) -> Result<AppInfo, prost::DecodeError> {
+fn app_info_from_proto(info: pb::AppInfo) -> Result<AppInfo, DecodeError> {
     Ok(AppInfo {
         last_block_height: Height(info.last_block_height),
         last_block_app_hash: bytes_to_block_hash(
@@ -558,7 +555,7 @@ fn offline_evidence_to_proto(evidence: &OfflineEvidence) -> pb::OfflineEvidence 
 
 fn offline_evidence_from_proto(
     evidence: pb::OfflineEvidence,
-) -> Result<OfflineEvidence, prost::DecodeError> {
+) -> Result<OfflineEvidence, DecodeError> {
     Ok(OfflineEvidence {
         validator: ValidatorId(evidence.validator),
         missed_commits: evidence.missed_commits,
@@ -575,12 +572,12 @@ fn snapshot_offer_to_code(result: &SnapshotOfferResult) -> u32 {
     }
 }
 
-fn snapshot_offer_from_code(code: u32) -> Result<SnapshotOfferResult, prost::DecodeError> {
+fn snapshot_offer_from_code(code: u32) -> Result<SnapshotOfferResult, DecodeError> {
     match code {
         0 => Ok(SnapshotOfferResult::Accept),
         1 => Ok(SnapshotOfferResult::Reject),
         2 => Ok(SnapshotOfferResult::Abort),
-        other => Err(prost::DecodeError::new(format!(
+        other => Err(DecodeError::new(format!(
             "invalid snapshot offer result: {other}"
         ))),
     }
@@ -594,20 +591,20 @@ fn chunk_apply_to_code(result: &ChunkApplyResult) -> u32 {
     }
 }
 
-fn chunk_apply_from_code(code: u32) -> Result<ChunkApplyResult, prost::DecodeError> {
+fn chunk_apply_from_code(code: u32) -> Result<ChunkApplyResult, DecodeError> {
     match code {
         0 => Ok(ChunkApplyResult::Accept),
         1 => Ok(ChunkApplyResult::Retry),
         2 => Ok(ChunkApplyResult::Abort),
-        other => Err(prost::DecodeError::new(format!(
+        other => Err(DecodeError::new(format!(
             "invalid chunk apply result: {other}"
         ))),
     }
 }
 
-fn bytes_to_block_hash(field: &str, bytes: &[u8]) -> Result<BlockHash, prost::DecodeError> {
+fn bytes_to_block_hash(field: &str, bytes: &[u8]) -> Result<BlockHash, DecodeError> {
     let hash: [u8; 32] = bytes.try_into().map_err(|_| {
-        prost::DecodeError::new(format!("{field}: expected 32 bytes, got {}", bytes.len()))
+        DecodeError::new(format!("{field}: expected 32 bytes, got {}", bytes.len()))
     })?;
     Ok(BlockHash(hash))
 }
@@ -653,6 +650,26 @@ pub async fn read_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_distinguishes_wire_errors_from_invalid_messages() {
+        assert!(matches!(
+            decode_request(&[0xff]),
+            Err(DecodeError::Protobuf(_))
+        ));
+        assert!(matches!(
+            decode_response(&[0xff]),
+            Err(DecodeError::Protobuf(_))
+        ));
+        assert!(matches!(
+            decode_request(&[]),
+            Err(DecodeError::InvalidMessage(_))
+        ));
+        assert!(matches!(
+            decode_response(&[]),
+            Err(DecodeError::InvalidMessage(_))
+        ));
+    }
 
     #[test]
     fn execute_block_success_requires_result() {

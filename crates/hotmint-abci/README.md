@@ -70,3 +70,10 @@ let app = IpcApplicationClient::new("/tmp/myapp.sock");
 ## License
 
 GPL-3.0-only
+
+### Decode errors
+
+`protocol::decode_request`, `protocol::decode_response`, and the protobuf
+`TryFrom` conversions return `hotmint_abci_proto::DecodeError`. Its `Protobuf`
+variant wraps malformed wire data; `InvalidMessage` reports missing or invalid
+ABCI fields. This replaces the previous `prost::DecodeError` return type.

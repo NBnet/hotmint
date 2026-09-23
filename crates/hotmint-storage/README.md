@@ -62,6 +62,10 @@ if let Some(h) = pstate.load_last_committed_height() {
 
 ### Data Directory
 
+The storage backends explicitly use the default vsdb namespace configured by
+`vsdb_set_base_dir`. Their sidecar metadata continues to store 64-bit map IDs;
+ambient namespace scopes do not change where these backends create collections.
+
 vsdb stores data in the process working directory by default. Configure a custom location via environment variable or programmatically:
 
 ```bash

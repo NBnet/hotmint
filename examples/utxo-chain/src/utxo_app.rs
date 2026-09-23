@@ -291,9 +291,10 @@ impl Application for UtxoApplication {
                 let proof = state.prove_utxo(&outpoint)?;
                 let mut buf = Vec::new();
                 buf.extend_from_slice(&proof.key_hash);
-                match &proof.value {
-                    Some(v) => {
+                match &proof.leaf {
+                    Some((leaf_key_hash, v)) => {
                         buf.push(1);
+                        buf.extend_from_slice(leaf_key_hash);
                         buf.extend_from_slice(&(v.len() as u32).to_le_bytes());
                         buf.extend_from_slice(v);
                     }
@@ -316,4 +317,56 @@ impl Application for UtxoApplication {
 
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vsdb::{SmtCalc, SmtProof};
+
+    #[test]
+    fn proof_query_preserves_membership_and_conflicting_leaf_proofs() {
+        let app = UtxoApplication::new(UtxoConfig {
+            genesis_utxos: vec![GenesisUtxo {
+                value: 100,
+                pubkey_hash: [7; 32],
+            }],
+            ..UtxoConfig::default()
+        });
+        let root: [u8; 32] = app
+            .query("utxo_root", &[])
+            .unwrap()
+            .data
+            .try_into()
+            .unwrap();
+        let existing = OutPoint {
+            txid: *blake3::hash(&0u64.to_le_bytes()).as_bytes(),
+            vout: 0,
+        };
+        let absent = OutPoint {
+            txid: [9; 32],
+            vout: 0,
+        };
+        for (outpoint, present) in [(existing, true), (absent, false)] {
+            let key = outpoint.to_key();
+            let bytes = app.query("prove", &key).unwrap().data;
+            // A one-leaf tree includes its terminal leaf even for absent keys.
+            assert_eq!(bytes[32], 1);
+            let value_len = u32::from_le_bytes(bytes[65..69].try_into().unwrap()) as usize;
+            let value_end = 69 + value_len;
+            let proof = SmtProof {
+                key_hash: bytes[..32].try_into().unwrap(),
+                leaf: Some((
+                    bytes[33..65].try_into().unwrap(),
+                    bytes[69..value_end].to_vec(),
+                )),
+                siblings: bytes[value_end..]
+                    .chunks_exact(32)
+                    .map(|s| s.try_into().unwrap())
+                    .collect(),
+            };
+            assert_eq!(proof.value().is_some(), present);
+            assert!(SmtCalc::verify_proof(&root, &key, &proof).unwrap());
+        }
+    }
 }

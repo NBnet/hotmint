@@ -36,6 +36,13 @@ cargo run --release -p utxo-chain-example --bin bench-utxo
 - Address-indexed UTXO queries with pagination
 - Ed25519 `verify_strict` for signature verification
 
+The `prove` query takes a 36-byte outpoint key and returns the queried key hash
+(32 bytes), a leaf-present flag (1 byte), and, when present, the terminal leaf's
+key hash (32 bytes), value length (little-endian u32), and value bytes. The
+remaining bytes are sibling hashes (32 bytes each, root first). A terminal leaf
+with a different key hash proves non-membership; its key and value must be
+preserved when reconstructing a vsdb `SmtProof` for verification.
+
 ## License
 
 GPL-3.0-only

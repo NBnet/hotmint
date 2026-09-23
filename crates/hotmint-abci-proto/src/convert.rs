@@ -9,7 +9,7 @@ use hotmint_types::validator_update::{EndBlockResponse, Event, EventAttribute, V
 use hotmint_types::view::ViewNumber;
 use hotmint_types::vote::VoteType;
 
-use crate::pb;
+use crate::{DecodeError, pb};
 
 // ---- Block ----
 
@@ -46,7 +46,7 @@ impl From<Block> for pb::Block {
 }
 
 impl TryFrom<pb::Block> for Block {
-    type Error = prost::DecodeError;
+    type Error = DecodeError;
     fn try_from(b: pb::Block) -> Result<Self, Self::Error> {
         Ok(Self {
             height: Height(b.height),
@@ -99,7 +99,7 @@ impl From<&ValidatorInfo> for pb::ValidatorInfo {
 }
 
 impl TryFrom<pb::ValidatorInfo> for ValidatorInfo {
-    type Error = prost::DecodeError;
+    type Error = DecodeError;
 
     fn try_from(v: pb::ValidatorInfo) -> Result<Self, Self::Error> {
         Ok(Self {
@@ -126,7 +126,7 @@ impl From<&ValidatorSet> for pb::ValidatorSet {
 }
 
 impl TryFrom<pb::ValidatorSet> for ValidatorSet {
-    type Error = prost::DecodeError;
+    type Error = DecodeError;
 
     fn try_from(vs: pb::ValidatorSet) -> Result<Self, Self::Error> {
         let infos: Vec<ValidatorInfo> = vs
@@ -134,7 +134,7 @@ impl TryFrom<pb::ValidatorSet> for ValidatorSet {
             .into_iter()
             .map(TryInto::try_into)
             .collect::<Result<_, _>>()?;
-        ValidatorSet::try_new(infos).map_err(prost::DecodeError::new)
+        ValidatorSet::try_new(infos).map_err(DecodeError::new)
     }
 }
 
@@ -169,7 +169,7 @@ impl From<OwnedBlockContext> for pb::BlockContext {
 }
 
 impl TryFrom<pb::BlockContext> for OwnedBlockContext {
-    type Error = prost::DecodeError;
+    type Error = DecodeError;
 
     fn try_from(c: pb::BlockContext) -> Result<Self, Self::Error> {
         Ok(Self {
@@ -180,7 +180,7 @@ impl TryFrom<pb::BlockContext> for OwnedBlockContext {
             epoch_start_view: ViewNumber(c.epoch_start_view),
             validator_set: c
                 .validator_set
-                .ok_or_else(|| prost::DecodeError::new("missing validator_set"))?
+                .ok_or_else(|| DecodeError::new("missing validator_set"))?
                 .try_into()?,
             timestamp: c.timestamp,
             vote_extensions: c
@@ -223,7 +223,7 @@ impl From<EquivocationProof> for pb::EquivocationProof {
 }
 
 impl TryFrom<pb::EquivocationProof> for EquivocationProof {
-    type Error = prost::DecodeError;
+    type Error = DecodeError;
     fn try_from(e: pb::EquivocationProof) -> Result<Self, Self::Error> {
         Ok(Self {
             validator: ValidatorId(e.validator),
@@ -232,9 +232,7 @@ impl TryFrom<pb::EquivocationProof> for EquivocationProof {
                 0 => VoteType::Vote,
                 1 => VoteType::Vote2,
                 other => {
-                    return Err(prost::DecodeError::new(format!(
-                        "invalid vote_type: {other}"
-                    )));
+                    return Err(DecodeError::new(format!("invalid vote_type: {other}")));
                 }
             },
             epoch: EpochNumber(e.epoch),
@@ -261,7 +259,7 @@ impl From<&ValidatorUpdate> for pb::ValidatorUpdate {
 }
 
 impl TryFrom<pb::ValidatorUpdate> for ValidatorUpdate {
-    type Error = prost::DecodeError;
+    type Error = DecodeError;
 
     fn try_from(u: pb::ValidatorUpdate) -> Result<Self, Self::Error> {
         Ok(Self {
@@ -335,7 +333,7 @@ impl From<EndBlockResponse> for pb::EndBlockResponse {
 }
 
 impl TryFrom<pb::EndBlockResponse> for EndBlockResponse {
-    type Error = prost::DecodeError;
+    type Error = DecodeError;
     fn try_from(r: pb::EndBlockResponse) -> Result<Self, Self::Error> {
         Ok(Self {
             validator_updates: r
@@ -362,7 +360,7 @@ impl From<&SnapshotInfo> for pb::SnapshotInfo {
 }
 
 impl TryFrom<pb::SnapshotInfo> for SnapshotInfo {
-    type Error = prost::DecodeError;
+    type Error = DecodeError;
 
     fn try_from(s: pb::SnapshotInfo) -> Result<Self, Self::Error> {
         Ok(Self {
@@ -375,18 +373,18 @@ impl TryFrom<pb::SnapshotInfo> for SnapshotInfo {
 
 // ---- Helpers ----
 
-fn bytes_to_hash(bytes: &[u8]) -> Result<BlockHash, prost::DecodeError> {
+fn bytes_to_hash(bytes: &[u8]) -> Result<BlockHash, DecodeError> {
     Ok(BlockHash(bytes_to_array_32("block hash", bytes)?))
 }
 
-fn bytes_to_public_key(bytes: &[u8]) -> Result<PublicKey, prost::DecodeError> {
+fn bytes_to_public_key(bytes: &[u8]) -> Result<PublicKey, DecodeError> {
     let public_key = bytes_to_array_32("public key", bytes)?;
     Ok(PublicKey(public_key.to_vec()))
 }
 
-fn bytes_to_signature(bytes: &[u8]) -> Result<Signature, prost::DecodeError> {
+fn bytes_to_signature(bytes: &[u8]) -> Result<Signature, DecodeError> {
     if bytes.len() != 64 {
-        return Err(prost::DecodeError::new(format!(
+        return Err(DecodeError::new(format!(
             "signature: expected 64 bytes, got {}",
             bytes.len()
         )));
@@ -394,10 +392,10 @@ fn bytes_to_signature(bytes: &[u8]) -> Result<Signature, prost::DecodeError> {
     Ok(Signature(bytes.to_vec()))
 }
 
-fn bytes_to_array_32(field: &str, bytes: &[u8]) -> Result<[u8; 32], prost::DecodeError> {
-    bytes.try_into().map_err(|_| {
-        prost::DecodeError::new(format!("{field}: expected 32 bytes, got {}", bytes.len()))
-    })
+fn bytes_to_array_32(field: &str, bytes: &[u8]) -> Result<[u8; 32], DecodeError> {
+    bytes
+        .try_into()
+        .map_err(|_| DecodeError::new(format!("{field}: expected 32 bytes, got {}", bytes.len())))
 }
 
 #[cfg(test)]

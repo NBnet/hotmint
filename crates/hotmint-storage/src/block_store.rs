@@ -3,7 +3,7 @@ use hotmint_types::{Block, BlockHash, EndBlockResponse, Height, QuorumCertificat
 use ruc::*;
 use std::path::Path;
 use tracing::{debug, warn};
-use vsdb::MapxOrd;
+use vsdb::{MapxOrd, Namespace};
 
 /// File name for the persisted instance IDs of the block store collections.
 const META_FILE: &str = "block_store.meta";
@@ -38,10 +38,12 @@ impl VsdbBlockStore {
                 let by_hash_id = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
                 let by_height_id = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
                 let commit_qcs_id = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
-                let tx_index: MapxOrd<[u8; 32], (u64, u32)> = MapxOrd::new();
-                let block_results: MapxOrd<u64, EndBlockResponse> = MapxOrd::new();
-                let tx_index_id = tx_index.save_meta().c(d!())?;
-                let block_results_id = block_results.save_meta().c(d!())?;
+                let tx_index: MapxOrd<[u8; 32], (u64, u32)> =
+                    MapxOrd::new_in(&Namespace::default_ns());
+                let block_results: MapxOrd<u64, EndBlockResponse> =
+                    MapxOrd::new_in(&Namespace::default_ns());
+                let tx_index_id = tx_index.save_meta().c(d!())?.map_id;
+                let block_results_id = block_results.save_meta().c(d!())?.map_id;
                 let mut meta = [0u8; 40];
                 meta[0..8].copy_from_slice(&by_hash_id.to_le_bytes());
                 meta[8..16].copy_from_slice(&by_height_id.to_le_bytes());
@@ -83,17 +85,19 @@ impl VsdbBlockStore {
                 ))
             }
         } else {
-            let by_hash: MapxOrd<[u8; 32], Block> = MapxOrd::new();
-            let by_height: MapxOrd<u64, [u8; 32]> = MapxOrd::new();
-            let commit_qcs: MapxOrd<u64, QuorumCertificate> = MapxOrd::new();
-            let tx_index: MapxOrd<[u8; 32], (u64, u32)> = MapxOrd::new();
-            let block_results: MapxOrd<u64, EndBlockResponse> = MapxOrd::new();
+            let by_hash: MapxOrd<[u8; 32], Block> = MapxOrd::new_in(&Namespace::default_ns());
+            let by_height: MapxOrd<u64, [u8; 32]> = MapxOrd::new_in(&Namespace::default_ns());
+            let commit_qcs: MapxOrd<u64, QuorumCertificate> =
+                MapxOrd::new_in(&Namespace::default_ns());
+            let tx_index: MapxOrd<[u8; 32], (u64, u32)> = MapxOrd::new_in(&Namespace::default_ns());
+            let block_results: MapxOrd<u64, EndBlockResponse> =
+                MapxOrd::new_in(&Namespace::default_ns());
 
-            let by_hash_id = by_hash.save_meta().c(d!())?;
-            let by_height_id = by_height.save_meta().c(d!())?;
-            let commit_qcs_id = commit_qcs.save_meta().c(d!())?;
-            let tx_index_id = tx_index.save_meta().c(d!())?;
-            let block_results_id = block_results.save_meta().c(d!())?;
+            let by_hash_id = by_hash.save_meta().c(d!())?.map_id;
+            let by_height_id = by_height.save_meta().c(d!())?.map_id;
+            let commit_qcs_id = commit_qcs.save_meta().c(d!())?.map_id;
+            let tx_index_id = tx_index.save_meta().c(d!())?.map_id;
+            let block_results_id = block_results.save_meta().c(d!())?.map_id;
 
             let mut meta = [0u8; 40];
             meta[0..8].copy_from_slice(&by_hash_id.to_le_bytes());
@@ -124,11 +128,11 @@ impl VsdbBlockStore {
     /// Intended for unit tests only; use [`Self::open`] in production.
     pub fn new() -> Self {
         let mut store = Self {
-            by_hash: MapxOrd::new(),
-            by_height: MapxOrd::new(),
-            commit_qcs: MapxOrd::new(),
-            tx_index: MapxOrd::new(),
-            block_results: MapxOrd::new(),
+            by_hash: MapxOrd::new_in(&Namespace::default_ns()),
+            by_height: MapxOrd::new_in(&Namespace::default_ns()),
+            commit_qcs: MapxOrd::new_in(&Namespace::default_ns()),
+            tx_index: MapxOrd::new_in(&Namespace::default_ns()),
+            block_results: MapxOrd::new_in(&Namespace::default_ns()),
         };
         store.put_block(Block::genesis());
         store
