@@ -360,10 +360,7 @@ mod tests {
                     bytes[33..65].try_into().unwrap(),
                     bytes[69..value_end].to_vec(),
                 )),
-                siblings: bytes[value_end..]
-                    .chunks_exact(32)
-                    .map(|s| s.try_into().unwrap())
-                    .collect(),
+                siblings: bytes[value_end..].as_chunks::<32>().0.to_vec(),
             };
             assert_eq!(proof.value().is_some(), present);
             assert!(SmtCalc::verify_proof(&root, &key, &proof).unwrap());
