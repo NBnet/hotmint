@@ -4,7 +4,7 @@ use hotmint_storage::{
     evidence_store::PersistentEvidenceStore,
 };
 use hotmint_types::{
-    Block, BlockHash, EpochNumber, Height, Signature, ValidatorId, ViewNumber,
+    Block, BlockHash, Epoch, EpochNumber, Height, Signature, ValidatorId, ValidatorSet, ViewNumber,
     evidence::EquivocationProof, vote::VoteType,
 };
 
@@ -20,6 +20,7 @@ fn stores_reopen_after_creation_inside_an_ambient_namespace() {
 
         let mut state = PersistentConsensusState::open(dir.path()).unwrap();
         state.save_current_view(ViewNumber(42));
+        state.save_previous_epoch(Some(&Epoch::genesis(ValidatorSet::new(vec![]))));
         state.save_last_committed_height(Height(3));
         state.save_last_app_hash(BlockHash([8; 32]));
         state.flush();
@@ -46,10 +47,22 @@ fn stores_reopen_after_creation_inside_an_ambient_namespace() {
         Block::genesis().hash
     );
     assert_eq!(blocks.get_tx_location(&[7; 32]), Some((Height(3), 2)));
-    let state = PersistentConsensusState::open(dir.path()).unwrap();
+    let mut state = PersistentConsensusState::open(dir.path()).unwrap();
     assert_eq!(state.load_current_view(), Some(ViewNumber(42)));
     assert_eq!(state.load_last_committed_height(), Some(Height(3)));
     assert_eq!(state.load_last_app_hash(), Some(BlockHash([8; 32])));
+    assert_eq!(
+        state.load_previous_epoch().unwrap().number,
+        EpochNumber::GENESIS
+    );
+    state.save_previous_epoch(None);
+    state.flush();
+    assert!(
+        PersistentConsensusState::open(dir.path())
+            .unwrap()
+            .load_previous_epoch()
+            .is_none()
+    );
     let evidence = PersistentEvidenceStore::open(dir.path()).unwrap();
     let pending = evidence.get_pending();
     assert_eq!(pending.len(), 1);

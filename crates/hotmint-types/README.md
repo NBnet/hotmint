@@ -5,7 +5,7 @@
 
 Core data types for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
-This crate defines all shared primitives used across the Hotmint ecosystem with minimal dependencies (only `serde` and `ruc`). It is the foundation that every other Hotmint crate depends on.
+This crate defines all shared primitives used across the Hotmint ecosystem with minimal dependencies (`serde`, `ruc`, and `blake3`). It is the foundation that every other Hotmint crate depends on.
 
 ## Types
 

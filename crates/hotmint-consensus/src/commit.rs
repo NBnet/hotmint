@@ -50,7 +50,9 @@ pub fn decode_payload(payload: &[u8]) -> Vec<&[u8]> {
 ///
 /// # Safety
 /// Caller MUST verify both inner_qc and outer_qc aggregate signatures
-/// and quorum counts before calling this function. This function trusts
+/// and quorum counts before calling this function. Embedded evidence is checked
+/// before voting; the authenticated certificate attests to those checks, even
+/// after the offending validator has left the current epoch. This function trusts
 /// the DoubleCertificate completely and performs no cryptographic checks.
 pub fn try_commit(
     double_cert: &DoubleCertificate,
@@ -74,38 +76,41 @@ pub fn try_commit(
         });
     }
 
-    // Collect all uncommitted ancestors (from highest to lowest)
+    // Validate the complete chain before executing any application callbacks.
+    // Strictly decreasing heights also bound this walk if the store is corrupt.
     let mut to_commit = Vec::new();
     let mut current = commit_block;
     loop {
-        if current.height <= *last_committed_height {
-            break;
+        let expected_parent_height = current
+            .height
+            .as_u64()
+            .checked_sub(1)
+            .ok_or_else(|| eg!("non-genesis commit chain contains height zero"))?;
+        let parent = store
+            .get_block(&current.parent_hash)
+            .ok_or_else(|| eg!("missing ancestor block {}", current.parent_hash))?;
+        if parent.height.as_u64() != expected_parent_height {
+            return Err(eg!(
+                "commit chain height discontinuity: block {} has parent {}",
+                current.height,
+                parent.height
+            ));
         }
-        let parent_hash = current.parent_hash;
-        let current_height = current.height;
         to_commit.push(current);
-        if parent_hash == BlockHash::GENESIS {
+        if parent.height == *last_committed_height {
+            let committed = store
+                .get_block_by_height(*last_committed_height)
+                .ok_or_else(|| eg!("last committed block is missing"))?;
+            if parent.hash != committed.hash {
+                return Err(eg!("commit chain conflicts with last committed block"));
+            }
             break;
         }
-        match store.get_block(&parent_hash) {
-            Some(parent) => current = parent,
-            None => {
-                // If the missing ancestor is above last committed + 1, the store
-                // is corrupt or incomplete — we must not silently skip blocks.
-                if current_height > Height(last_committed_height.as_u64() + 1) {
-                    return Err(eg!(
-                        "missing ancestor block {} for height {} (last committed: {})",
-                        parent_hash,
-                        current_height,
-                        last_committed_height
-                    ));
-                }
-                break;
-            }
+        if parent.height < *last_committed_height {
+            return Err(eg!("commit chain skips last committed height"));
         }
+        current = parent;
     }
-
-    // Commit from lowest height to highest
     to_commit.reverse();
 
     let mut pending_epoch: Option<Epoch> = None;
@@ -126,38 +131,7 @@ pub fn try_commit(
 
         info!(height = block.height.as_u64(), hash = %block.hash, "committing block");
 
-        let txs = decode_payload(&block.payload);
-        // A committed block MUST be executed successfully. If the application
-        // returns an error here, the node's state is irrecoverably corrupted
-        // (partial batch commit). Panicking causes a restart from persistent
-        // state, which is safer than continuing with a diverged app_hash.
-        let response = app.execute_block(&txs, &ctx).unwrap_or_else(|e| {
-            panic!(
-                "FATAL: execute_block failed for committed block height={} hash={}: {:?}. \
-                 Node state is corrupt; restart from last committed height.",
-                block.height, block.hash, e
-            )
-        });
-
-        app.on_commit(block, &ctx).unwrap_or_else(|e| {
-            panic!(
-                "FATAL: on_commit failed for committed block height={} hash={}: {:?}. \
-                 Node state is corrupt; restart from last committed height.",
-                block.height, block.hash, e
-            )
-        });
-
-        // Process embedded evidence — notify the application layer for each
-        // proof so it can apply slashing deterministically (C-3).
-        for proof in &block.evidence {
-            if let Err(e) = app.on_evidence(proof) {
-                tracing::warn!(
-                    validator = %proof.validator,
-                    error = %e,
-                    "on_evidence failed for embedded proof"
-                );
-            }
-        }
+        let response = execute_committed_block(block, app, &ctx);
 
         // When the application does not track state roots, carry the block's
         // authoritative app_hash forward so the engine state stays coherent
@@ -200,6 +174,98 @@ pub fn try_commit(
         last_app_hash,
         block_responses,
     })
+}
+
+/// Validate embedded proofs before any committed application state is mutated.
+pub(crate) fn validate_block_evidence(
+    block: &Block,
+    epoch: &Epoch,
+    chain_id_hash: &[u8; 32],
+    verifier: &dyn hotmint_types::Verifier,
+) -> Result<()> {
+    for proof in &block.evidence {
+        validate_evidence(proof, block.view, epoch, chain_id_hash, verifier)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_evidence(
+    proof: &hotmint_types::EquivocationProof,
+    block_view: ViewNumber,
+    epoch: &Epoch,
+    chain_id_hash: &[u8; 32],
+    verifier: &dyn hotmint_types::Verifier,
+) -> Result<()> {
+    use hotmint_types::{Vote, VoteType};
+    let validator = epoch
+        .validator_set
+        .get(proof.validator)
+        .ok_or_else(|| eg!("evidence references unknown validator"))?;
+    if proof.block_hash_a == proof.block_hash_b
+        || proof.epoch > epoch.number
+        || proof.view > block_view
+        || (proof.vote_type == VoteType::Vote
+            && (proof.extension_a.is_some() || proof.extension_b.is_some()))
+    {
+        return Err(eg!("invalid embedded equivocation evidence"));
+    }
+    for (hash, signature, extension) in [
+        (
+            &proof.block_hash_a,
+            &proof.signature_a,
+            proof.extension_a.as_deref(),
+        ),
+        (
+            &proof.block_hash_b,
+            &proof.signature_b,
+            proof.extension_b.as_deref(),
+        ),
+    ] {
+        let bytes = Vote::signing_bytes(
+            chain_id_hash,
+            proof.epoch,
+            proof.view,
+            proof.validator,
+            hash,
+            proof.vote_type,
+            extension,
+        );
+        if !verifier.verify(&validator.public_key, &bytes, signature) {
+            return Err(eg!("invalid embedded evidence signature"));
+        }
+    }
+    Ok(())
+}
+
+/// Shared live/replay lifecycle. Evidence effects precede app-hash calculation.
+/// Fail closed if application mutation fails; the durable WAL intent remains.
+pub(crate) fn execute_committed_block(
+    block: &Block,
+    app: &dyn Application,
+    ctx: &BlockContext<'_>,
+) -> EndBlockResponse {
+    for proof in &block.evidence {
+        app.on_evidence(proof).unwrap_or_else(|e| {
+            panic!(
+                "FATAL: committed evidence failed at height {}: {e}",
+                block.height
+            )
+        });
+    }
+    let txs = decode_payload(&block.payload);
+    let response = app.execute_block(&txs, ctx).unwrap_or_else(|e| {
+        panic!(
+            "FATAL: execute_block failed at committed height {}: {e}",
+            block.height
+        )
+    });
+    app.on_commit(block, ctx).unwrap_or_else(|e| {
+        panic!(
+            "FATAL: on_commit failed at committed height {}: {e}",
+            block.height
+        )
+    });
+    response
 }
 
 /// Compute the pending epoch produced by a committed block's validator updates,
@@ -372,6 +438,29 @@ mod tests {
         };
         let mut last = Height::GENESIS;
         assert!(try_commit(&dc, &store, &app, &mut last, &epoch).is_err());
+    }
+
+    #[test]
+    fn test_commit_rejects_height_gaps_before_execution() {
+        for (height, parent_height) in [(100, 0), (3, 1)] {
+            let mut store = MemoryBlockStore::new();
+            let parent = if parent_height == 0 {
+                Block::genesis()
+            } else {
+                make_block(parent_height, BlockHash::GENESIS)
+            };
+            store.put_block(parent.clone());
+            let block = make_block(height, parent.hash);
+            store.put_block(block.clone());
+            let dc = DoubleCertificate {
+                vote_extensions: vec![],
+                inner_qc: make_qc(block.hash, height),
+                outer_qc: make_qc(block.hash, height),
+            };
+            let mut last = Height::GENESIS;
+            assert!(try_commit(&dc, &store, &NoopApplication, &mut last, &make_epoch()).is_err());
+            assert_eq!(last, Height::GENESIS);
+        }
     }
 
     #[test]

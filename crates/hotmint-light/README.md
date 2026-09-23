@@ -5,26 +5,34 @@
 
 Light client verification library for the [Hotmint](https://github.com/NBnet/hotmint) BFT consensus framework.
 
-Verifies block headers and validator set transitions without replaying every block. A light client tracks the current validator set and verifies each new block's quorum certificate (QC) against it.
+Checks block headers against quorum certificates (QCs) using a trusted validator set and checkpoint. Validator set transitions must be supplied as trusted checkpoints by the caller.
 
 ## Features
 
 - **Header verification** — verify that a QC was signed by 2f+1 of the known validator set
-- **Validator set tracking** — apply validator updates from committed blocks
-- **Minimal trust** — only needs an initial trusted validator set, then follows the chain
+- **Validator set tracking** — replace the validator set at an externally trusted checkpoint
+- **Hash chain tracking** — require each header to extend the last accepted checkpoint
+
+Header fields are not independently authenticated: the header omits the payload and evidence needed to recompute the certified block hash. Supply headers from a trusted source before relying on their fields, including `app_hash` for state proofs.
 
 ## Usage
 
 ```rust
 use hotmint_light::LightClient;
+use hotmint_crypto::Ed25519Verifier;
 
-let mut lc = LightClient::new(trusted_validator_set);
+let mut lc = LightClient::new_with_trusted_hash(
+    trusted_validator_set,
+    trusted_height,
+    trusted_hash,
+    chain_id_hash,
+);
 
 // Verify a block header + QC
-assert!(lc.verify_header(&block_hash, &commit_qc));
+lc.verify_header(&block_header, &qc, &Ed25519Verifier).unwrap();
 
-// Update validator set after epoch transition
-lc.update_validator_set(new_validator_set);
+// Install an externally trusted checkpoint after an epoch transition.
+lc.update_validator_set(new_validator_set, new_height, new_hash);
 ```
 
 ## License

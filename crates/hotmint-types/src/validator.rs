@@ -166,16 +166,12 @@ impl ValidatorSet {
     /// is required so any two quorums intersect in honest power even when
     /// `total_power` is divisible by 3.
     pub fn quorum_threshold(&self) -> u64 {
-        self.total_power
-            .checked_mul(2)
-            .expect("total_power overflow in quorum_threshold")
-            / 3
-            + 1
+        (u128::from(self.total_power) * 2 / 3 + 1) as u64
     }
 
     /// Maximum faulty power: total_power - quorum_threshold
     pub fn max_faulty_power(&self) -> u64 {
-        self.total_power - self.quorum_threshold()
+        self.total_power.saturating_sub(self.quorum_threshold())
     }
 
     /// Power-weighted leader selection.
@@ -311,6 +307,21 @@ mod tests {
     #[test]
     fn test_quorum_single_validator() {
         let vs = make_vs(&[1]);
+        assert_eq!(vs.quorum_threshold(), 1);
+        assert_eq!(vs.max_faulty_power(), 0);
+    }
+
+    #[test]
+    fn test_quorum_large_total_power() {
+        let vs = make_vs(&[u64::MAX / 3; 3]);
+        assert_eq!(vs.total_power(), u64::MAX);
+        assert_eq!(vs.quorum_threshold(), 12_297_829_382_473_034_411);
+        assert_eq!(vs.max_faulty_power(), 6_148_914_691_236_517_204);
+    }
+
+    #[test]
+    fn test_empty_set_has_no_fault_tolerance_or_reachable_quorum() {
+        let vs = make_vs(&[]);
         assert_eq!(vs.quorum_threshold(), 1);
         assert_eq!(vs.max_faulty_power(), 0);
     }

@@ -257,6 +257,35 @@ fn compute_validator_updates() {
 }
 
 #[test]
+fn compute_updates_replaces_key_after_reregistration_at_same_power() {
+    let mut mgr = StakingManager::new(
+        InMemoryStakingStore::new(),
+        StakingConfig {
+            slash_rate_double_sign: 10_000,
+            ..StakingConfig::default()
+        },
+    );
+    let id = ValidatorId(0);
+    mgr.register_validator(id, pk(0), 1_000).unwrap();
+    let current = ValidatorSet::new(vec![ValidatorInfo {
+        id,
+        public_key: pk(0),
+        power: 1_000,
+    }]);
+
+    mgr.slash(id, SlashReason::DoubleSign, 1).unwrap();
+    mgr.unregister_validator(id).unwrap();
+    mgr.register_validator(id, pk(1), 1_000).unwrap();
+
+    let updates = mgr.compute_validator_updates(&current);
+    assert_eq!(updates.len(), 1);
+    let updated = current.try_apply_updates(&updates).unwrap();
+    assert_eq!(updated.get(id).unwrap().public_key, pk(1));
+    assert_eq!(updated.power_of(id), 1_000);
+    assert!(mgr.compute_validator_updates(&updated).is_empty());
+}
+
+#[test]
 fn compute_updates_add_and_remove() {
     let mut mgr = make_manager();
     mgr.register_validator(ValidatorId(0), pk(0), 1000).unwrap();
@@ -350,6 +379,40 @@ fn slash_delegation_rounding_no_dust() {
         .map(|e| e.amount)
         .unwrap_or(0);
     assert_eq!(alice + bob + carol, vs.delegated_stake);
+}
+
+#[test]
+fn slash_small_delegations_preserves_balances_and_total() {
+    let mut mgr = StakingManager::new(
+        InMemoryStakingStore::new(),
+        StakingConfig {
+            slash_rate_double_sign: 5_000,
+            ..StakingConfig::default()
+        },
+    );
+    let validator = ValidatorId(0);
+    mgr.register_validator(validator, pk(0), 10_000).unwrap();
+    for staker in 0..40u8 {
+        mgr.delegate(&[staker], validator, 1).unwrap();
+    }
+
+    let result = mgr.slash(validator, SlashReason::DoubleSign, 100).unwrap();
+    let stakes = mgr.store().stakers_of(validator);
+    assert_eq!(result.delegated_slashed, 20);
+    assert_eq!(
+        stakes.iter().map(|(_, entry)| entry.amount).sum::<u64>(),
+        20
+    );
+    assert_eq!(mgr.get_validator(validator).unwrap().delegated_stake, 20);
+
+    // Withdrawing every surviving delegation must release only the unslashed half.
+    for (staker, entry) in stakes {
+        mgr.undelegate(&staker, validator, entry.amount, 100)
+            .unwrap();
+    }
+    let released = mgr.process_unbonding(1_100);
+    assert_eq!(released.iter().map(|entry| entry.amount).sum::<u64>(), 20);
+    assert_eq!(mgr.get_validator(validator).unwrap().delegated_stake, 0);
 }
 
 #[test]

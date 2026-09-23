@@ -58,7 +58,7 @@ tokio::spawn(async move { engine.run().await });
 
 ### Implement Application
 
-All methods have default no-op implementations. Lifecycle: `execute_block(txs, ctx)` -> `on_commit(block, ctx)`.
+All methods have default no-op implementations. Lifecycle: committed `on_evidence(proof)` calls -> `execute_block(txs, ctx)` -> `on_commit(block, ctx)`. Evidence callbacks run in block order during both live commits and sync replay.
 
 ```rust
 use ruc::*;

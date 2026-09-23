@@ -62,9 +62,10 @@ pub struct AppInfo {
 /// Application interface for the consensus engine.
 ///
 /// The lifecycle for each committed block:
-/// 1. `execute_block` — receives all decoded transactions at once; returns
+/// 1. `on_evidence` — applies embedded proofs in block order
+/// 2. `execute_block` — receives all decoded transactions at once; returns
 ///    validator updates and events
-/// 2. `on_commit` — notification after the block is finalized
+/// 3. `on_commit` — notification after the block is finalized
 ///
 /// For block proposal:
 /// - `create_payload` — build the payload bytes for a new block
@@ -74,7 +75,7 @@ pub struct AppInfo {
 /// - `validate_tx` — individual transaction validation for mempool
 ///
 /// For evidence:
-/// - `on_evidence` — called when equivocation is detected
+/// - `on_evidence` — called for committed proofs, before block execution
 ///
 /// All methods have default no-op implementations.
 pub trait Application: Send + Sync {
@@ -140,8 +141,11 @@ pub trait Application: Send + Sync {
         Ok(())
     }
 
-    /// Called when equivocation (double-voting) is detected.
-    /// The application can use this to implement slashing.
+    /// Apply a cryptographically verified equivocation proof embedded in a committed block.
+    /// Called in block order before `execute_block`, including during sync replay,
+    /// so slashing effects are included in the returned application state root.
+    /// Gossip and local detection only queue evidence; they do not invoke this callback.
+    /// Applications should deduplicate proofs if slashing must occur only once.
     fn on_evidence(&self, _proof: &EquivocationProof) -> Result<()> {
         Ok(())
     }

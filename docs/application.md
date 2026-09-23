@@ -71,6 +71,7 @@ When called from the mempool (pre-consensus), `ctx` is `Some` with the current c
 When a block is committed, the consensus engine invokes the application methods in this order:
 
 ```
+on_evidence(proof)      →  once per embedded proof, in block order
 execute_block(txs, ctx)  →  EndBlockResponse { validator_updates, events }
     │
 on_commit(block, ctx)
@@ -213,7 +214,7 @@ fn tracks_app_hash(&self) -> bool {
 
 ### `on_evidence(proof: &EquivocationProof) -> Result<()>`
 
-Called when equivocation (double-voting) is detected by the VoteCollector. A validator that votes for two different blocks in the same (view, vote_type) produces an `EquivocationProof`. The application can use this callback to implement slashing logic.
+Called for verified equivocation proofs embedded in committed blocks, before `execute_block` computes the application state root. Live commit and sync replay use the same ordering; gossip and local detection only queue evidence. A validator that votes for two different blocks in the same (view, vote_type) produces an `EquivocationProof`. The application can use this callback to implement slashing logic and must deduplicate repeated proofs when slashing should occur only once.
 
 ```rust
 fn on_evidence(&self, proof: &EquivocationProof) -> Result<()> {

@@ -173,8 +173,11 @@ impl GenesisDoc {
                 })
             })
             .collect();
-        let vs = ValidatorSet::new(infos?);
-        Ok(vs)
+        let infos = infos?;
+        if infos.is_empty() {
+            return Err(eg!("genesis validator set must not be empty"));
+        }
+        ValidatorSet::try_new(infos).map_err(|e| eg!("invalid genesis validator set: {}", e))
     }
 }
 
@@ -209,13 +212,7 @@ impl PrivValidatorKey {
     pub fn save(&self, path: &Path) -> Result<()> {
         let contents =
             serde_json::to_string_pretty(self).c(d!("serialize priv_validator_key.json"))?;
-        fs::write(path, &contents).c(d!("write priv_validator_key.json"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-                .c(d!("set permissions on priv_validator_key.json"))?;
-        }
+        write_private_key(path, &contents)?;
         Ok(())
     }
 
@@ -245,6 +242,25 @@ impl std::fmt::Debug for PrivValidatorKey {
             .field("private_key", &"[REDACTED]")
             .finish()
     }
+}
+
+// Restrict access before writing any secret bytes, including overwrites.
+fn write_private_key(path: &Path, contents: &str) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .c(d!("open private key file"))?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .c(d!("restrict key permissions"))?;
+    file.set_len(0).c(d!("truncate private key file"))?;
+    file.write_all(contents.as_bytes())
+        .c(d!("write private key file"))
 }
 
 // ── Shared litep2p key helpers ─────────────────────────────────────
@@ -299,13 +315,7 @@ impl NodeKey {
 
     pub fn save(&self, path: &Path) -> Result<()> {
         let contents = serde_json::to_string_pretty(self).c(d!("serialize node_key.json"))?;
-        fs::write(path, &contents).c(d!("write node_key.json"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-                .c(d!("set permissions on node_key.json"))?;
-        }
+        write_private_key(path, &contents)?;
         Ok(())
     }
 
@@ -466,4 +476,37 @@ pub fn parse_persistent_peers(peers: &[String], genesis: &GenesisDoc) -> Result<
     }
 
     Ok((peer_map, known_addresses))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_genesis_returns_errors_instead_of_panicking() {
+        let key = PrivValidatorKey::generate();
+        let validator = GenesisValidator {
+            id: 1,
+            public_key: key.public_key,
+            power: 1,
+        };
+        for validators in [
+            vec![],
+            vec![validator.clone(), validator],
+            vec![GenesisValidator {
+                id: 1,
+                public_key: "00".into(),
+                power: 1,
+            }],
+        ] {
+            assert!(
+                GenesisDoc {
+                    chain_id: "test".into(),
+                    validators
+                }
+                .to_validator_set()
+                .is_err()
+            );
+        }
+    }
 }

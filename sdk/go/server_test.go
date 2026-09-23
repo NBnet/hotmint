@@ -3,6 +3,7 @@ package hotmint
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -47,6 +48,58 @@ func TestFrameEmpty(t *testing.T) {
 
 	if len(got) != 0 {
 		t.Fatalf("expected empty, got %d bytes", len(got))
+	}
+}
+
+func TestWriteFrameRejectsOversizedPayloadBeforeWriting(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteFrame(&buf, make([]byte, maxFrameSize+1)); err == nil {
+		t.Fatal("expected oversized frame error")
+	}
+	if buf.Len() != 0 {
+		t.Fatal("oversized frame must not write a length prefix")
+	}
+}
+
+type emptyErrorApp struct{ BaseApplication }
+
+func (emptyErrorApp) InitChain([]byte) ([]byte, error) { return nil, errors.New("") }
+func (emptyErrorApp) ExecuteBlock([][]byte, *pb.BlockContext) (*pb.EndBlockResponse, error) {
+	return nil, errors.New("")
+}
+func (emptyErrorApp) OnCommit(*pb.Block, *pb.BlockContext) error      { return errors.New("") }
+func (emptyErrorApp) OnEvidence(*pb.EquivocationProof) error          { return errors.New("") }
+func (emptyErrorApp) OnOfflineValidators([]*pb.OfflineEvidence) error { return errors.New("") }
+func (emptyErrorApp) Query(string, []byte) (*QueryResult, error)      { return nil, errors.New("") }
+
+func TestEmptyApplicationErrorsRemainFailuresOnWire(t *testing.T) {
+	srv := NewServer("", emptyErrorApp{})
+	cases := []struct {
+		name         string
+		request      *pb.Request
+		errorMessage func(*pb.Response) string
+	}{
+		{"init", &pb.Request{Request: &pb.Request_InitChain{InitChain: &pb.InitChainRequest{}}}, func(r *pb.Response) string { return r.GetInitChain().Error }},
+		{"execute", &pb.Request{Request: &pb.Request_ExecuteBlock{ExecuteBlock: &pb.ExecuteBlockRequest{}}}, func(r *pb.Response) string { return r.GetExecuteBlock().Error }},
+		{"commit", &pb.Request{Request: &pb.Request_OnCommit{OnCommit: &pb.OnCommitRequest{}}}, func(r *pb.Response) string { return r.GetOnCommit().Error }},
+		{"evidence", &pb.Request{Request: &pb.Request_OnEvidence{OnEvidence: &pb.EquivocationProof{}}}, func(r *pb.Response) string { return r.GetOnEvidence().Error }},
+		{"offline", &pb.Request{Request: &pb.Request_OnOfflineValidators{OnOfflineValidators: &pb.OnOfflineValidatorsRequest{}}}, func(r *pb.Response) string { return r.GetOnOfflineValidators().Error }},
+		{"query", &pb.Request{Request: &pb.Request_Query{Query: &pb.QueryRequest{}}}, func(r *pb.Response) string { return r.GetQuery().Error }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := proto.Marshal(srv.dispatch(tc.request))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response pb.Response
+			if err := proto.Unmarshal(data, &response); err != nil {
+				t.Fatal(err)
+			}
+			if tc.errorMessage(&response) == "" {
+				t.Fatal("application failure encoded as success")
+			}
+		})
 	}
 }
 

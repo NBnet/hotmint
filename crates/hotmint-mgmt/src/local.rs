@@ -2,8 +2,6 @@
 
 use std::env;
 use std::fs;
-use std::io::{Read as _, Write};
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Duration;
@@ -22,8 +20,8 @@ pub fn find_binary(binary: Option<&Path>) -> Result<PathBuf> {
     }
 
     // Try workspace target/release (via cargo metadata for robustness)
-    if let Some(root) = crate::find_workspace_root() {
-        let workspace_bin = root.join("target/release/cluster-node");
+    if let Some(target) = crate::find_target_directory() {
+        let workspace_bin = target.join("release/cluster-node");
         if workspace_bin.exists() {
             return Ok(workspace_bin);
         }
@@ -252,34 +250,15 @@ pub fn status(base_dir: &Path) -> Result<()> {
 }
 
 fn query_rpc_status(host: &str, port: u16) -> Result<String> {
-    let addr = format!("{}:{}", host, port);
-    let mut stream =
-        TcpStream::connect_timeout(&addr.parse().c(d!())?, Duration::from_secs(2)).c(d!())?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .c(d!())?;
-
-    // Hotmint RPC uses raw JSON-RPC over TCP (not HTTP).
-    let req = r#"{"jsonrpc":"2.0","id":1,"method":"status","params":[]}"#;
-    stream.write_all(req.as_bytes()).c(d!())?;
-    stream.write_all(b"\n").c(d!())?;
-
-    let mut response = String::new();
-    let _ = stream.read_to_string(&mut response);
-
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(response.trim())
-        && let Some(result) = val.get("result")
-    {
-        let height = result
-            .get("last_committed_height")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let view = result
-            .get("current_view")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let epoch = result.get("epoch").and_then(|v| v.as_u64()).unwrap_or(0);
-        return Ok(format!("height={} view={} epoch={}", height, view, epoch));
-    }
-    Err(eg!("could not parse RPC response"))
+    let result = crate::query_rpc_status(host, port, Duration::from_secs(2))?;
+    let height = result
+        .get("last_committed_height")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let view = result
+        .get("current_view")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let epoch = result.get("epoch").and_then(|v| v.as_u64()).unwrap_or(0);
+    Ok(format!("height={} view={} epoch={}", height, view, epoch))
 }

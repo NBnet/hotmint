@@ -801,15 +801,43 @@ async fn read_line_limited<R: AsyncBufReadExt + Unpin>(
             };
         }
         if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+            if pos > max_bytes.saturating_sub(buf.len()) {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "line too long"));
+            }
             buf.extend_from_slice(&available[..pos]);
             reader.consume(pos + 1);
             return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
         }
         let to_consume = available.len();
+        if to_consume > max_bytes.saturating_sub(buf.len()) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "line too long"));
+        }
         buf.extend_from_slice(available);
         reader.consume(to_consume);
-        if buf.len() > max_bytes {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "line too long"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn line_limit_applies_to_newline_terminated_chunks() {
+        for capacity in [4, 64] {
+            let mut reader = BufReader::with_capacity(capacity, &b"123456789\n"[..]);
+            let error = read_line_limited(&mut reader, 8).await.unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+            let mut reader = BufReader::with_capacity(capacity, &b"12345678\nnext\n"[..]);
+            assert_eq!(
+                read_line_limited(&mut reader, 8).await.unwrap().unwrap(),
+                "12345678"
+            );
+            assert_eq!(
+                read_line_limited(&mut reader, 8).await.unwrap().unwrap(),
+                "next"
+            );
+            assert!(read_line_limited(&mut reader, 8).await.unwrap().is_none());
         }
     }
 }

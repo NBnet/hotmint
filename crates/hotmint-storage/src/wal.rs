@@ -58,6 +58,9 @@ impl ConsensusWal {
         // Unlike `.append(true)`, this allows truncate+seek(0) to work
         // correctly — subsequent writes go to position 0, not the old EOF.
         file.seek(io::SeekFrom::End(0))?;
+        // An fsynced intent is only recoverable if the WAL directory entry
+        // also survives a crash, including on the first commit after startup.
+        File::open(data_dir)?.sync_all()?;
         Ok(Self { path, file })
     }
 

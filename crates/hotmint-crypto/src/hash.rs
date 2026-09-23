@@ -2,8 +2,8 @@ use hotmint_types::{Block, BlockHash};
 
 /// Compute the Blake3 hash of a block's content fields.
 ///
-/// Hashes `height || parent_hash || view || proposer || app_hash || payload`,
-/// deliberately excluding `block.hash` to avoid circularity.
+/// Hashes all content fields, including timestamp and length-prefixed evidence
+/// and payload, deliberately excluding `block.hash` to avoid circularity.
 pub fn compute_block_hash(block: &Block) -> BlockHash {
     block.compute_hash()
 }

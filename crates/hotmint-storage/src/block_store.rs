@@ -26,45 +26,12 @@ impl VsdbBlockStore {
     /// The instance IDs of the internal collections are stored in
     /// `data_dir/block_store.meta`. On first run the file is created;
     /// on subsequent runs the collections are recovered from saved IDs.
-    ///
-    /// Backward-compatible: 24-byte meta (v1, 3 collections) is auto-migrated
-    /// to 40 bytes (v2, 5 collections) on first open.
+    /// The metadata contains five little-endian u64 map IDs (40 bytes).
     pub fn open(data_dir: &Path) -> Result<Self> {
         let meta_path = data_dir.join(META_FILE);
         if meta_path.exists() {
             let bytes = std::fs::read(&meta_path).c(d!("read block_store.meta"))?;
-            if bytes.len() == 24 {
-                // v1 meta: migrate by creating two new collections.
-                let by_hash_id = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
-                let by_height_id = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
-                let commit_qcs_id = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
-                let tx_index: MapxOrd<[u8; 32], (u64, u32)> =
-                    MapxOrd::new_in(&Namespace::default_ns());
-                let block_results: MapxOrd<u64, EndBlockResponse> =
-                    MapxOrd::new_in(&Namespace::default_ns());
-                let tx_index_id = tx_index.save_meta().c(d!())?.map_id;
-                let block_results_id = block_results.save_meta().c(d!())?.map_id;
-                let mut meta = [0u8; 40];
-                meta[0..8].copy_from_slice(&by_hash_id.to_le_bytes());
-                meta[8..16].copy_from_slice(&by_height_id.to_le_bytes());
-                meta[16..24].copy_from_slice(&commit_qcs_id.to_le_bytes());
-                meta[24..32].copy_from_slice(&tx_index_id.to_le_bytes());
-                meta[32..40].copy_from_slice(&block_results_id.to_le_bytes());
-                {
-                    use std::io::Write;
-                    let mut f =
-                        std::fs::File::create(&meta_path).c(d!("create block_store.meta v2"))?;
-                    f.write_all(&meta).c(d!("write block_store.meta v2"))?;
-                    f.sync_all().c(d!("fsync block_store.meta v2"))?;
-                }
-                Ok(Self {
-                    by_hash: MapxOrd::from_meta(by_hash_id).c(d!("restore by_hash"))?,
-                    by_height: MapxOrd::from_meta(by_height_id).c(d!("restore by_height"))?,
-                    commit_qcs: MapxOrd::from_meta(commit_qcs_id).c(d!("restore commit_qcs"))?,
-                    tx_index,
-                    block_results,
-                })
-            } else if bytes.len() == 40 {
+            if bytes.len() == 40 {
                 let by_hash_id = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
                 let by_height_id = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
                 let commit_qcs_id = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
@@ -80,7 +47,7 @@ impl VsdbBlockStore {
                 })
             } else {
                 Err(eg!(
-                    "corrupt block_store.meta: expected 24 or 40 bytes, got {}",
+                    "corrupt block_store.meta: expected 40 bytes, got {}",
                     bytes.len()
                 ))
             }
@@ -110,6 +77,9 @@ impl VsdbBlockStore {
                 let mut f = std::fs::File::create(&meta_path).c(d!("create block_store.meta"))?;
                 f.write_all(&meta).c(d!("write block_store.meta"))?;
                 f.sync_all().c(d!("fsync block_store.meta"))?;
+                std::fs::File::open(data_dir)
+                    .and_then(|dir| dir.sync_all())
+                    .c(d!("fsync block store metadata directory"))?;
             }
 
             let mut store = Self {
@@ -180,6 +150,9 @@ impl BlockStore for VsdbBlockStore {
     }
 
     fn get_blocks_in_range(&self, from: Height, to: Height) -> Vec<Block> {
+        if from > to {
+            return Vec::new();
+        }
         self.by_height
             .range(from.as_u64()..=to.as_u64())
             .filter_map(|(_, hash_bytes)| self.by_hash.get(&hash_bytes))
@@ -261,6 +234,22 @@ mod tests {
             aggregate_signature: AggregateSignature::new(1),
             epoch: EpochNumber(0),
         }
+    }
+
+    #[test]
+    fn reversed_block_ranges_are_empty() {
+        let store = VsdbBlockStore::new();
+        assert!(store.get_blocks_in_range(Height(1), Height(0)).is_empty());
+        assert!(
+            store
+                .get_blocks_in_range(Height(u64::MAX), Height(0))
+                .is_empty()
+        );
+        assert!(
+            store
+                .get_blocks_in_range(Height(u64::MAX), Height(u64::MAX))
+                .is_empty()
+        );
     }
 
     #[test]

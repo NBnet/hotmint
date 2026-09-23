@@ -10,6 +10,9 @@ const maxFrameSize = 64 * 1024 * 1024 // 64 MB
 
 // WriteFrame writes a length-prefixed frame: 4-byte little-endian u32 length + payload.
 func WriteFrame(w io.Writer, payload []byte) error {
+	if len(payload) > maxFrameSize {
+		return fmt.Errorf("frame size %d exceeds max %d", len(payload), maxFrameSize)
+	}
 	var lenBuf [4]byte
 	binary.LittleEndian.PutUint32(lenBuf[:], uint32(len(payload)))
 	if _, err := w.Write(lenBuf[:]); err != nil {

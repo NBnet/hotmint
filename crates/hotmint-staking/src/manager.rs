@@ -272,25 +272,22 @@ impl<S: StakingStore> StakingManager<S> {
             reason,
         });
 
-        // Proportionally reduce each staker's delegation.
-        // The last staker absorbs any rounding remainder so that
-        // sum(staker.amount) == vs.delegated_stake after slashing.
+        // Round cumulative proportional slashes so their sum is exactly
+        // del_slash without charging any staker more than their balance.
         if del_slash > 0 {
             let mut stakers = self.store.stakers_of(id);
             // Sort by address for deterministic remainder distribution across replicas.
             stakers.sort_by(|(a, _), (b, _)| a.cmp(b));
             let total_del: u64 = stakers.iter().map(|(_, e)| e.amount).sum();
             if total_del > 0 {
-                let count = stakers.len();
                 let mut slashed_so_far = 0u64;
-                for (i, (addr, mut entry)) in stakers.into_iter().enumerate() {
-                    let staker_slash = if i == count - 1 {
-                        // Last staker absorbs remainder
-                        del_slash.saturating_sub(slashed_so_far)
-                    } else {
-                        (entry.amount as u128 * del_slash as u128 / total_del as u128) as u64
-                    };
-                    slashed_so_far = slashed_so_far.saturating_add(staker_slash);
+                let mut cumulative_stake = 0u64;
+                for (addr, mut entry) in stakers {
+                    cumulative_stake += entry.amount;
+                    let cumulative_slash =
+                        (cumulative_stake as u128 * del_slash as u128 / total_del as u128) as u64;
+                    let staker_slash = cumulative_slash - slashed_so_far;
+                    slashed_so_far = cumulative_slash;
                     entry.amount = entry.amount.saturating_sub(staker_slash);
                     if entry.amount == 0 {
                         self.store.remove_stake(&addr, id);
@@ -507,8 +504,10 @@ impl<S: StakingStore> StakingManager<S> {
         // Add or update validators in the formal list
         for vs in &formal {
             let new_power = vs.voting_power();
-            let current_power = current_set.power_of(vs.id);
-            if new_power != current_power {
+            let unchanged = current_set.get(vs.id).is_some_and(|current| {
+                current.power == new_power && current.public_key == vs.public_key
+            });
+            if !unchanged {
                 updates.push(ValidatorUpdate {
                     id: vs.id,
                     public_key: vs.public_key.clone(),

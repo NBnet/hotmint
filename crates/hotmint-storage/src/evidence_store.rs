@@ -117,6 +117,9 @@ impl PersistentEvidenceStore {
                     std::fs::File::create(&meta_path).c(d!("create evidence_store.meta"))?;
                 f.write_all(&meta).c(d!("write evidence_store.meta"))?;
                 f.sync_all().c(d!("fsync evidence_store.meta"))?;
+                std::fs::File::open(data_dir)
+                    .and_then(|dir| dir.sync_all())
+                    .c(d!("fsync metadata directory"))?;
             }
             Ok(Self {
                 proofs,

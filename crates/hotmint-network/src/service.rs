@@ -1151,6 +1151,11 @@ impl NetworkService {
             }
             NotificationEvent::NotificationStreamOpened { peer, .. } => {
                 trace!(peer = %peer, "mempool notif stream opened");
+                if !self.connected_peers.contains(&peer)
+                    && !self.peer_map.peer_to_validator.contains_key(&peer)
+                {
+                    return;
+                }
                 self.mempool_notif_connected_peers.insert(peer);
             }
             NotificationEvent::NotificationStreamClosed { peer } => {
@@ -1158,6 +1163,11 @@ impl NetworkService {
                 self.remove_mempool_peer(&peer);
             }
             NotificationEvent::NotificationReceived { peer, notification } => {
+                // Rejected or evicted peers may still have a transport substream.
+                // Only admitted streams may consume the gossip queue and budget.
+                if !self.mempool_notif_connected_peers.contains(&peer) {
+                    return;
+                }
                 // C-2: Per-peer tx gossip rate limit — max 500 tx/sec per peer.
                 const MAX_TX_PER_SEC: u32 = 500;
                 let now = Instant::now();
@@ -1203,12 +1213,15 @@ impl NetworkService {
         &mut self,
         validators: Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>,
     ) {
-        // Rebuild peer_map entries for new validators using PeerBook
+        // Derive routing identities from consensus keys, including key rotations
+        // that retain the same validator ID.
         for (vid, pubkey) in &validators {
-            if self.peer_map.validator_to_peer.contains_key(vid) {
+            if self.peer_map.validator_to_peer.contains_key(vid)
+                && self.validator_keys.get(vid) == Some(pubkey)
+            {
                 continue;
             }
-            // Try to find PeerId from PeerBook by looking up the public key
+            // Node and validator keys share the same identity in this protocol.
             let pk_bytes = &pubkey.0;
             if let Ok(lpk) = litep2p::crypto::ed25519::PublicKey::try_from_bytes(pk_bytes) {
                 let peer_id = lpk.to_peer_id();
@@ -1344,5 +1357,138 @@ impl NetworkSink for Litep2pNetworkSink {
         if let Err(e) = self.cmd_tx.try_send(NetCommand::BroadcastTx(tx_bytes)) {
             warn!("broadcast_tx cmd dropped: {e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hotmint_types::PublicKey;
+    use litep2p::crypto::ed25519::Keypair;
+    use litep2p::protocol::notification::Direction;
+
+    use super::*;
+
+    fn opened_mempool_stream(peer: PeerId) -> NotificationEvent {
+        NotificationEvent::NotificationStreamOpened {
+            protocol: MEMPOOL_NOTIF_PROTOCOL.into(),
+            fallback: None,
+            direction: Direction::Inbound,
+            peer,
+            handshake: vec![0; 32],
+        }
+    }
+
+    fn mempool_notification(peer: PeerId, data: &[u8]) -> NotificationEvent {
+        NotificationEvent::NotificationReceived {
+            peer,
+            notification: data.into(),
+        }
+    }
+
+    fn test_network(
+        peer_map: PeerMap,
+        initial_validators: Vec<(ValidatorId, PublicKey)>,
+    ) -> NetworkServiceHandles {
+        NetworkService::create(NetworkConfig {
+            listen_addr: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+            peer_map,
+            known_addresses: vec![],
+            keypair: None,
+            peer_book: Arc::new(RwLock::new(PeerBook::new("unused-test-peer-book"))),
+            pex_config: PexConfig::default(),
+            relay_consensus: false,
+            initial_validators,
+            chain_id_hash: [0; 32],
+        })
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn epoch_key_rotation_replaces_peer_mapping_without_peer_book() {
+        let old_key = Keypair::generate().public();
+        let new_key = Keypair::generate().public();
+        let unchanged_key = Keypair::generate().public();
+        let rotated = ValidatorId(1);
+        let unchanged = ValidatorId(2);
+        let unchanged_peer = PeerId::random();
+        let mut peers = PeerMap::new();
+        peers.insert(rotated, old_key.to_peer_id());
+        peers.insert(unchanged, unchanged_peer);
+        let mut service = test_network(
+            peers,
+            vec![
+                (rotated, PublicKey(old_key.to_bytes().to_vec())),
+                (unchanged, PublicKey(unchanged_key.to_bytes().to_vec())),
+            ],
+        )
+        .service;
+
+        assert!(service.peer_book.read().await.is_empty());
+        service
+            .handle_epoch_change(vec![
+                (rotated, PublicKey(new_key.to_bytes().to_vec())),
+                (unchanged, PublicKey(unchanged_key.to_bytes().to_vec())),
+            ])
+            .await;
+
+        let new_peer = new_key.to_peer_id();
+        assert_eq!(
+            service.peer_map.validator_to_peer.get(&rotated),
+            Some(&new_peer)
+        );
+        assert_eq!(
+            service.peer_map.peer_to_validator.get(&new_peer),
+            Some(&rotated)
+        );
+        assert!(
+            !service
+                .peer_map
+                .peer_to_validator
+                .contains_key(&old_key.to_peer_id())
+        );
+        assert_eq!(service.persistent_peers.get(&rotated), Some(&new_peer));
+        assert_eq!(
+            service.peer_map.validator_to_peer.get(&unchanged),
+            Some(&unchanged_peer)
+        );
+    }
+
+    #[tokio::test]
+    async fn mempool_gossip_requires_an_admitted_stream() {
+        let handles = test_network(PeerMap::new(), vec![]);
+        let mut service = handles.service;
+        let mut tx_rx = handles.mempool_tx_rx;
+        let peer = PeerId::random();
+
+        // A transport connection rejected by the cap must not acquire a stream
+        // slot, rate-limit entry, dedup entry, or transaction queue capacity.
+        service
+            .handle_mempool_notification_event(opened_mempool_stream(peer))
+            .await;
+        service
+            .handle_mempool_notification_event(mempool_notification(peer, b"rejected"))
+            .await;
+        assert!(!service.mempool_notif_connected_peers.contains(&peer));
+        assert!(!service.mempool_peer_rate.contains_key(&peer));
+        assert!(service.mempool_seen_active.is_empty());
+        assert!(tx_rx.try_recv().is_err());
+
+        service.connected_peers.insert(peer);
+        service
+            .handle_mempool_notification_event(opened_mempool_stream(peer))
+            .await;
+        service
+            .handle_mempool_notification_event(mempool_notification(peer, b"accepted"))
+            .await;
+        assert_eq!(tx_rx.try_recv().unwrap(), b"accepted");
+
+        // The transport may continue delivering after eviction.
+        service.connected_peers.remove(&peer);
+        service.remove_mempool_peer(&peer);
+        service
+            .handle_mempool_notification_event(mempool_notification(peer, b"evicted"))
+            .await;
+        assert!(!service.mempool_peer_rate.contains_key(&peer));
+        assert!(tx_rx.try_recv().is_err());
     }
 }

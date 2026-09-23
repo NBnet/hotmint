@@ -12,6 +12,7 @@ const KEY_LAST_COMMITTED_HEIGHT: u64 = 4;
 const KEY_CURRENT_EPOCH: u64 = 5;
 const KEY_LAST_APP_HASH: u64 = 6;
 const KEY_PENDING_EPOCH: u64 = 7;
+const KEY_PREVIOUS_EPOCH: u64 = 8;
 
 /// Persisted consensus state fields (serialized as a single blob per key)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +64,9 @@ impl PersistentConsensusState {
                 f.write_all(&store_id.to_le_bytes())
                     .c(d!("write consensus_state.meta"))?;
                 f.sync_all().c(d!("fsync consensus_state.meta"))?;
+                std::fs::File::open(data_dir)
+                    .and_then(|dir| dir.sync_all())
+                    .c(d!("fsync metadata directory"))?;
             }
             Ok(Self { store })
         }
@@ -169,6 +173,27 @@ impl PersistentConsensusState {
         })
     }
 
+    pub fn save_previous_epoch(&mut self, epoch: Option<&Epoch>) {
+        match epoch {
+            Some(epoch) => {
+                self.store
+                    .insert(&KEY_PREVIOUS_EPOCH, &StateValue::Epoch(epoch.clone()));
+            }
+            None => {
+                self.store.remove(&KEY_PREVIOUS_EPOCH);
+            }
+        }
+    }
+
+    pub fn load_previous_epoch(&self) -> Option<Epoch> {
+        self.store
+            .get(&KEY_PREVIOUS_EPOCH)
+            .and_then(|value| match value {
+                StateValue::Epoch(epoch) => Some(epoch),
+                _ => None,
+            })
+    }
+
     pub fn flush(&self) {
         vsdb::vsdb_flush();
     }
@@ -195,6 +220,9 @@ impl hotmint_consensus::engine::StatePersistence for PersistentConsensusState {
     }
     fn save_pending_epoch(&mut self, epoch: Option<&Epoch>) {
         self.save_pending_epoch(epoch);
+    }
+    fn save_previous_epoch(&mut self, epoch: Option<&Epoch>) {
+        self.save_previous_epoch(epoch);
     }
     fn flush(&self) {
         self.flush();

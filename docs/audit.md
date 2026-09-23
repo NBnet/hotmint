@@ -10,6 +10,128 @@
 
 ---
 
+## Resolved — Full Overhaul (2026-09-23)
+
+> **Scope:** All Rust source, tests, benches, examples, and handwritten Go SDK code; consensus, crypto/types/light, staking/mempool, storage, networking, API/ABCI, node/configuration, and management.
+> **Findings:** 28 total (2 critical, 16 high, 9 medium, 1 low).
+> **Status:** All 28 fixed; existing Won’t Fix entries retained; no new Won’t Fix entries.
+> **Compatibility:** No legacy data-format compatibility required; project has never been deployed.
+> **Validation:** Workspace tests: 202 passed, 0 failed (1 pre-existing ignored doctest); final consensus regression suite includes the added maximum-view TC rejection test. Clippy all targets with warnings denied, rustdoc with warnings denied, formatting, Go race tests, and node startup/key-permission/RPC-disable/NaN-backoff smoke checks passed.
+
+### [CRITICAL] consensus: reject unsigned non-genesis QCs
+- **Where**: engine.rs
+- **Resolution**: Proposal, Wish, and TC paths now accept an unsigned QC only for the canonical genesis block/view/epoch; other QCs require authenticated quorum signatures.
+
+### [CRITICAL] consensus: make evidence application deterministic
+- **Where**: commit.rs, view_protocol.rs, sync.rs, application.rs
+- **Resolution**: Evidence is authenticated before voting or replay and applied only while committing its block, before execution and app-hash checks. Gossip only records proofs; callback failures halt the commit. Live commit and replay share the execution lifecycle.
+
+### [HIGH] consensus: reject overflowing timeout certificate views
+- **Where**: engine.rs
+- **Resolution**: Reject terminal view numbers before deriving a target view in relay and engine verification, preventing unauthenticated TC input from overflowing arithmetic.
+
+### [HIGH] consensus: validate complete commit ancestry
+- **Where**: commit.rs
+- **Resolution**: Validate exact parent heights and the committed-chain anchor before any ancestor executes, preventing certified height gaps and disconnected forks.
+
+### [HIGH] consensus: retain the Vote1 QC from a DoubleCert
+- **Where**: view_protocol.rs
+- **Resolution**: View entry promotes the inner Vote1 QC, avoiding later proposal justification with a Vote2 aggregate signature.
+
+### [HIGH] consensus/sync: authenticate epoch activation before mutation
+- **Where**: sync.rs
+- **Resolution**: Stage the replay epoch until block and certificates validate, so rejected responses cannot consume pending transitions.
+
+### [HIGH] consensus/storage: restore previous epoch after restart
+- **Where**: engine.rs, sync.rs, consensus_state.rs, node.rs
+- **Resolution**: Persist and restore the previous Epoch alongside current/pending state, including replay transitions. Retained certificates use its exact epoch number and validator set after restart.
+
+### [HIGH] sync/storage: handle hostile block ranges
+- **Where**: node.rs, cluster-node/src/main.rs, block_store.rs, store.rs
+- **Resolution**: Use saturating range caps and return empty for reversed ranges, preventing peer-supplied overflow or ordered-map range panics.
+
+### [HIGH] network: enforce admission for transaction gossip
+- **Where**: service.rs
+- **Resolution**: Only admitted mempool streams consume deduplication, rate-limit, and transaction queues; rejected and evicted connections cannot bypass the connection cap.
+
+### [HIGH] ABCI: preserve empty-message failures across the wire
+- **Where**: protocol.rs, sdk/go/server.go
+- **Resolution**: Encode a nonempty error sentinel when application errors have empty text, including commit, evidence, offline, initialization, execution, and query responses.
+
+### [HIGH] node/network: initialize routing from restored and synced epochs
+- **Where**: node.rs, cluster-node/src/main.rs
+- **Resolution**: Notify the network of restored and post-sync validator sets and initialize production RPC watches from the matching consensus state.
+
+### [HIGH] network: replace routing identities after key rotation
+- **Where**: service.rs
+- **Resolution**: An existing validator ID with a changed public key replaces both routing directions and its persistent-peer identity; unchanged configured mappings are retained.
+
+### [HIGH] types: avoid quorum arithmetic overflow
+- **Where**: validator.rs
+- **Resolution**: Calculate quorum thresholds with u128 intermediates and handle empty-set faulty-power bounds without underflow.
+
+### [HIGH] staking: conserve balances during proportional slashing
+- **Where**: manager.rs
+- **Resolution**: Cumulative proportional allocation exactly matches aggregate slash amounts even for many tiny stakes; withdrawal tests verify the remaining total.
+
+### [HIGH] management: safely transfer directories and binary files
+- **Where**: remote.rs
+- **Resolution**: Pass local paths and SSH targets as process arguments, quote remote paths, stream binary bytes, reap both pipe processes, and propagate producer/consumer failures.
+
+### [HIGH] configuration/management: restrict keys before writing secrets
+- **Where**: config.rs, cluster.rs, remote.rs
+- **Resolution**: Create private keys with mode 0600 and restrict existing files before truncation or writes; remote creation sets umask 077 before receiving content.
+
+### [HIGH] storage: durably publish newly created metadata and WAL files
+- **Where**: block_store.rs, consensus_state.rs, evidence_store.rs, wal.rs
+- **Resolution**: Fsync containing directories after file creation so durable contents remain reachable after a crash. Removed obsolete block-store metadata migration support.
+
+### [HIGH] node: honor serve_rpc for HTTP/WebSocket listeners
+- **Where**: node.rs
+- **Resolution**: Disabling RPC also disables configured HTTP/WebSocket endpoints.
+
+### [MEDIUM] sync: persist historical transaction indexes and execution results
+- **Where**: sync.rs
+- **Resolution**: Replay writes transaction locations and EndBlockResponse records before checkpointing, preserving API queries on synced nodes.
+
+### [MEDIUM] API: enforce line limits at newline boundaries
+- **Where**: rpc.rs
+- **Resolution**: Check the final buffer segment against the limit before accepting a newline; boundary and multi-chunk tests cover the bypass.
+
+### [MEDIUM] Go SDK: bound outbound frames
+- **Where**: sdk/go/frame.go
+- **Resolution**: Reject oversized payloads before writing a frame prefix, matching inbound frame limits.
+
+### [MEDIUM] staking: emit key-only validator updates
+- **Where**: manager.rs
+- **Resolution**: Compare public keys as well as voting power so equal-power key rotations reach consensus and network routing.
+
+### [MEDIUM] management: parse framed RPC responses for DNS and IPv6 hosts
+- **Where**: lib.rs, local.rs, remote.rs
+- **Resolution**: Resolve socket addresses and read one bounded newline-delimited JSON response without waiting for a persistent connection to close.
+
+### [MEDIUM] management: drain Cargo output and honor its target directory
+- **Where**: lib.rs, local.rs
+- **Resolution**: Drain stdout/stderr during builds and parse cargo metadata for target_directory, including custom and escaped paths.
+
+### [MEDIUM] node: continue forwarding events after broadcast lag
+- **Where**: node.rs
+- **Resolution**: Skip reported lost events and continue the forwarding loop; stop only when the source closes.
+
+### [MEDIUM] configuration: return errors for invalid genesis validator sets
+- **Where**: config.rs
+- **Resolution**: Reject empty, duplicate, and malformed genesis sets through fallible validation instead of panicking.
+
+### [MEDIUM] node: reject nonfinite pacemaker backoff
+- **Where**: node.rs
+- **Resolution**: Require a finite multiplier of at least one, preventing NaN/infinite configuration from producing invalid timeout behavior.
+
+### [LOW] documentation: align public examples and lifecycle descriptions
+- **Where**: crate READMEs, hash.rs, docs/application.md
+- **Resolution**: Correct outdated APIs, serialization descriptions, evidence lifecycle, and slashing rates to match the implementation.
+
+---
+
 ## Resolved — Audit Backlog Fix
 
 > **Scope:** Full audit backlog from latest `/x-review`

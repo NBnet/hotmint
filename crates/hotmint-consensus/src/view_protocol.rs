@@ -61,7 +61,7 @@ pub fn enter_view(
             }
         }
         ViewEntryTrigger::DoubleCert(dc) => {
-            state.update_highest_qc(&dc.outer_qc);
+            state.update_highest_qc(&dc.inner_qc);
             state.highest_double_cert = Some(dc);
             if am_leader {
                 state.step = ViewStep::WaitingForStatus;
@@ -136,7 +136,8 @@ pub fn propose(
     network: &dyn NetworkSink,
     app: &dyn Application,
     signer: &dyn Signer,
-    evidence: Vec<EquivocationProof>,
+    mut evidence: Vec<EquivocationProof>,
+    verifier: &dyn Verifier,
 ) -> Result<Block> {
     let justify = state
         .highest_qc
@@ -168,6 +169,19 @@ pub fn propose(
     };
 
     let payload = app.create_payload(&ctx);
+
+    // Queued proofs can outlive validator membership/key changes. Only embed
+    // proofs that replicas can authenticate against the proposal's epoch.
+    evidence.retain(|proof| {
+        crate::commit::validate_evidence(
+            proof,
+            state.current_view,
+            &state.current_epoch,
+            &state.chain_id_hash,
+            verifier,
+        )
+        .is_ok()
+    });
 
     if !evidence.is_empty() {
         info!(
@@ -270,6 +284,7 @@ pub fn on_proposal(
     network: &dyn NetworkSink,
     app: &dyn Application,
     signer: &dyn Signer,
+    verifier: &dyn Verifier,
 ) -> Result<ProposalResult> {
     let ProposalData {
         block,
@@ -388,6 +403,12 @@ pub fn on_proposal(
         vote_extensions: vec![],
     };
 
+    crate::commit::validate_block_evidence(
+        &block,
+        &state.current_epoch,
+        &state.chain_id_hash,
+        verifier,
+    )?;
     if !app.validate_block(&block, &ctx) {
         return Err(eg!("application rejected block"));
     }

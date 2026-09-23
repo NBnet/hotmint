@@ -19,6 +19,7 @@ use hotmint::api::rpc::ConsensusStatus;
 use hotmint::config::{self, GenesisDoc, NodeConfig, NodeKey, PrivValidatorKey};
 use hotmint::consensus::application::{Application, NoopApplication, TxValidationResult};
 use hotmint::consensus::engine::{ConsensusEngine, EngineConfig};
+use hotmint::consensus::network::NetworkSink;
 use hotmint::consensus::pacemaker::PacemakerConfig;
 use hotmint::consensus::state::ConsensusState;
 use hotmint::consensus::store::BlockStore;
@@ -164,16 +165,19 @@ async fn run(home: &std::path::Path) -> Result<()> {
         })?
     };
 
+    network_sink.on_epoch_change(state.current_epoch.number, &state.validator_set);
+
     // Embedded application with status tracking
     let (status_tx, status_rx) = watch::channel(ConsensusStatus::new(
-        0,
+        state.current_view.as_u64(),
         state.last_committed_height.as_u64(),
         state.current_epoch.number.as_u64(),
-        validator_set.validator_count(),
+        state.validator_set.validator_count(),
         state.current_epoch.start_view.as_u64(),
     ));
 
-    let initial_vs: Vec<hotmint::api::types::ValidatorInfoResponse> = validator_set
+    let initial_vs: Vec<hotmint::api::types::ValidatorInfoResponse> = state
+        .validator_set
         .validators()
         .iter()
         .map(|v| hotmint::api::types::ValidatorInfoResponse {
@@ -240,10 +244,13 @@ async fn run(home: &std::path::Path) -> Result<()> {
                         from_height,
                         to_height,
                     } => {
-                        let clamped =
-                            Height(to_height.as_u64().min(
-                                from_height.as_u64() + hotmint_types::sync::MAX_SYNC_BATCH - 1,
-                            ));
+                        let clamped = Height(
+                            to_height.as_u64().min(
+                                from_height
+                                    .as_u64()
+                                    .saturating_add(hotmint_types::sync::MAX_SYNC_BATCH - 1),
+                            ),
+                        );
                         let s = store.read();
                         let blocks = s.get_blocks_in_range(from_height, clamped);
                         let blocks_with_qcs: Vec<_> = blocks
@@ -276,6 +283,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
 
     // Block sync
     let mut engine_state_epoch = state.current_epoch.clone();
+    let mut engine_previous_epoch = pcs.load_previous_epoch();
     let mut engine_state_height = state.last_committed_height;
     let mut engine_state_app_hash = state.last_app_hash;
     let mut engine_state_pending_epoch: Option<Epoch> = pcs.load_pending_epoch();
@@ -349,6 +357,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
                     store: &mut sync_store,
                     app: &sync_app,
                     current_epoch: &mut engine_state_epoch,
+                    previous_epoch: &mut engine_previous_epoch,
                     last_committed_height: &mut engine_state_height,
                     last_app_hash: &mut engine_state_app_hash,
                     chain_id_hash: &state.chain_id_hash,
@@ -404,6 +413,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
         }
     }
 
+    network_sink.on_epoch_change(state.current_epoch.number, &state.validator_set);
     let signer = Ed25519Signer::new(signing_key, our_vid);
     let engine = ConsensusEngine::new(
         state,
@@ -423,6 +433,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
             evidence_store: None,
             wal: None,
             pending_epoch: engine_state_pending_epoch,
+            previous_epoch: engine_previous_epoch,
         },
     );
 

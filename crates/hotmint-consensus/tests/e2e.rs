@@ -123,6 +123,7 @@ fn spawn_node_with_state(
             evidence_store: None,
             wal: None,
             pending_epoch: None,
+            previous_epoch: None,
         },
     );
 
@@ -462,11 +463,28 @@ async fn test_validator_leave() {
 }
 
 // ---------------------------------------------------------------------------
-// TEST 4: Equivocation detection — inject a double-vote, verify callback fires
+// TEST 4: Equivocation detection — inject a double-vote, verify evidence is broadcast
 //
 // Pre-load equivocating votes into the leader's channel before starting
 // engines, guaranteeing the leader processes them in view 1.
 // ---------------------------------------------------------------------------
+
+struct EvidenceTrackingNetwork {
+    network: DynamicNetwork,
+    detected: Arc<AtomicU64>,
+}
+
+impl NetworkSink for EvidenceTrackingNetwork {
+    fn broadcast(&self, msg: ConsensusMessage) {
+        self.network.broadcast(msg);
+    }
+    fn send_to(&self, target: ValidatorId, msg: ConsensusMessage) {
+        self.network.send_to(target, msg);
+    }
+    fn broadcast_evidence(&self, _: &EquivocationProof) {
+        self.detected.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 struct EquivocationWatchApp {
     commits: Arc<AtomicU64>,
@@ -558,6 +576,7 @@ async fn test_equivocation_detected_via_injected_votes() {
 
     let mut equivocation_counters: Vec<Arc<AtomicU64>> = Vec::new();
     let mut handles = Vec::new();
+    let detected = Arc::new(AtomicU64::new(0));
 
     for (signer, rx) in signers.into_iter().zip(node_rxs.iter_mut()) {
         let vid = signer.validator_id();
@@ -568,9 +587,12 @@ async fn test_equivocation_detected_via_injected_votes() {
             equivocations,
         };
 
-        let network = DynamicNetwork {
-            self_id: vid,
-            routing: routing.clone(),
+        let network = EvidenceTrackingNetwork {
+            network: DynamicNetwork {
+                self_id: vid,
+                routing: routing.clone(),
+            },
+            detected: detected.clone(),
         };
         let store = Arc::new(RwLock::new(
             Box::new(MemoryBlockStore::new()) as Box<dyn hotmint_consensus::store::BlockStore>
@@ -590,6 +612,7 @@ async fn test_equivocation_detected_via_injected_votes() {
                 evidence_store: None,
                 wal: None,
                 pending_epoch: None,
+                previous_epoch: None,
             },
         );
         handles.push(tokio::spawn(async move { engine.run().await }));
@@ -598,11 +621,13 @@ async fn test_equivocation_detected_via_injected_votes() {
     // Give the engines time to process view 1
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
-    // V1 (leader of view 1) should have detected the equivocation
-    let detected = equivocation_counters[1].load(Ordering::Relaxed);
+    assert!(detected.load(Ordering::Relaxed) >= 1);
+    // Detection alone must not mutate the application; no evidence store is
+    // configured here, so these proofs have not been included in a block.
     assert!(
-        detected >= 1,
-        "V1 should have detected >=1 equivocation, detected {detected}"
+        equivocation_counters
+            .iter()
+            .all(|c| c.load(Ordering::Relaxed) == 0)
     );
 
     for h in handles {

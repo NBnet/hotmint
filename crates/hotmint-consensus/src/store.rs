@@ -159,6 +159,9 @@ impl BlockStore for MemoryBlockStore {
     }
 
     fn get_blocks_in_range(&self, from: Height, to: Height) -> Vec<Block> {
+        if from > to {
+            return Vec::new();
+        }
         self.by_height
             .range(from.as_u64()..=to.as_u64())
             .filter_map(|(_, hash)| self.by_hash.get(hash).cloned())
@@ -273,6 +276,8 @@ mod tests {
         // Partial range
         let blocks = store.get_blocks_in_range(Height(2), Height(3));
         assert_eq!(blocks.len(), 2);
+
+        assert!(store.get_blocks_in_range(Height(3), Height(1)).is_empty());
 
         // Out of range
         let blocks = store.get_blocks_in_range(Height(10), Height(20));

@@ -34,6 +34,7 @@ pub trait StatePersistence: Send {
     fn save_highest_qc(&mut self, qc: &QuorumCertificate);
     fn save_last_committed_height(&mut self, height: Height);
     fn save_current_epoch(&mut self, epoch: &Epoch);
+    fn save_previous_epoch(&mut self, epoch: Option<&Epoch>);
     fn save_last_app_hash(&mut self, hash: BlockHash);
     fn save_pending_epoch(&mut self, epoch: Option<&Epoch>);
     fn flush(&self);
@@ -86,7 +87,7 @@ pub struct ConsensusEngine {
     msg_rate_limiter: HashMap<ValidatorId, (std::time::Instant, u32)>,
     /// Previous epoch's validator set, retained for verifying in-flight messages
     /// (especially TCs) that were formed before the epoch transition.
-    previous_validator_set: Option<ValidatorSet>,
+    previous_epoch: Option<Epoch>,
 }
 
 /// Configuration for ConsensusEngine.
@@ -98,6 +99,8 @@ pub struct EngineConfig {
     pub wal: Option<Box<dyn Wal>>,
     /// Restored pending epoch transition (from crash recovery).
     pub pending_epoch: Option<Epoch>,
+    /// Retained previous epoch, restored with its verification keys after restart.
+    pub previous_epoch: Option<Epoch>,
 }
 
 impl EngineConfig {
@@ -111,6 +114,7 @@ impl EngineConfig {
             evidence_store: None,
             wal: None,
             pending_epoch: None,
+            previous_epoch: None,
         }
     }
 
@@ -253,6 +257,7 @@ impl ConsensusEngineBuilder {
             evidence_store: self.evidence_store,
             wal: self.wal,
             pending_epoch: None,
+            previous_epoch: None,
         };
 
         Ok(ConsensusEngine::new(
@@ -297,7 +302,7 @@ impl ConsensusEngine {
             liveness_tracker: LivenessTracker::new(),
             wal: config.wal,
             msg_rate_limiter: HashMap::new(),
-            previous_validator_set: None,
+            previous_epoch: config.previous_epoch,
         }
     }
 
@@ -407,6 +412,7 @@ impl ConsensusEngine {
                     self.app.as_ref(),
                     self.signer.as_ref(),
                     pending_evidence,
+                    self.verifier.as_ref(),
                 )
             }; // lock released here
 
@@ -556,7 +562,9 @@ pub fn verify_relay_sender(
         }
         ConsensusMessage::TimeoutCert(tc) => {
             // Full relay verification: verify each signer's signature + quorum check.
-            let target_view = ViewNumber(tc.view.as_u64() + 1);
+            let Some(target_view) = tc.view.as_u64().checked_add(1).map(ViewNumber) else {
+                return false;
+            };
             let n = ordered_validators.len();
             if n == 0 || tc.aggregate_signature.signers.len() != n {
                 return false;
@@ -629,7 +637,9 @@ impl ConsensusEngine {
     /// Verify a TimeoutCert against a specific validator set.
     /// Returns true if the TC has valid signatures and sufficient quorum.
     fn verify_tc(&self, tc: &hotmint_types::TimeoutCertificate, vs: &ValidatorSet) -> bool {
-        let target_view = ViewNumber(tc.view.as_u64() + 1);
+        let Some(target_view) = tc.view.as_u64().checked_add(1).map(ViewNumber) else {
+            return false;
+        };
         let n = vs.validator_count();
         if tc.aggregate_signature.signers.len() != n {
             return false;
@@ -648,8 +658,7 @@ impl ConsensusEngine {
             };
             let hqc = tc.highest_qcs.get(i).and_then(|h| h.as_ref());
             if let Some(qc) = hqc
-                && qc.aggregate_signature.count() > 0
-                && !self.verify_vote_qc(qc, VoteType::Vote)
+                && !self.verify_justify_qc(qc)
             {
                 return false;
             }
@@ -682,14 +691,13 @@ impl ConsensusEngine {
 
     /// Epoch numbers to try when verifying signatures. During epoch transitions,
     /// some nodes may still be in the previous epoch. We try the current epoch
-    /// first, then fall back to epoch - 1 to tolerate the transition window.
+    /// first, then the retained epoch to tolerate the transition window.
     fn verification_epochs(&self) -> [EpochNumber; 2] {
         let cur = self.state.current_epoch.number;
-        let prev = if cur.as_u64() > 0 {
-            EpochNumber(cur.as_u64() - 1)
-        } else {
-            cur
-        };
+        let prev = self
+            .previous_epoch
+            .as_ref()
+            .map_or(cur, |epoch| epoch.number);
         [cur, prev]
     }
 
@@ -697,10 +705,10 @@ impl ConsensusEngine {
         if epoch == self.state.current_epoch.number {
             return Some(&self.state.validator_set);
         }
-        if epoch.as_u64().checked_add(1) == Some(self.state.current_epoch.number.as_u64()) {
-            return self.previous_validator_set.as_ref();
-        }
-        None
+        self.previous_epoch
+            .as_ref()
+            .filter(|previous| previous.number == epoch)
+            .map(|previous| &previous.validator_set)
     }
 
     fn verify_vote_aggregate(&self, aggregate: VoteAggregateRef<'_>) -> bool {
@@ -782,6 +790,19 @@ impl ConsensusEngine {
         }
     }
 
+    /// Only the canonical genesis certificate may omit quorum signatures.
+    fn verify_justify_qc(&self, qc: &QuorumCertificate) -> bool {
+        if qc.block_hash == BlockHash::GENESIS
+            && qc.view == ViewNumber::GENESIS
+            && qc.epoch == EpochNumber(0)
+            && qc.aggregate_signature.count() == 0
+            && qc.aggregate_signature.signatures.is_empty()
+        {
+            return true;
+        }
+        self.verify_vote_qc(qc, VoteType::Vote)
+    }
+
     fn verify_vote_qc(&self, qc: &QuorumCertificate, vote_type: VoteType) -> bool {
         let Some(vs) = self.validator_set_for_epoch(qc.epoch) else {
             return false;
@@ -814,7 +835,12 @@ impl ConsensusEngine {
             ConsensusMessage::VoteMsg(v) | ConsensusMessage::Vote2Msg(v) => Some(v.view),
             ConsensusMessage::Prepare { certificate, .. } => Some(certificate.view),
             ConsensusMessage::Wish { target_view, .. } => Some(*target_view),
-            ConsensusMessage::TimeoutCert(tc) => Some(ViewNumber(tc.view.as_u64() + 1)),
+            ConsensusMessage::TimeoutCert(tc) => {
+                let Some(target_view) = tc.view.as_u64().checked_add(1).map(ViewNumber) else {
+                    return false;
+                };
+                Some(target_view)
+            }
             ConsensusMessage::StatusCert { .. } => None,
             ConsensusMessage::Evidence(_) => None, // always accept evidence
         };
@@ -855,9 +881,7 @@ impl ConsensusEngine {
                     return false;
                 }
                 // Verify justify QC aggregate signature (skip genesis QC which has no signers)
-                if justify.aggregate_signature.count() > 0
-                    && !self.verify_vote_qc(justify, VoteType::Vote)
-                {
+                if !self.verify_justify_qc(justify) {
                     warn!(proposer = %block.proposer, "invalid justify QC");
                     return false;
                 }
@@ -933,9 +957,9 @@ impl ConsensusEngine {
                 signature,
             } => {
                 let vi = vs.get(*validator).or_else(|| {
-                    self.previous_validator_set
+                    self.previous_epoch
                         .as_ref()
-                        .and_then(|prev| prev.get(*validator))
+                        .and_then(|prev| prev.validator_set.get(*validator))
                 });
                 let Some(vi) = vi else {
                     warn!(validator = %validator, "wish from unknown validator");
@@ -967,8 +991,8 @@ impl ConsensusEngine {
                 if self.verify_tc(tc, vs) {
                     return true;
                 }
-                if let Some(ref prev) = self.previous_validator_set
-                    && self.verify_tc(tc, prev)
+                if let Some(ref prev) = self.previous_epoch
+                    && self.verify_tc(tc, &prev.validator_set)
                 {
                     return true;
                 }
@@ -1156,6 +1180,7 @@ impl ConsensusEngine {
                     self.network.as_ref(),
                     self.app.as_ref(),
                     self.signer.as_ref(),
+                    self.verifier.as_ref(),
                 )
                 .c(d!())
                 {
@@ -1326,8 +1351,7 @@ impl ConsensusEngine {
                 // Validate carried highest_qc (C4 mitigation).
                 // Both signature authenticity and 2f+1 quorum weight must pass.
                 if let Some(ref qc) = highest_qc
-                    && qc.aggregate_signature.count() > 0
-                    && !block_in_place(|| self.verify_vote_qc(qc, VoteType::Vote))
+                    && !block_in_place(|| self.verify_justify_qc(qc))
                 {
                     warn!(validator = %validator, "wish carries invalid highest_qc");
                     return Ok(());
@@ -1452,9 +1476,6 @@ impl ConsensusEngine {
                     store.put_evidence(proof.clone());
                     store.flush();
                 }
-                if let Err(e) = self.app.on_evidence(&proof) {
-                    warn!(error = %e, "on_evidence callback failed for gossiped proof");
-                }
             }
         }
         Ok(())
@@ -1472,9 +1493,6 @@ impl ConsensusEngine {
                 // A4-2: Flush immediately so evidence survives crashes
                 // between detection and the next block commit.
                 store.flush();
-            }
-            if let Err(e) = self.app.on_evidence(proof) {
-                warn!(error = %e, "on_evidence callback failed");
             }
             self.network.broadcast_evidence(proof);
         }
@@ -1848,6 +1866,7 @@ impl ConsensusEngine {
             }
             p.save_last_committed_height(self.state.last_committed_height);
             p.save_current_epoch(&self.state.current_epoch);
+            p.save_previous_epoch(self.previous_epoch.as_ref());
             p.save_last_app_hash(self.state.last_app_hash);
             p.save_pending_epoch(self.pending_epoch.as_ref());
             p.flush();
@@ -1931,7 +1950,7 @@ impl ConsensusEngine {
             }
             self.liveness_tracker.reset();
 
-            self.previous_validator_set = Some(self.state.validator_set.clone());
+            self.previous_epoch = Some(self.state.current_epoch.clone());
             self.state.validator_set = new_epoch.validator_set.clone();
             self.state.current_epoch = new_epoch;
             // Notify network layer of the new validator set and epoch
@@ -2049,9 +2068,167 @@ mod tests {
                 evidence_store: None,
                 wal: None,
                 pending_epoch: None,
+                previous_epoch: None,
             },
         );
         (engine, tx)
+    }
+
+    #[test]
+    fn maximum_view_timeout_certificate_is_rejected_without_overflow() {
+        let (vs, signers) = make_validator_set_4();
+        let (engine, _tx) = make_test_engine(
+            ValidatorId(0),
+            vs.clone(),
+            Ed25519Signer::generate(ValidatorId(0)),
+        );
+        let tc = TimeoutCertificate {
+            view: ViewNumber(u64::MAX),
+            aggregate_signature: AggregateSignature::new(4),
+            highest_qcs: vec![None; 4],
+        };
+        assert!(!engine.verify_tc(&tc, &vs));
+        let message = ConsensusMessage::TimeoutCert(tc);
+        assert!(!engine.verify_message(&message));
+        let keys = signers
+            .iter()
+            .map(|signer| (signer.validator_id(), signer.public_key()))
+            .collect();
+        let ordered = signers
+            .iter()
+            .map(|signer| signer.validator_id())
+            .collect::<Vec<_>>();
+        assert!(!verify_relay_sender(
+            ValidatorId(0),
+            &message,
+            &keys,
+            &ordered,
+            &test_chain_id_hash(),
+            EpochNumber(0)
+        ));
+    }
+
+    #[test]
+    fn restored_previous_epoch_verifies_in_flight_qc() {
+        let (old_vs, signers) = make_validator_set_4();
+        let (new_vs, _) = make_validator_set_4();
+        let old_epoch = Epoch::genesis(old_vs);
+        let mut state = ConsensusState::new(ValidatorId(0), new_vs.clone());
+        // Multiple pending updates can advance the epoch number by more than
+        // one; verification must retain the actual old number, not infer E-1.
+        state.current_epoch = Epoch::new(EpochNumber(2), ViewNumber(4), new_vs);
+        state.current_view = ViewNumber(4);
+        let mut signatures = AggregateSignature::new(4);
+        let hash = BlockHash([42; 32]);
+        for (index, signer) in signers.iter().take(3).enumerate() {
+            let bytes = Vote::signing_bytes(
+                &state.chain_id_hash,
+                old_epoch.number,
+                ViewNumber(3),
+                signer.validator_id(),
+                &hash,
+                VoteType::Vote,
+                None,
+            );
+            signatures.add(index, signer.sign(&bytes)).unwrap();
+        }
+        let qc = QuorumCertificate {
+            epoch: old_epoch.number,
+            view: ViewNumber(3),
+            block_hash: hash,
+            aggregate_signature: signatures,
+        };
+        state.highest_qc = Some(qc.clone());
+        let (_tx, rx) = mpsc::channel(1);
+        let mut config = EngineConfig::new(Box::new(Ed25519Verifier));
+        config.previous_epoch = Some(old_epoch);
+        let engine = ConsensusEngine::new(
+            state,
+            MemoryBlockStore::new_shared(),
+            Box::new(DevNullNetwork),
+            Box::new(NoopApplication),
+            Box::new(Ed25519Signer::generate(ValidatorId(0))),
+            rx,
+            config,
+        );
+        assert!(engine.verify_vote_qc(&qc, VoteType::Vote));
+        assert_eq!(
+            engine.verification_epochs(),
+            [EpochNumber(2), EpochNumber(0)]
+        );
+        assert!(engine.validator_set_for_epoch(EpochNumber(1)).is_none());
+    }
+
+    #[test]
+    fn empty_non_genesis_qc_cannot_poison_timeout_certificate() {
+        let (vs, signers) = make_validator_set_4();
+        let (engine, _tx) = make_test_engine(
+            ValidatorId(0),
+            vs.clone(),
+            Ed25519Signer::generate(ValidatorId(0)),
+        );
+        let genesis = QuorumCertificate {
+            block_hash: BlockHash::GENESIS,
+            view: ViewNumber::GENESIS,
+            aggregate_signature: AggregateSignature::new(4),
+            epoch: EpochNumber(0),
+        };
+        assert!(engine.verify_justify_qc(&genesis));
+        let forged = QuorumCertificate {
+            view: ViewNumber(100),
+            block_hash: BlockHash([42; 32]),
+            ..genesis
+        };
+        assert!(!engine.verify_justify_qc(&forged));
+        let mut pm = Pacemaker::new();
+        let mut tc = None;
+        for signer in signers.iter().take(3) {
+            let hqc = (signer.validator_id() == ValidatorId(0)).then(|| forged.clone());
+            let bytes = wish_signing_bytes(
+                &test_chain_id_hash(),
+                EpochNumber(0),
+                ViewNumber(2),
+                hqc.as_ref(),
+            );
+            tc = pm.add_wish(
+                &vs,
+                ViewNumber(2),
+                signer.validator_id(),
+                hqc,
+                signer.sign(&bytes),
+            );
+        }
+        assert!(!engine.verify_message(&ConsensusMessage::TimeoutCert(tc.unwrap())));
+    }
+
+    #[test]
+    fn double_cert_view_entry_retains_first_phase_qc() {
+        let (vs, _) = make_validator_set_4();
+        let signer = Ed25519Signer::generate(ValidatorId(0));
+        let mut state = ConsensusState::new(ValidatorId(0), vs);
+        let inner_qc = QuorumCertificate {
+            block_hash: BlockHash([42; 32]),
+            view: ViewNumber(1),
+            epoch: EpochNumber(0),
+            aggregate_signature: AggregateSignature::new(4),
+        };
+        let mut outer_qc = inner_qc.clone();
+        outer_qc
+            .aggregate_signature
+            .add(0, signer.sign(b"vote2"))
+            .unwrap();
+        view_protocol::enter_view(
+            &mut state,
+            ViewNumber(2),
+            ViewEntryTrigger::DoubleCert(DoubleCertificate {
+                inner_qc: inner_qc.clone(),
+                outer_qc,
+                vote_extensions: vec![],
+            }),
+            &DevNullNetwork,
+            &signer,
+        );
+        assert_eq!(state.highest_qc.unwrap().digest(), inner_qc.digest());
     }
 
     // R-29 regression: a Propose message whose justify QC is signed by fewer than

@@ -104,6 +104,8 @@ pub struct SyncState<'a> {
     pub chain_id_hash: &'a [u8; 32],
     /// A-1: Tracks pending epoch transitions across replay batches.
     pub pending_epoch: &'a mut Option<Epoch>,
+    /// Previous validator epoch retained for in-flight certificates after replay.
+    pub previous_epoch: &'a mut Option<Epoch>,
     /// Optional durable consensus-state checkpoint used during startup replay.
     pub persistence: Option<&'a mut dyn StatePersistence>,
     /// Optional WAL used to make sync replay crash-safe.
@@ -363,13 +365,17 @@ pub fn replay_blocks(
     let mut pending_epoch: Option<Epoch> = state.pending_epoch.clone();
 
     for (block, qc) in blocks {
-        // H-7: Apply pending epoch transition at exactly start_view, matching
-        // the engine's advance_view_to behavior.
-        if let Some(ref ep) = pending_epoch
-            && block.view >= ep.start_view
-        {
-            *state.current_epoch = pending_epoch.take().unwrap();
-        }
+        // Stage epoch activation until the incoming block has been authenticated.
+        // Invalid sync responses must not change the live epoch or consume a
+        // transition needed by a retry against another peer.
+        let activates_epoch = pending_epoch
+            .as_ref()
+            .is_some_and(|epoch| block.view >= epoch.start_view);
+        let replay_epoch = if activates_epoch {
+            pending_epoch.as_ref().unwrap().clone()
+        } else {
+            state.current_epoch.clone()
+        };
 
         // Validate height continuity against the local committed cursor.
         let expected_height = state
@@ -427,7 +433,7 @@ pub fn replay_blocks(
             }
             // Verify QC aggregate signature and quorum against the epoch that formed it.
             let verifier = hotmint_crypto::Ed25519Verifier;
-            if !verify_vote_qc(state.chain_id_hash, &verifier, state.current_epoch, cert) {
+            if !verify_vote_qc(state.chain_id_hash, &verifier, &replay_epoch, cert) {
                 return Err(eg!(
                     "sync QC verification failed at height {}",
                     block.height.as_u64()
@@ -445,10 +451,7 @@ pub fn replay_blocks(
         // Defense-in-depth: verify the proposer is the correct leader for this view.
         // The QC already proves 2f+1 honest validators accepted this block (and they
         // checked the proposer), but we re-check here to catch corrupted sync data.
-        if let Some(expected_leader) = state
-            .current_epoch
-            .validator_set
-            .leader_for_view(block.view)
+        if let Some(expected_leader) = replay_epoch.validator_set.leader_for_view(block.view)
             && block.proposer != expected_leader.id
         {
             return Err(eg!(
@@ -484,6 +487,13 @@ pub fn replay_blocks(
             ));
         }
 
+        commit::validate_block_evidence(
+            block,
+            &replay_epoch,
+            state.chain_id_hash,
+            &hotmint_crypto::Ed25519Verifier,
+        )?;
+
         // Store the block and its commit QC (H-12: so the node can serve
         // commit proofs to other syncing peers and light clients).
         state.store.put_block(block.clone());
@@ -506,9 +516,9 @@ pub fn replay_blocks(
             height: block.height,
             view: block.view,
             proposer: block.proposer,
-            epoch: state.current_epoch.number,
-            epoch_start_view: state.current_epoch.start_view,
-            validator_set: &state.current_epoch.validator_set,
+            epoch: replay_epoch.number,
+            epoch_start_view: replay_epoch.start_view,
+            validator_set: &replay_epoch.validator_set,
             timestamp: block.timestamp,
             vote_extensions: vec![],
         };
@@ -520,16 +530,13 @@ pub fn replay_blocks(
             ));
         }
 
-        let txs = commit::decode_payload(&block.payload);
-        let response = state
-            .app
-            .execute_block(&txs, &ctx)
-            .c(d!("execute_block failed during sync"))?;
+        if activates_epoch {
+            *state.previous_epoch = Some(state.current_epoch.clone());
+            pending_epoch = None;
+        }
+        *state.current_epoch = replay_epoch.clone();
 
-        state
-            .app
-            .on_commit(block, &ctx)
-            .c(d!("on_commit failed during sync"))?;
+        let response = commit::execute_committed_block(block, state.app, &ctx);
 
         *state.last_app_hash = if state.app.tracks_app_hash() {
             response.app_hash
@@ -558,6 +565,15 @@ pub fn replay_blocks(
             );
         }
 
+        // Replay must build the same RPC indexes/results as live commits.
+        for (index, tx) in commit::decode_payload(&block.payload).iter().enumerate() {
+            state
+                .store
+                .put_tx_index(*blake3::hash(tx).as_bytes(), block.height, index as u32);
+        }
+        state.store.put_block_results(block.height, response);
+        state.store.flush();
+
         *state.last_committed_height = block.height;
         *state.pending_epoch = pending_epoch.clone();
         persist_sync_checkpoint(state, pending_epoch.as_ref());
@@ -570,15 +586,6 @@ pub fn replay_blocks(
         }
     }
 
-    // If the pending epoch's start_view was reached by the last block, apply it.
-    // Otherwise, return it so the caller (engine) can defer activation correctly.
-    if let Some(ref ep) = pending_epoch
-        && let Some((last_block, _)) = blocks.last()
-        && last_block.view >= ep.start_view
-    {
-        *state.current_epoch = pending_epoch.take().unwrap();
-    }
-
     // Return any still-pending epoch for the caller to handle.
     *state.pending_epoch = pending_epoch.clone();
     Ok(pending_epoch)
@@ -588,6 +595,7 @@ fn persist_sync_checkpoint(state: &mut SyncState<'_>, pending_epoch: Option<&Epo
     if let Some(persistence) = state.persistence.as_deref_mut() {
         persistence.save_last_committed_height(*state.last_committed_height);
         persistence.save_current_epoch(state.current_epoch);
+        persistence.save_previous_epoch(state.previous_epoch.as_ref());
         persistence.save_last_app_hash(*state.last_app_hash);
         persistence.save_pending_epoch(pending_epoch);
         persistence.flush();
@@ -605,9 +613,17 @@ mod tests {
     const TEST_CHAIN: [u8; 32] = [0u8; 32];
 
     fn make_qc(block: &Block, signer: &hotmint_crypto::Ed25519Signer) -> QuorumCertificate {
+        make_epoch_qc(block, signer, EpochNumber(0))
+    }
+
+    fn make_epoch_qc(
+        block: &Block,
+        signer: &hotmint_crypto::Ed25519Signer,
+        epoch: EpochNumber,
+    ) -> QuorumCertificate {
         let vote_bytes = hotmint_types::vote::Vote::signing_bytes(
             &TEST_CHAIN,
-            EpochNumber(0),
+            epoch,
             block.view,
             hotmint_types::Signer::validator_id(signer),
             &block.hash,
@@ -621,7 +637,7 @@ mod tests {
             block_hash: block.hash,
             view: block.view,
             aggregate_signature: agg,
-            epoch: EpochNumber(0),
+            epoch,
         }
     }
 
@@ -639,6 +655,181 @@ mod tests {
         };
         block.hash = hotmint_crypto::compute_block_hash(&block);
         block
+    }
+
+    #[test]
+    fn committed_evidence_has_identical_live_and_replay_effects() {
+        use hotmint_types::{DoubleCertificate, EndBlockResponse, EquivocationProof, Signer};
+        use std::sync::atomic::{AtomicU8, Ordering};
+        struct EvidenceApp(AtomicU8);
+        impl Application for EvidenceApp {
+            fn on_evidence(&self, _: &EquivocationProof) -> Result<()> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            fn execute_block(&self, _: &[&[u8]], _: &BlockContext) -> Result<EndBlockResponse> {
+                Ok(EndBlockResponse {
+                    app_hash: BlockHash([self.0.load(Ordering::SeqCst); 32]),
+                    ..Default::default()
+                })
+            }
+        }
+        #[derive(Default)]
+        struct ReplayStore {
+            inner: MemoryBlockStore,
+            indexed: Vec<([u8; 32], Height, u32)>,
+            results: Vec<(Height, EndBlockResponse)>,
+        }
+        impl BlockStore for ReplayStore {
+            fn put_block(&mut self, block: Block) {
+                self.inner.put_block(block);
+            }
+            fn get_block(&self, hash: &BlockHash) -> Option<Block> {
+                self.inner.get_block(hash)
+            }
+            fn get_block_by_height(&self, height: Height) -> Option<Block> {
+                self.inner.get_block_by_height(height)
+            }
+            fn put_tx_index(&mut self, hash: [u8; 32], height: Height, index: u32) {
+                self.indexed.push((hash, height, index));
+            }
+            fn put_block_results(&mut self, height: Height, response: EndBlockResponse) {
+                self.results.push((height, response));
+            }
+        }
+        let signer = hotmint_crypto::Ed25519Signer::generate(ValidatorId(0));
+        let mut epoch = Epoch::genesis(ValidatorSet::new(vec![hotmint_types::ValidatorInfo {
+            id: ValidatorId(0),
+            public_key: signer.public_key(),
+            power: 1,
+        }]));
+        let hash_a = BlockHash([10; 32]);
+        let hash_b = BlockHash([20; 32]);
+        let sign = |hash: &BlockHash| {
+            signer.sign(&Vote::signing_bytes(
+                &TEST_CHAIN,
+                EpochNumber(0),
+                ViewNumber(1),
+                ValidatorId(0),
+                hash,
+                VoteType::Vote,
+                None,
+            ))
+        };
+        let proof = EquivocationProof {
+            validator: ValidatorId(0),
+            epoch: EpochNumber(0),
+            view: ViewNumber(1),
+            vote_type: VoteType::Vote,
+            block_hash_a: hash_a,
+            signature_a: sign(&hash_a),
+            block_hash_b: hash_b,
+            signature_b: sign(&hash_b),
+            extension_a: None,
+            extension_b: None,
+        };
+        let mut block = make_block(1, BlockHash::GENESIS);
+        block.evidence.push(proof);
+        block.payload = [2u32.to_le_bytes().as_slice(), b"tx"].concat();
+        block.hash = block.compute_hash();
+        let qc = make_qc(&block, &signer);
+        let mut live_store = MemoryBlockStore::new();
+        live_store.put_block(block.clone());
+        let live_app = EvidenceApp(AtomicU8::new(0));
+        let mut live_height = Height::GENESIS;
+        let result = commit::try_commit(
+            &DoubleCertificate {
+                inner_qc: qc.clone(),
+                outer_qc: qc.clone(),
+                vote_extensions: vec![],
+            },
+            &live_store,
+            &live_app,
+            &mut live_height,
+            &epoch,
+        )
+        .unwrap();
+        let replay_app = EvidenceApp(AtomicU8::new(0));
+        let mut store = ReplayStore::default();
+        let mut height = Height::GENESIS;
+        let mut hash = BlockHash::GENESIS;
+        let mut pending = None;
+        replay_blocks(
+            &[(block.clone(), Some(qc))],
+            &mut SyncState {
+                store: &mut store,
+                app: &replay_app,
+                current_epoch: &mut epoch,
+                last_committed_height: &mut height,
+                last_app_hash: &mut hash,
+                chain_id_hash: &TEST_CHAIN,
+                pending_epoch: &mut pending,
+                previous_epoch: &mut None,
+                persistence: None,
+                wal: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(hash, BlockHash([1; 32]));
+        assert_eq!(hash, result.last_app_hash);
+        assert_eq!(
+            store.indexed,
+            vec![(*blake3::hash(b"tx").as_bytes(), Height(1), 0)]
+        );
+        assert_eq!(store.results.len(), 1);
+        assert_eq!(store.results[0].1.app_hash, hash);
+        assert_eq!(live_app.0.load(Ordering::SeqCst), 1);
+        assert_eq!(replay_app.0.load(Ordering::SeqCst), 1);
+        block.evidence[0].signature_a = signer.sign(b"invalid evidence");
+        assert!(
+            commit::validate_block_evidence(
+                &block,
+                &epoch,
+                &TEST_CHAIN,
+                &hotmint_crypto::Ed25519Verifier
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn rejected_sync_block_does_not_activate_pending_epoch() {
+        let signer = hotmint_crypto::Ed25519Signer::generate(ValidatorId(0));
+        let mut epoch = Epoch::genesis(ValidatorSet::new(vec![hotmint_types::ValidatorInfo {
+            id: ValidatorId(0),
+            public_key: hotmint_types::Signer::public_key(&signer),
+            power: 1,
+        }]));
+        let mut pending = Some(Epoch::new(
+            EpochNumber(1),
+            ViewNumber(2),
+            epoch.validator_set.clone(),
+        ));
+        let mut store = MemoryBlockStore::new();
+        let mut height = Height::GENESIS;
+        let mut hash = BlockHash::GENESIS;
+        let block = make_block(2, BlockHash::GENESIS);
+        assert!(
+            replay_blocks(
+                &[(block, None)],
+                &mut SyncState {
+                    store: &mut store,
+                    app: &NoopApplication,
+                    current_epoch: &mut epoch,
+                    last_committed_height: &mut height,
+                    last_app_hash: &mut hash,
+                    chain_id_hash: &TEST_CHAIN,
+                    pending_epoch: &mut pending,
+                    previous_epoch: &mut None,
+                    persistence: None,
+                    wal: None,
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(epoch.number, EpochNumber(0));
+        assert_eq!(pending.unwrap().number, EpochNumber(1));
+        assert_eq!(height, Height::GENESIS);
     }
 
     #[test]
@@ -673,6 +864,7 @@ mod tests {
             last_app_hash: &mut app_hash,
             chain_id_hash: &TEST_CHAIN,
             pending_epoch: &mut pending_epoch,
+            previous_epoch: &mut None,
             persistence: None,
             wal: None,
         };
@@ -710,6 +902,7 @@ mod tests {
             last_app_hash: &mut app_hash,
             chain_id_hash: &TEST_CHAIN,
             pending_epoch: &mut pending_epoch,
+            previous_epoch: &mut None,
             persistence: None,
             wal: None,
         };
@@ -745,6 +938,7 @@ mod tests {
             last_app_hash: &mut app_hash,
             chain_id_hash: &TEST_CHAIN,
             pending_epoch: &mut pending_epoch,
+            previous_epoch: &mut None,
             persistence: None,
             wal: None,
         };
@@ -780,6 +974,7 @@ mod tests {
             last_app_hash: &mut app_hash,
             chain_id_hash: &TEST_CHAIN,
             pending_epoch: &mut pending_epoch,
+            previous_epoch: &mut None,
             persistence: None,
             wal: None,
         };
@@ -796,6 +991,7 @@ mod tests {
         app_hashes: Vec<BlockHash>,
         epochs: Vec<EpochNumber>,
         pending_epochs: Vec<Option<EpochNumber>>,
+        previous_epochs: Vec<Option<EpochNumber>>,
     }
 
     impl StatePersistence for RecordingPersistence {
@@ -807,6 +1003,9 @@ mod tests {
         }
         fn save_current_epoch(&mut self, epoch: &Epoch) {
             self.epochs.push(epoch.number);
+        }
+        fn save_previous_epoch(&mut self, epoch: Option<&Epoch>) {
+            self.previous_epochs.push(epoch.map(|e| e.number));
         }
         fn save_last_app_hash(&mut self, hash: BlockHash) {
             self.app_hashes.push(hash);
@@ -852,10 +1051,15 @@ mod tests {
         let mut epoch = Epoch::genesis(vs);
         let mut height = Height::GENESIS;
         let b1 = make_block(1, BlockHash::GENESIS);
-        let qc1 = make_qc(&b1, &signer);
+        let qc1 = make_epoch_qc(&b1, &signer, EpochNumber(1));
         let blocks: Vec<_> = vec![(b1, Some(qc1))];
         let mut app_hash = BlockHash::GENESIS;
-        let mut pending_epoch = None;
+        let mut pending_epoch = Some(Epoch::new(
+            EpochNumber(1),
+            ViewNumber(1),
+            epoch.validator_set.clone(),
+        ));
+        let mut previous_epoch = None;
         let mut persistence = RecordingPersistence::default();
         let mut wal = RecordingWal::new();
 
@@ -868,6 +1072,7 @@ mod tests {
                 last_app_hash: &mut app_hash,
                 chain_id_hash: &TEST_CHAIN,
                 pending_epoch: &mut pending_epoch,
+                previous_epoch: &mut previous_epoch,
                 persistence: Some(&mut persistence),
                 wal: Some(&mut wal),
             };
@@ -878,7 +1083,9 @@ mod tests {
         assert_eq!(wal.events, vec![("intent", Height(1)), ("done", Height(1))]);
         assert_eq!(persistence.heights, vec![Height(1)]);
         assert_eq!(persistence.app_hashes, vec![BlockHash::GENESIS]);
-        assert_eq!(persistence.epochs, vec![EpochNumber(0)]);
+        assert_eq!(persistence.epochs, vec![EpochNumber(1)]);
+        assert_eq!(persistence.previous_epochs, vec![Some(EpochNumber(0))]);
+        assert_eq!(previous_epoch.unwrap().number, EpochNumber(0));
         assert_eq!(persistence.pending_epochs, vec![None]);
     }
 }

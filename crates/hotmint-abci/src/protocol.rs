@@ -389,7 +389,7 @@ pub fn encode_response(resp: &Response) -> Vec<u8> {
                     .ok()
                     .map(|r| r.data.clone())
                     .unwrap_or_default(),
-                error: result.as_ref().err().cloned().unwrap_or_default(),
+                error: encode_app_error(result),
                 proof: result
                     .as_ref()
                     .ok()
@@ -650,6 +650,14 @@ pub async fn read_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_empty_error_remains_failure_on_wire() {
+        let encoded = encode_response(&Response::Query(Err(String::new())));
+        assert!(
+            matches!(decode_response(&encoded).unwrap(), Response::Query(Err(error)) if !error.is_empty())
+        );
+    }
 
     #[test]
     fn decode_distinguishes_wire_errors_from_invalid_messages() {

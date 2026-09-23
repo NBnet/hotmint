@@ -2,7 +2,8 @@
 
 use ruc::*;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use ed25519_dalek::SigningKey;
@@ -152,6 +153,21 @@ max_tx_bytes = 1048576
 
 // ── Cluster init ────────────────────────────────────────────────
 
+fn write_private_file(path: &Path, content: &[u8]) -> Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .c(d!("open private key"))?;
+    // Restrict existing files before truncating or writing private material.
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .c(d!("set private key permissions"))?;
+    file.set_len(0).c(d!("truncate private key"))?;
+    file.write_all(content).c(d!("write private key"))
+}
+
 pub fn init_cluster(
     base_dir: &Path,
     validator_count: u32,
@@ -225,9 +241,7 @@ pub fn init_cluster(
         };
         let key_json = serde_json::to_string_pretty(&priv_key).c(d!("serialize key"))?;
         let key_path = config_dir.join("priv_validator_key.json");
-        fs::write(&key_path, &key_json).c(d!("write key"))?;
-        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))
-            .c(d!("set key permissions"))?;
+        write_private_file(&key_path, key_json.as_bytes())?;
 
         // Node key is the same as validator key for hotmint (PeerId = validator pubkey)
         let node_key = NodeKey {
@@ -236,9 +250,7 @@ pub fn init_cluster(
         };
         let node_key_json = serde_json::to_string_pretty(&node_key).c(d!("serialize node key"))?;
         let node_key_path = config_dir.join("node_key.json");
-        fs::write(&node_key_path, &node_key_json).c(d!("write node key"))?;
-        fs::set_permissions(&node_key_path, fs::Permissions::from_mode(0o600))
-            .c(d!("set node key permissions"))?;
+        write_private_file(&node_key_path, node_key_json.as_bytes())?;
 
         // Write genesis
         fs::write(config_dir.join("genesis.json"), &genesis_json).c(d!("write genesis"))?;
@@ -362,4 +374,28 @@ pub fn info(base_dir: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::TestDir;
+
+    #[test]
+    fn private_files_are_restricted_on_creation_and_replacement() {
+        let temp = TestDir::new();
+        let path = temp.0.join("private_key.json");
+        write_private_file(&path, b"first private key").unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        write_private_file(&path, b"short key").unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"short key");
+    }
 }

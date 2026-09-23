@@ -130,7 +130,7 @@ func (s *Server) dispatch(req *pb.Request) *pb.Response {
 		appHash, err := s.app.InitChain(r.InitChain.AppState)
 		resp := &pb.InitChainResponse{}
 		if err != nil {
-			resp.Error = err.Error()
+			resp.Error = encodeAppError(err)
 		} else {
 			resp.AppHash = appHash
 		}
@@ -166,7 +166,7 @@ func (s *Server) dispatch(req *pb.Request) *pb.Response {
 		result, err := s.app.ExecuteBlock(r.ExecuteBlock.Txs, r.ExecuteBlock.Ctx)
 		resp := &pb.ExecuteBlockResponse{}
 		if err != nil {
-			resp.Error = err.Error()
+			resp.Error = encodeAppError(err)
 		} else {
 			resp.Result = result
 		}
@@ -178,7 +178,7 @@ func (s *Server) dispatch(req *pb.Request) *pb.Response {
 		err := s.app.OnCommit(r.OnCommit.Block, r.OnCommit.Ctx)
 		resp := &pb.OnCommitResponse{}
 		if err != nil {
-			resp.Error = err.Error()
+			resp.Error = encodeAppError(err)
 		}
 		return &pb.Response{
 			Response: &pb.Response_OnCommit{OnCommit: resp},
@@ -188,7 +188,7 @@ func (s *Server) dispatch(req *pb.Request) *pb.Response {
 		err := s.app.OnEvidence(r.OnEvidence)
 		resp := &pb.OnEvidenceResponse{}
 		if err != nil {
-			resp.Error = err.Error()
+			resp.Error = encodeAppError(err)
 		}
 		return &pb.Response{
 			Response: &pb.Response_OnEvidence{OnEvidence: resp},
@@ -198,7 +198,7 @@ func (s *Server) dispatch(req *pb.Request) *pb.Response {
 		err := s.app.OnOfflineValidators(r.OnOfflineValidators.Offline)
 		resp := &pb.OnOfflineValidatorsResponse{}
 		if err != nil {
-			resp.Error = err.Error()
+			resp.Error = encodeAppError(err)
 		}
 		return &pb.Response{
 			Response: &pb.Response_OnOfflineValidators{OnOfflineValidators: resp},
@@ -228,7 +228,7 @@ func (s *Server) dispatch(req *pb.Request) *pb.Response {
 		result, err := s.app.Query(r.Query.Path, r.Query.Data)
 		resp := &pb.QueryResponse{}
 		if err != nil {
-			resp.Error = err.Error()
+			resp.Error = encodeAppError(err)
 		} else if result != nil {
 			resp.Data = result.Data
 			resp.Proof = result.Proof
@@ -289,4 +289,15 @@ func (s *Server) dispatch(req *pb.Request) *pb.Response {
 		log.Printf("unknown request type: %T", req.Request)
 		return &pb.Response{}
 	}
+}
+
+// The wire reserves an empty error string for success.
+func encodeAppError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if message := err.Error(); message != "" {
+		return message
+	}
+	return "unspecified application error"
 }

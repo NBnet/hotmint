@@ -17,6 +17,7 @@ use hotmint::config::{self, GenesisDoc, NodeConfig, NodeKey, NodeMode, PrivValid
 use hotmint::consensus::application::{AppInfo, Application, NoopApplication, TxValidationResult};
 use hotmint::consensus::engine::{ConsensusEngine, EngineConfig};
 use hotmint::consensus::liveness::OfflineEvidence;
+use hotmint::consensus::network::NetworkSink;
 use hotmint::consensus::pacemaker::PacemakerConfig;
 use hotmint::consensus::state::ConsensusState;
 use hotmint::consensus::store::{BlockStore, SharedStoreAdapter};
@@ -388,6 +389,8 @@ async fn run_node(
         })?
     };
 
+    network_sink.on_epoch_change(state.current_epoch.number, &state.validator_set);
+
     // 8. Create application (ABCI client or embedded noop)
     // Validators MUST have proxy_app configured — enforced at startup (step 1b) before
     // any resources are allocated. By this point validator+empty proxy_app is impossible.
@@ -419,23 +422,26 @@ async fn run_node(
         )
     };
     let mut engine_state_epoch = state.current_epoch.clone();
+    let mut engine_previous_epoch = pcs.load_previous_epoch();
     let mut engine_state_height = state.last_committed_height;
     let mut engine_state_app_hash = state.last_app_hash;
     // A-1: Track pending epoch through sync for crash-safety.
     let mut engine_state_pending_epoch = restored_pending_epoch;
     let (status_tx, status_rx) = watch::channel(ConsensusStatus::new(
-        0,
+        state.current_view.as_u64(),
         state.last_committed_height.as_u64(),
         state.current_epoch.number.as_u64(),
-        validator_set.validator_count(),
+        state.validator_set.validator_count(),
         state.current_epoch.start_view.as_u64(),
     ));
+    let startup_status_tx = status_tx.clone();
     let sync_status_rx = status_tx.subscribe();
     // Extra subscriber for the reconnect re-sync watcher (tracks last_committed_height)
     let watcher_status_rx = status_tx.subscribe();
 
     // Validator set watch channel (updated on epoch transitions via on_commit)
-    let initial_vs: Vec<ValidatorInfoResponse> = validator_set
+    let initial_vs: Vec<ValidatorInfoResponse> = state
+        .validator_set
         .validators()
         .iter()
         .map(|v| ValidatorInfoResponse {
@@ -445,7 +451,9 @@ async fn run_node(
         })
         .collect();
     let (vs_tx, vs_rx) = watch::channel(initial_vs);
+    let startup_vs_tx = vs_tx.clone();
     let (epoch_tx, epoch_rx) = watch::channel(state.current_epoch.clone());
+    let startup_epoch_tx = epoch_tx.clone();
 
     // 10. Create mempool (before AppWithStatus so recheck can use it)
     let mempool = Arc::new(Mempool::new(
@@ -499,26 +507,22 @@ async fn run_node(
     };
 
     // P0-1: Spawn HTTP/WebSocket RPC server if configured.
-    let http_rpc_handle: tokio::task::JoinHandle<()> = if !config.rpc.http_laddr.is_empty() {
-        let http_addr: std::net::SocketAddr = config
-            .rpc
-            .http_laddr
-            .parse()
-            .c(d!("invalid http_laddr: {}", config.rpc.http_laddr))?;
-        let http_rpc = HttpRpcServer::new(http_addr, rpc_state.clone(), 256);
-        let http_event_tx = http_rpc.event_sender();
-        // Forward chain events from the broadcast channel to the HTTP WS channel.
-        tokio::spawn(async move {
-            let mut rx = event_rx;
-            while let Ok(ev) = rx.recv().await {
-                let _ = http_event_tx.send(ev);
-            }
-        });
-        info!(http_addr = %config.rpc.http_laddr, "HTTP RPC server listening");
-        tokio::spawn(async move { http_rpc.run().await })
-    } else {
-        tokio::spawn(future::pending())
-    };
+    let http_rpc_handle: tokio::task::JoinHandle<()> =
+        if config.node.serve_rpc && !config.rpc.http_laddr.is_empty() {
+            let http_addr: std::net::SocketAddr = config
+                .rpc
+                .http_laddr
+                .parse()
+                .c(d!("invalid http_laddr: {}", config.rpc.http_laddr))?;
+            let http_rpc = HttpRpcServer::new(http_addr, rpc_state.clone(), 256);
+            let http_event_tx = http_rpc.event_sender();
+            // Forward chain events from the broadcast channel to the HTTP WS channel.
+            tokio::spawn(forward_chain_events(event_rx, http_event_tx));
+            info!(http_addr = %config.rpc.http_laddr, "HTTP RPC server listening");
+            tokio::spawn(async move { http_rpc.run().await })
+        } else {
+            tokio::spawn(future::pending())
+        };
 
     let sync_sink = network_sink.clone();
 
@@ -564,10 +568,13 @@ async fn run_node(
                         to_height,
                     } => {
                         // Clamp range to MAX_SYNC_BATCH to prevent DoS
-                        let clamped =
-                            Height(to_height.as_u64().min(
-                                from_height.as_u64() + hotmint_types::sync::MAX_SYNC_BATCH - 1,
-                            ));
+                        let clamped = Height(
+                            to_height.as_u64().min(
+                                from_height
+                                    .as_u64()
+                                    .saturating_add(hotmint_types::sync::MAX_SYNC_BATCH - 1),
+                            ),
+                        );
                         let s = store.read();
                         let blocks = s.get_blocks_in_range(from_height, clamped);
                         let blocks_with_qcs: Vec<_> = blocks
@@ -676,6 +683,7 @@ async fn run_node(
                         store: &mut sync_store,
                         app: sync_app_box.as_ref(),
                         current_epoch: &mut engine_state_epoch,
+                        previous_epoch: &mut engine_previous_epoch,
                         last_committed_height: &mut engine_state_height,
                         last_app_hash: &mut engine_state_app_hash,
                         chain_id_hash: &state.chain_id_hash,
@@ -754,6 +762,7 @@ async fn run_node(
                     // NoopApplication: app_hash is carried from blocks, initial value irrelevant
                     let mut app_hash = BlockHash::GENESIS;
                     let mut watcher_pending_epoch: Option<Epoch> = None;
+                    let mut watcher_previous_epoch: Option<Epoch> = None;
 
                     for (vid, peer_id) in &watcher_peers {
                         let pid = *peer_id;
@@ -773,6 +782,7 @@ async fn run_node(
                             store: &mut store_adapter,
                             app: &noop,
                             current_epoch: &mut epoch,
+                            previous_epoch: &mut watcher_previous_epoch,
                             last_committed_height: &mut h,
                             last_app_hash: &mut app_hash,
                             chain_id_hash: &watcher_chain_id_hash,
@@ -832,8 +842,30 @@ async fn run_node(
     pcs.save_current_epoch(&state.current_epoch);
     pcs.save_last_app_hash(state.last_app_hash);
     pcs.save_pending_epoch(engine_state_pending_epoch.as_ref());
+    pcs.save_previous_epoch(engine_previous_epoch.as_ref());
     pcs.flush();
 
+    startup_status_tx.send_replace(ConsensusStatus::new(
+        state.current_view.as_u64(),
+        state.last_committed_height.as_u64(),
+        state.current_epoch.number.as_u64(),
+        state.validator_set.validator_count(),
+        state.current_epoch.start_view.as_u64(),
+    ));
+    startup_vs_tx.send_replace(
+        state
+            .validator_set
+            .validators()
+            .iter()
+            .map(|v| ValidatorInfoResponse {
+                id: v.id.0,
+                power: v.power,
+                public_key: hex::encode(&v.public_key.0),
+            })
+            .collect(),
+    );
+    startup_epoch_tx.send_replace(state.current_epoch.clone());
+    network_sink.on_epoch_change(state.current_epoch.number, &state.validator_set);
     let signer = Ed25519Signer::new(signing_key, our_vid);
     let pacemaker_config = PacemakerConfig {
         base_timeout_ms: config.consensus.base_timeout_ms,
@@ -846,8 +878,11 @@ async fn run_node(
     if pacemaker_config.max_timeout_ms < pacemaker_config.base_timeout_ms {
         return Err(eg!("consensus.max_timeout_ms must be >= base_timeout_ms"));
     }
-    if pacemaker_config.backoff_multiplier < 1.0 {
-        return Err(eg!("consensus.backoff_multiplier must be >= 1.0"));
+    if !pacemaker_config.backoff_multiplier.is_finite() || pacemaker_config.backoff_multiplier < 1.0
+    {
+        return Err(eg!(
+            "consensus.backoff_multiplier must be finite and >= 1.0"
+        ));
     }
     let engine = ConsensusEngine::new(
         state,
@@ -871,6 +906,7 @@ async fn run_node(
                     .expect("failed to open consensus WAL"),
             )),
             pending_epoch: engine_state_pending_epoch,
+            previous_epoch: engine_previous_epoch,
         },
     );
 
@@ -938,6 +974,21 @@ async fn run_node(
     }
 
     Ok(())
+}
+
+async fn forward_chain_events(
+    mut source: broadcast::Receiver<ChainEvent>,
+    destination: broadcast::Sender<ChainEvent>,
+) {
+    loop {
+        match source.recv().await {
+            Ok(event) => {
+                let _ = destination.send(event);
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
 }
 
 /// Wrapper that implements `Application` by delegating to an inner application,
@@ -1158,5 +1209,41 @@ impl Application for ArcApp {
     }
     fn tracks_app_hash(&self) -> bool {
         self.0.tracks_app_hash()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn chain_event_forwarder_recovers_after_lag() {
+        let (source, receiver) = broadcast::channel(1);
+        let (destination, mut output) = broadcast::channel(4);
+        for height in 1..=3 {
+            source
+                .send(ChainEvent::TxCommitted {
+                    tx_hash: "tx".into(),
+                    height,
+                })
+                .unwrap();
+        }
+        let task = tokio::spawn(forward_chain_events(receiver, destination));
+        assert!(matches!(
+            output.recv().await.unwrap(),
+            ChainEvent::TxCommitted { height: 3, .. }
+        ));
+        source
+            .send(ChainEvent::TxCommitted {
+                tx_hash: "next".into(),
+                height: 4,
+            })
+            .unwrap();
+        assert!(matches!(
+            output.recv().await.unwrap(),
+            ChainEvent::TxCommitted { height: 4, .. }
+        ));
+        drop(source);
+        task.await.unwrap();
     }
 }

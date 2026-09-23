@@ -21,26 +21,38 @@ Provides validator registration, delegation, slashing, unbonding, and reward dis
 
 ```rust
 use hotmint_staking::*;
+use hotmint_types::{PublicKey, ValidatorId};
+
+let validator_id = ValidatorId(0);
+// Replace with the validator's Ed25519 public key.
+let public_key = PublicKey(vec![1; 32]);
+let delegator = b"alice";
+let current_height = 10;
 
 let config = StakingConfig {
     min_self_stake: 1_000,
-    slash_rate_double_sign: 50,  // 50% slash
-    slash_rate_downtime: 5,      // 5% slash
+    slash_rate_double_sign: 5_000, // 50% slash, in basis points
+    slash_rate_downtime: 500,      // 5% slash, in basis points
     unbonding_period: 100,       // 100 blocks
     ..Default::default()
 };
 
 let store = InMemoryStakingStore::new();
-let mut manager = StakingManager::new(config, store);
+let mut manager = StakingManager::new(store, config);
 
 // Register a validator with self-stake
-manager.register_validator(validator_id, 10_000).unwrap();
+manager.register_validator(validator_id, public_key, 10_000).unwrap();
 
 // Delegate stake
 manager.delegate(delegator, validator_id, 5_000).unwrap();
 
 // Slash for misbehavior
-manager.slash(validator_id, SlashReason::DoubleSign).unwrap();
+manager.slash_with_evidence(
+    validator_id,
+    b"double-sign-proof-1".to_vec(),
+    SlashReason::DoubleSign,
+    current_height,
+).unwrap();
 
 // Process unbonding at each block
 manager.process_unbonding(current_height);

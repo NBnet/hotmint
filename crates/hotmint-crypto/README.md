@@ -18,7 +18,7 @@ Provides concrete implementations of the `Signer` and `Verifier` traits defined 
 ## Usage
 
 ```rust
-use hotmint_types::{Signer, ValidatorId};
+use hotmint_types::{Signer, ValidatorId, Verifier};
 use hotmint_crypto::{Ed25519Signer, Ed25519Verifier};
 
 // Generate a random keypair

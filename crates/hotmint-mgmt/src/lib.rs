@@ -21,7 +21,10 @@ pub mod cluster;
 pub mod local;
 pub mod remote;
 
+use ruc::*;
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
@@ -48,7 +51,7 @@ pub fn loopback_addr() -> &'static str {
 ///
 /// IPv6 addresses are wrapped in brackets: `[::1]:8080`.
 pub fn format_host_port(host: &str, port: u16) -> String {
-    if host.contains(':') {
+    if host.contains(':') && !host.starts_with('[') {
         format!("[{host}]:{port}")
     } else {
         format!("{host}:{port}")
@@ -79,40 +82,86 @@ pub fn find_free_ports(n: usize) -> Vec<u16> {
 ///
 /// Returns `None` if the build fails.
 pub fn build_binary(package: &str, bin_name: Option<&str>) -> Option<PathBuf> {
-    let mut cmd = Command::new("cargo");
+    build_binary_with_cargo(Path::new("cargo"), package, bin_name)
+}
+
+fn build_binary_with_cargo(cargo: &Path, package: &str, bin_name: Option<&str>) -> Option<PathBuf> {
+    let mut cmd = Command::new(cargo);
     cmd.args(["build", "--release", "-p", package]);
     if let Some(name) = bin_name {
         cmd.args(["--bin", name]);
     }
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-
-    match cmd.status() {
-        Ok(s) if s.success() => {
-            // Find the binary in target/release
-            let name = bin_name.unwrap_or(package);
-            let workspace_root = find_workspace_root()?;
-            let binary = workspace_root.join("target/release").join(name);
-            if binary.exists() { Some(binary) } else { None }
-        }
-        _ => None,
+    // output() drains stdout and stderr concurrently while cargo is running.
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
     }
+    let binary = cargo_target_directory(cargo)?
+        .join("release")
+        .join(bin_name.unwrap_or(package));
+    binary.is_file().then_some(binary)
 }
 
-/// Locate the workspace root by walking up from CARGO_MANIFEST_DIR.
-fn find_workspace_root() -> Option<PathBuf> {
-    // Try using `cargo metadata` for accuracy
-    let output = Command::new("cargo")
+/// Resolve Cargo's configured target directory, including CARGO_TARGET_DIR.
+fn find_target_directory() -> Option<PathBuf> {
+    cargo_target_directory(Path::new("cargo"))
+}
+
+fn cargo_target_directory(cargo: &Path) -> Option<PathBuf> {
+    let output = Command::new(cargo)
         .args(["metadata", "--no-deps", "--format-version=1"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
         .output()
         .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    // Quick parse: look for "workspace_root":"..."
-    let prefix = "\"workspace_root\":\"";
-    let start = text.find(prefix)? + prefix.len();
-    let end = text[start..].find('"')? + start;
-    Some(PathBuf::from(&text[start..end]))
+    if !output.status.success() {
+        return None;
+    }
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    metadata
+        .get("target_directory")?
+        .as_str()
+        .map(PathBuf::from)
+}
+
+/// Query a newline-delimited RPC response without waiting for connection closure.
+fn query_rpc_status(host: &str, port: u16, timeout: Duration) -> Result<serde_json::Value> {
+    let host = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host);
+    let addresses = (host, port).to_socket_addrs().c(d!("resolve RPC host"))?;
+    let mut stream = addresses
+        .filter_map(|addr| TcpStream::connect_timeout(&addr, timeout).ok())
+        .next()
+        .ok_or_else(|| eg!("could not connect to RPC host {}:{}", host, port))?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .c(d!("set RPC read timeout"))?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .c(d!("set RPC write timeout"))?;
+    stream
+        .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"status\",\"params\":[]}\n")
+        .c(d!("write RPC request"))?;
+    read_rpc_result(BufReader::new(stream))
+}
+
+fn read_rpc_result(reader: impl BufRead) -> Result<serde_json::Value> {
+    const MAX_RESPONSE_BYTES: u64 = 1_048_576;
+    let mut response = Vec::new();
+    reader
+        .take(MAX_RESPONSE_BYTES + 1)
+        .read_until(b'\n', &mut response)
+        .c(d!("read RPC response"))?;
+    if response.len() as u64 > MAX_RESPONSE_BYTES || response.last() != Some(&b'\n') {
+        return Err(eg!("oversized or unterminated RPC response"));
+    }
+    let response: serde_json::Value =
+        serde_json::from_slice(&response).c(d!("parse RPC response"))?;
+    response
+        .get("result")
+        .filter(|result| result.is_object())
+        .cloned()
+        .ok_or_else(|| eg!("RPC response did not contain a status result"))
 }
 
 /// Start a cluster node process with the given binary and home directory.
@@ -140,27 +189,16 @@ pub fn start_node_process(
 ///
 /// Tries a raw TCP connection + JSON-RPC `status` query.
 pub fn wait_for_rpc(host: &str, port: u16, timeout_secs: u64) -> bool {
-    use std::io::{Read, Write};
-    use std::net::TcpStream;
     use std::time::Instant;
 
-    let addr = format_host_port(host, port);
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-
     while Instant::now() < deadline {
-        if let Ok(mut stream) =
-            TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_secs(1))
-        {
-            stream.set_read_timeout(Some(Duration::from_secs(1))).ok();
-            let req = r#"{"jsonrpc":"2.0","id":1,"method":"status","params":[]}"#;
-            if stream.write_all(req.as_bytes()).is_ok() && stream.write_all(b"\n").is_ok() {
-                let mut buf = vec![0u8; 4096];
-                if let Ok(n) = stream.read(&mut buf)
-                    && n > 0
-                {
-                    return true;
-                }
-            }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        if query_rpc_status(host, port, remaining.min(Duration::from_secs(1))).is_ok() {
+            return true;
         }
         sleep(Duration::from_millis(200));
     }
@@ -321,4 +359,100 @@ pub fn start_cluster_nodes(
         }
     }
     children
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::mpsc;
+    use std::thread;
+
+    pub(crate) struct TestDir(pub PathBuf);
+
+    impl TestDir {
+        pub(crate) fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("hotmint-mgmt-{}", rand::random::<u64>()));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn check_rpc_host(host: &str, bind_host: &str) {
+        let listener = TcpListener::bind((bind_host, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (release, wait) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            assert!(request.contains("status"));
+            stream.write_all(b"{\"result\": {\"last_committed_height\": 7, \"current_view\": 8, \"epoch\": 2}}\n").unwrap();
+            // Keep the socket open until the client finishes; EOF is not the frame boundary.
+            let _ = wait.recv_timeout(Duration::from_secs(3));
+        });
+        let result = query_rpc_status(host, port, Duration::from_secs(1));
+        release.send(()).unwrap();
+        server.join().unwrap();
+        assert_eq!(result.unwrap()["last_committed_height"], 7);
+    }
+
+    #[test]
+    fn rpc_status_supports_dns_and_persistent_connections() {
+        check_rpc_host("localhost", "127.0.0.1");
+    }
+
+    #[test]
+    fn rpc_status_supports_ipv6() {
+        if TcpListener::bind(("::1", 0)).is_ok() {
+            check_rpc_host("::1", "::1");
+            check_rpc_host("[::1]", "::1");
+        }
+        assert_eq!(format_host_port("[::1]", 80), "[::1]:80");
+    }
+
+    #[test]
+    fn rpc_status_rejects_oversized_truncated_and_error_responses() {
+        assert!(read_rpc_result(&b"{\"result\":{}}"[..]).is_err());
+        assert!(read_rpc_result(&b"{\"error\":{\"code\":-1}}\n"[..]).is_err());
+        let oversized = vec![b' '; 1_048_577];
+        assert!(read_rpc_result(oversized.as_slice()).is_err());
+    }
+
+    #[test]
+    fn build_drains_output_and_uses_cargo_target_directory() {
+        let temp = TestDir::new();
+        let target = temp.0.join("target with a \\\" quote");
+        fs::create_dir_all(target.join("release")).unwrap();
+        let expected = target.join("release/test-node");
+        fs::write(&expected, []).unwrap();
+        let metadata = serde_json::json!({"target_directory": target});
+        fs::write(
+            temp.0.join("metadata.json"),
+            serde_json::to_vec(&metadata).unwrap(),
+        )
+        .unwrap();
+        let cargo = temp.0.join("cargo");
+        fs::write(&cargo, b"#!/bin/sh\nif [ \"$1\" = build ]; then\n  dd if=/dev/zero bs=1048576 count=1 2>/dev/null\n  dd if=/dev/zero bs=1048576 count=1 1>&2 2>/dev/null\nelse\n  cat \"$(dirname \"$0\")/metadata.json\"\nfi\n").unwrap();
+        fs::set_permissions(&cargo, fs::Permissions::from_mode(0o700)).unwrap();
+        let (send, recv) = mpsc::channel();
+        let build = thread::spawn(move || {
+            send.send(build_binary_with_cargo(&cargo, "test-node", None))
+                .unwrap();
+        });
+        let result = recv
+            .recv_timeout(Duration::from_secs(5))
+            .expect("build output must be drained");
+        build.join().unwrap();
+        assert_eq!(result, Some(expected));
+    }
 }

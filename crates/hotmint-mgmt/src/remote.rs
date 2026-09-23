@@ -152,23 +152,67 @@ fn git_sync(
 }
 
 /// Write file content to a remote path by piping through ssh stdin.
-fn ssh_write_file(target: &str, remote_path: &str, content: &str) -> Result<()> {
-    let mut child = process::Command::new("ssh")
-        .args(["-o", "BatchMode=yes"])
+fn ssh_write_file(target: &str, remote_path: &str, content: &[u8]) -> Result<()> {
+    let mut command = process::Command::new("ssh");
+    command
+        .args(["-o", "BatchMode=yes", "--"])
         .arg(target)
-        .arg(format!("cat > {}", shell_escape(remote_path)))
+        .arg(write_file_command(remote_path));
+    write_command_input(&mut command, content)
+}
+
+fn write_file_command(remote_path: &str) -> String {
+    let path = shell_escape(remote_path);
+    format!("umask 077; if [ -e {path} ]; then chmod 600 -- {path} || exit 1; fi; cat > {path}")
+}
+
+fn write_command_input(command: &mut process::Command, content: &[u8]) -> Result<()> {
+    let mut child = command
         .stdin(process::Stdio::piped())
         .spawn()
-        .c(d!("ssh to {}", target))?;
-    child
+        .c(d!("spawn file transfer"))?;
+    let write_result = child
         .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(content.as_bytes())
-        .c(d!("write file content"))?;
-    let status = child.wait().c(d!("wait ssh"))?;
+        .take()
+        .expect("stdin was piped")
+        .write_all(content);
+    // Close stdin and reap the child even if it rejects the input early.
+    let status = child.wait().c(d!("wait file transfer"))?;
+    write_result.c(d!("write file content"))?;
     if !status.success() {
-        return Err(eg!("ssh_write_file to {} failed", target));
+        return Err(eg!("file transfer failed: {}", status));
+    }
+    Ok(())
+}
+
+fn pipe_commands(producer: &mut process::Command, consumer: &mut process::Command) -> Result<()> {
+    let mut producer = producer
+        .stdout(process::Stdio::piped())
+        .spawn()
+        .c(d!("spawn archive producer"))?;
+    let output = producer.stdout.take().expect("stdout was piped");
+    let spawned = consumer.stdin(output).spawn();
+    // Drop the parent's read end so an early consumer exit signals the producer.
+    consumer.stdin(process::Stdio::null());
+    let mut consumer = match spawned {
+        Ok(child) => child,
+        Err(err) => {
+            let _ = producer.kill();
+            let _ = producer.wait();
+            return Err(eg!("spawn archive consumer: {}", err));
+        }
+    };
+    // Both ends run concurrently; reap both before propagating either error.
+    let producer_status = producer.wait();
+    let consumer_status = consumer.wait();
+    let producer_status = producer_status.c(d!("wait archive producer"))?;
+    let consumer_status = consumer_status.c(d!("wait archive consumer"))?;
+    if !producer_status.success() || !consumer_status.success() {
+        return Err(eg!(
+            "archive transfer failed: producer {}, consumer {}",
+            producer_status,
+            consumer_status
+        ));
     }
     Ok(())
 }
@@ -239,7 +283,7 @@ pub fn deploy(
             ] {
                 let local_file = local_config.join(file);
                 if local_file.exists() {
-                    let content = fs::read_to_string(&local_file).c(d!("read config file"))?;
+                    let content = fs::read(&local_file).c(d!("read config file"))?;
                     let remote_path = format!("{}/config/{}", remote_home, file);
                     ssh_write_file(&host.ssh, &remote_path, &content)?;
                     // Restrict permissions on key files
@@ -322,33 +366,22 @@ pub fn push_all(hosts_path: &Path, local: &Path, remote_dest: &str) -> Result<()
     for host in &hosts.hosts {
         println!("--- V{} ({}) ---", host.validator_id, host.ssh);
         if local.is_dir() {
-            // Use tar pipe for directories
-            let status = process::Command::new("sh")
-                .args([
-                    "-c",
-                    &format!(
-                        "tar czf - -C {} . | ssh -o BatchMode=yes {} 'mkdir -p {} && cd {} && tar xzf -'",
-                        local.display(),
-                        host.ssh,
-                        shell_escape(remote_dest),
-                        shell_escape(remote_dest),
-                    ),
-                ])
-                .status()
-                .c(d!("push dir to {}", host.ssh))?;
-            if !status.success() {
-                eprintln!("  ERROR: push to {} failed", host.ssh);
-            } else {
-                println!("  OK");
-            }
+            // Pass local paths and SSH destinations as arguments, never shell code.
+            let mut archive = process::Command::new("tar");
+            archive.args(["czf", "-", "-C"]).arg(local).arg(".");
+            let dest = shell_escape(remote_dest);
+            let mut transfer = process::Command::new("ssh");
+            transfer
+                .args(["-o", "BatchMode=yes", "--"])
+                .arg(&host.ssh)
+                .arg(format!("mkdir -p -- {dest} && cd {dest} && tar xzf -"));
+            pipe_commands(&mut archive, &mut transfer)?;
         } else {
             // Single file: read and pipe through ssh
-            let content = fs::read_to_string(local).c(d!("read local file"))?;
-            match ssh_write_file(&host.ssh, remote_dest, &content) {
-                Ok(()) => println!("  OK"),
-                Err(e) => eprintln!("  ERROR: {e}"),
-            }
+            let content = fs::read(local).c(d!("read local file"))?;
+            ssh_write_file(&host.ssh, remote_dest, &content)?;
         }
+        println!("  OK");
     }
     Ok(())
 }
@@ -537,47 +570,83 @@ pub fn remote_status(base_dir: &Path, hosts_path: &Path) -> Result<()> {
 
 /// Query a node's JSON-RPC status endpoint.
 fn query_rpc_status(host: &str, port: u16) -> Result<(String, String, String)> {
-    use std::io::{Read, Write as IoWrite};
-    use std::net::TcpStream;
     use std::time::Duration;
 
-    let addr = format!("{}:{}", host, port);
-    let mut stream =
-        TcpStream::connect_timeout(&addr.parse().c(d!("parse addr"))?, Duration::from_secs(2))
-            .c(d!("connect rpc"))?;
-    stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
-
-    let req = r#"{"jsonrpc":"2.0","method":"status","params":[],"id":1}"#;
-    // Raw TCP JSON-RPC: send JSON directly followed by newline
-    stream
-        .write_all(format!("{}\n", req).as_bytes())
-        .c(d!("write rpc"))?;
-
-    let mut buf = String::new();
-    stream.read_to_string(&mut buf).ok();
-
-    let body = &buf;
-
-    // Simple JSON parsing — look for height/view/epoch fields
+    let result = crate::query_rpc_status(host, port, Duration::from_secs(2))?;
     let extract = |key: &str| -> String {
-        body.find(&format!("\"{}\":", key))
-            .and_then(|i| {
-                let rest = &body[i + key.len() + 3..];
-                // Handle both number and string values
-                if let Some(stripped) = rest.strip_prefix('"') {
-                    stripped.split('"').next().map(|s| s.to_string())
-                } else {
-                    rest.split(|c: char| !c.is_ascii_digit())
-                        .next()
-                        .map(|s| s.to_string())
-                }
-            })
+        result
+            .get(key)
+            .and_then(|value| value.as_u64())
+            .map(|value| value.to_string())
             .unwrap_or_else(|| "-".into())
     };
-
     Ok((
         extract("last_committed_height"),
         extract("current_view"),
         extract("epoch"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::TestDir;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn directory_pipeline_handles_literal_paths_and_copies_contents() {
+        let temp = TestDir::new();
+        let source = temp.0.join("source ' ; $() directory");
+        let dest = temp.0.join("destination ' ; $() directory");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("payload"), [0, 255, 1, 128]).unwrap();
+        let mut archive = process::Command::new("tar");
+        archive.args(["czf", "-", "-C"]).arg(&source).arg(".");
+        let escaped = shell_escape(dest.to_str().unwrap());
+        let mut extract = process::Command::new("sh");
+        extract.arg("-c").arg(format!(
+            "mkdir -p -- {escaped} && cd {escaped} && tar xzf -"
+        ));
+        pipe_commands(&mut archive, &mut extract).unwrap();
+        assert_eq!(fs::read(dest.join("payload")).unwrap(), [0, 255, 1, 128]);
+    }
+
+    #[test]
+    fn pipeline_propagates_producer_and_consumer_failures() {
+        let mut fail = process::Command::new("sh");
+        fail.args(["-c", "exit 7"]);
+        let mut drain = process::Command::new("cat");
+        drain.stdout(process::Stdio::null());
+        assert!(pipe_commands(&mut fail, &mut drain).is_err());
+
+        let mut producer = process::Command::new("dd");
+        producer
+            .args(["if=/dev/zero", "bs=1048576", "count=1"])
+            .stderr(process::Stdio::null());
+        let mut reject = process::Command::new("sh");
+        reject.args(["-c", "exit 9"]);
+        assert!(pipe_commands(&mut producer, &mut reject).is_err());
+    }
+
+    #[test]
+    fn binary_file_transfer_restricts_new_and_existing_files() {
+        let temp = TestDir::new();
+        let dest = temp.0.join("file ' ; $() key");
+        let content = [0, 128, 255, 2];
+        for existing in [false, true] {
+            if existing {
+                fs::set_permissions(&dest, fs::Permissions::from_mode(0o644)).unwrap();
+            }
+            let mut command = process::Command::new("sh");
+            command
+                .arg("-c")
+                .arg(write_file_command(dest.to_str().unwrap()));
+            write_command_input(&mut command, &content).unwrap();
+            assert_eq!(fs::read(&dest).unwrap(), content);
+            assert_eq!(
+                fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
 }
