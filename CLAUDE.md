@@ -50,7 +50,7 @@ System dependency: `protobuf-compiler` (for proto code generation)
 | Mempool | `mempool/src/lib.rs` | BTreeSet priority pool with RBF + eviction |
 | API | `api/src/rpc.rs`, `api/src/http_rpc.rs` | JSON-RPC (TCP dispatch in rpc.rs; HTTP + WebSocket via axum in http_rpc.rs) |
 | ABCI | `abci/src/` | Unix socket + protobuf framing |
-| Light Client | `light/src/lib.rs` | Header verification (per-signer QC checks), MPT state proofs |
+| Light Client | `light/src/lib.rs` | Header verification (per-signer QC checks), MPT and SMT state proofs |
 | Staking | `staking/src/` | Validator registration, delegation, slashing |
 | Crypto | `crypto/src/lib.rs` | Ed25519 domain-separated signing, Blake3 hashing |
 

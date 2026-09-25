@@ -1,9 +1,10 @@
 //! Light client verification for Hotmint BFT consensus.
 //!
 //! Verifies block headers using QC signatures without downloading full blocks.
-//! Also provides MPT state proof verification via [`LightClient::verify_state_proof`].
+//! Also provides MPT and SMT state proof verification via
+//! [`LightClient::verify_state_proof`] and [`LightClient::verify_smt_state_proof`].
 
-pub use vsdb::MptProof;
+pub use vsdb::{MptProof, SmtProof};
 
 use ruc::*;
 use std::sync::{Mutex, MutexGuard};
@@ -244,19 +245,36 @@ impl LightClient {
 
     /// Verify an MPT state proof against a trusted app_hash.
     ///
-    /// The `app_hash` should come from a verified block header (after
-    /// `verify_header` succeeds). The `proof_bytes` are the serialized
-    /// `MptProof` nodes (as returned by the `query` RPC `proof` field).
+    /// The `app_hash` must be an independently trusted application root;
+    /// [`Self::verify_header`] alone does not authenticate header fields.
+    /// Decode transported proofs with [`MptProof::from_bytes`].
     /// The `expected_key` is the raw key the caller expects the proof to cover.
     ///
     /// Returns `Ok(true)` if the proof is valid against the given root.
     pub fn verify_state_proof(
         app_hash: &[u8; 32],
         expected_key: &[u8],
-        proof: &vsdb::MptProof,
+        proof: &MptProof,
     ) -> ruc::Result<bool> {
         vsdb::MptCalc::verify_proof(app_hash, expected_key, proof)
             .map_err(|e| ruc::eg!(format!("MPT proof verification failed: {e}")))
+    }
+
+    /// Verify an SMT state proof against a trusted app_hash.
+    ///
+    /// The `app_hash` must be an independently trusted application root;
+    /// [`Self::verify_header`] alone does not authenticate header fields.
+    /// Decode transported proofs with [`SmtProof::from_bytes`].
+    /// The `expected_key` is the raw key the caller expects the proof to cover.
+    ///
+    /// Returns `Ok(true)` for valid inclusion and exclusion proofs.
+    pub fn verify_smt_state_proof(
+        app_hash: &[u8; 32],
+        expected_key: &[u8],
+        proof: &SmtProof,
+    ) -> ruc::Result<bool> {
+        vsdb::SmtCalc::verify_proof(app_hash, expected_key, proof)
+            .map_err(|e| ruc::eg!(format!("SMT proof verification failed: {e}")))
     }
 }
 

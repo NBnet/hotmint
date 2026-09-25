@@ -154,7 +154,7 @@ Staking toolkit for DPoS economic models:
 Light client verification:
 
 - `LightClient` struct with `verify_header` (QC signature verification) and `update_validator_set`
-- MPT state proof verification via vsdb `MptProof`
+- MPT and SMT state proof verification via vsdb `MptProof` and `SmtProof`, with versioned proof encoding
 
 ## Core Trait Abstractions
 

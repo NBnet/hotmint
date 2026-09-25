@@ -90,7 +90,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
 
     // Storage
     std::fs::create_dir_all(&data_dir).c(d!("create data dir"))?;
-    vsdb::vsdb_set_base_dir(&data_dir).c(d!("set vsdb base dir"))?;
+    vsdb::vsdb_configure(vsdb::VsdbOptions::new(&data_dir)).c(d!("set vsdb base dir"))?;
 
     let store: Arc<parking_lot::RwLock<Box<dyn BlockStore>>> =
         Arc::new(parking_lot::RwLock::new(Box::new(VsdbBlockStore::new())));

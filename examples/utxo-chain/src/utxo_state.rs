@@ -1,4 +1,5 @@
 use ruc::*;
+use vsdb::slotdex::Order;
 use vsdb::versioned::BranchId;
 use vsdb::{Orphan, SlotDex128, SmtCalc, SmtProof, VerMapWithProof};
 
@@ -18,7 +19,7 @@ fn addr_slot(pubkey_hash: &[u8; 32]) -> u128 {
 /// total supply tracking. All operations are synchronous and expect
 /// the caller to hold the appropriate lock.
 ///
-/// **Prerequisite:** `vsdb::vsdb_set_base_dir()` must be called before
+/// **Prerequisite:** `vsdb::vsdb_configure()` must be called before
 /// constructing this type.
 pub struct UtxoState {
     /// Primary UTXO set with Sparse Merkle Tree commitment.
@@ -44,7 +45,7 @@ impl UtxoState {
         let main_branch = utxos.map().main_branch();
         Self {
             utxos,
-            addr_index: SlotDex128::new(8, false),
+            addr_index: SlotDex128::new(8, false).expect("valid address index configuration"),
             total_supply: Orphan::new(0),
             main_branch,
         }
@@ -68,7 +69,9 @@ impl UtxoState {
                 supply = supply.saturating_sub(spent_output.value);
                 let _ = self.utxos.map_mut().remove(branch, &key);
                 let slot = addr_slot(&spent_output.pubkey_hash);
-                self.addr_index.remove(slot, &key);
+                self.addr_index
+                    .remove(slot, &key)
+                    .expect("writable address index");
             }
         }
 
@@ -104,10 +107,13 @@ impl UtxoState {
 
     /// Generate an SMT inclusion/exclusion proof for a UTXO.
     ///
-    /// Call `utxo_root()` first to ensure the trie is synced.
-    pub fn prove_utxo(&self, outpoint: &OutPoint) -> Result<SmtProof> {
+    /// Synchronizes the proof to the current working state in this call.
+    pub fn prove_utxo(&mut self, outpoint: &OutPoint) -> Result<SmtProof> {
         let key = outpoint.to_key();
-        self.utxos.prove(&key).c(d!())
+        self.utxos
+            .prove_at(self.main_branch, &key)
+            .map(|result| result.proof)
+            .c(d!())
     }
 
     /// Insert a genesis UTXO (before any blocks are committed).
@@ -134,7 +140,7 @@ impl UtxoState {
     ) -> Vec<OutPoint> {
         let slot = addr_slot(pubkey_hash);
         self.addr_index
-            .get_entries_by_page_slot(Some(slot), Some(slot), page_size, page_index, false)
+            .page(slot..=slot, page_size, page_index, Order::Asc)
             .into_iter()
             .map(|key| OutPoint::from_key(&key))
             .collect()
@@ -143,12 +149,10 @@ impl UtxoState {
     /// Get the total balance for an address (sum of all its UTXO values).
     pub fn get_balance(&self, pubkey_hash: &[u8; 32]) -> u64 {
         let slot = addr_slot(pubkey_hash);
-        let keys =
-            self.addr_index
-                .get_entries_by_page_slot(Some(slot), Some(slot), u16::MAX, 0, false);
         let branch = self.main_branch;
-        keys.iter()
-            .filter_map(|key| self.utxos.map().get(branch, key).ok().flatten())
+        self.addr_index
+            .iter(slot..=slot, Order::Asc)
+            .filter_map(|key| self.utxos.map().get(branch, &key).ok().flatten())
             .map(|out| out.value)
             .sum()
     }

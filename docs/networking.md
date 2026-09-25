@@ -205,7 +205,7 @@ async fn run_validator(
     app: impl hotmint::consensus::application::Application + 'static,
     chain_id: &str,
 ) {
-    // persistent storage — `open` requires vsdb_set_base_dir(data_dir) first;
+    // persistent storage — call vsdb_configure(VsdbOptions::new(&data_dir)) before `open`;
     // `new()` is the test-only in-memory constructor and would discard all state
     let store = VsdbBlockStore::open(&data_dir).unwrap();
     let pstate = PersistentConsensusState::open(&data_dir).unwrap();

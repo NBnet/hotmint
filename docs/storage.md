@@ -14,11 +14,11 @@ Hotmint provides two `BlockStore` implementations and a `PersistentConsensusStat
 
 [vsdb](https://crates.io/crates/vsdb) is a high-performance embedded key-value database whose API mirrors Rust standard collections (HashMap / BTreeMap). Under the hood it uses MMDB, a pure-Rust LSM-Tree storage engine, so there are no C library dependencies.
 
-Hotmint pins `vsdb = "16.3.9"`.
+Hotmint declares `vsdb = "17.0.7"` from crates.io.
 
 ### Core Types
 
-Core vsdb v16.x types used by Hotmint:
+Core vsdb v17.x types used by Hotmint:
 
 | Type | Description | Rust Equivalent |
 |:-----|:------------|:----------------|
@@ -63,7 +63,7 @@ map.clear();
 
 ```rust
 // Set the data directory (must be called before any vsdb operation; can only be called once)
-vsdb::vsdb_set_base_dir("/var/lib/hotmint/data").unwrap();
+vsdb::vsdb_configure(vsdb::VsdbOptions::new("/var/lib/hotmint/data")).unwrap();
 
 // Get the current data directory
 let dir = vsdb::vsdb_get_base_dir();
@@ -135,7 +135,7 @@ A persistent block store backed by vsdb `MapxOrd`. Blocks survive process restar
 ```rust
 use hotmint::storage::block_store::VsdbBlockStore;
 
-// Production: call vsdb_set_base_dir(data_dir) first; opens or creates
+// Production: call vsdb_configure(VsdbOptions::new(&data_dir)) first; opens or creates
 // data_dir/block_store.meta so the collections are recovered on restart.
 let store = VsdbBlockStore::open(&data_dir)?;
 
@@ -231,7 +231,7 @@ const KEY_PREVIOUS_EPOCH: u64 = 8;   // previous epoch, kept for verifying in-fl
 ```rust
 use hotmint::storage::consensus_state::PersistentConsensusState;
 
-// Production: requires vsdb_set_base_dir(data_dir) first; `new()` is the
+// Production: requires vsdb_configure(VsdbOptions::new(&data_dir)) first; `new()` is the
 // test-only in-memory constructor.
 let mut pstate = PersistentConsensusState::open(&data_dir)?;
 
@@ -348,7 +348,7 @@ A `MemoryEvidenceStore` implementation is provided for testing.
 
 ## Data Directory Configuration
 
-vsdb resolves its base directory from `$VSDB_BASE_DIR`, falling back to `$HOME/.vsdb` and finally to a process-private temporary directory — never the process working directory. Hotmint's persistent stores expect `vsdb_set_base_dir(<data_dir>)` to be called before `open()`, and keep their own metadata files in that same directory (`block_store.meta`, `consensus_state.meta`, `evidence_store.meta`, `consensus.wal`). There are two ways to point vsdb at a custom path:
+vsdb resolves its base directory from `$VSDB_BASE_DIR`, falling back to `$HOME/.vsdb` and finally to a process-private temporary directory. Hotmint's node startup calls `vsdb_configure(VsdbOptions::new(&data_dir))` before `open()`, and keeps its own metadata files in that same directory (`block_store.meta`, `consensus_state.meta`, `evidence_store.meta`, `consensus.wal`). Applications can select a custom path through an environment variable or explicit configuration:
 
 ### Environment Variable
 
@@ -360,10 +360,13 @@ export VSDB_BASE_DIR=/var/lib/hotmint/data
 
 ```rust
 // Must be called before any vsdb operation; can only be called once
-vsdb::vsdb_set_base_dir("/var/lib/hotmint/data").unwrap();
+vsdb::vsdb_configure(vsdb::VsdbOptions::new("/var/lib/hotmint/data")).unwrap();
 ```
 
-`vsdb_set_base_dir()` accepts `impl AsRef<Path>` and returns an error if the database has already been initialized.
+`VsdbOptions::new()` accepts `impl AsRef<Path>`. `vsdb_configure()` returns
+`VsdbError::BaseDirFrozen` if configuration was already selected or an earlier
+operation froze the database path. For a read-only process, use
+`VsdbOptions::read_only(path)` instead.
 
 ## Flush Semantics
 
@@ -378,7 +381,7 @@ Both `VsdbBlockStore` and `PersistentConsensusState` expose a `.flush()` method 
 
 ## Advanced vsdb Features
 
-Beyond basic KV storage, vsdb v16.x offers several advanced features that may be useful for future Hotmint extensions:
+Beyond basic KV storage, vsdb v17.x offers several advanced features that may be useful for future Hotmint extensions:
 
 ### VerMap — Versioned Storage
 
@@ -412,6 +415,28 @@ Potential use case: optimistic execution and rollback of application state.
 `MptCalc` (Merkle Patricia Trie) and `SmtCalc` (Sparse Merkle Tree) provide stateless Merkle root computation and proof generation.
 
 `VerMapWithProof` combines versioned storage with Merkle root computation: `merkle_root(branch)` returns the 32-byte state root, updating an ephemeral trie incrementally from its last synced commit rather than recomputing the whole tree.
+
+Both trie backends provide the same proof workflow in VSDB 17.0.7:
+
+| Operation | SMT | MPT |
+|:----------|:----|:----|
+| Versioned byte encoding | `SmtProof::to_bytes` / `from_bytes` | `MptProof::to_bytes` / `from_bytes` |
+| Serde | `Serialize` / `Deserialize` | `Serialize` / `Deserialize` |
+| Current branch, including pending changes | `prove_at(branch, &key)` | `prove_at(branch, &key)` |
+| Historical commit | `prove_at_commit(commit, &key)` | `prove_at_commit(commit, &key)` |
+| Typed-key verification | `verify_key_proof` | `verify_key_proof` |
+| Light client verification | `LightClient::verify_smt_state_proof` | `LightClient::verify_state_proof` |
+
+The `prove_at` methods return `ProofWithRoot`, containing the root and proof
+for the selected state, without requiring a separate root query. Both backends
+support inclusion and exclusion proofs. Their tree structures, root hashes,
+and encoded proof types remain distinct; legacy method names such as
+`prove_key` and `prove_mpt` also remain available.
+
+Proof decoding validates the transport format. Verification must still use
+the expected key and an independently trusted root. The [UTXO example](../examples/utxo-chain/README.md)
+now uses the VSDB codec for its SMT `prove` response, replacing its old custom
+byte layout; clients must update their decoder accordingly.
 
 Potential use cases:
 - Light client state verification

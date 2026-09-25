@@ -35,7 +35,7 @@ pub struct PersistentConsensusState {
 impl PersistentConsensusState {
     /// Opens an existing consensus state store or creates a fresh one.
     ///
-    /// Must be called after [`vsdb::vsdb_set_base_dir`].
+    /// Must be called after [`vsdb::vsdb_configure`].
     /// The instance ID of the internal collection is stored in
     /// `data_dir/consensus_state.meta` (8 bytes: one little-endian u64).
     /// On first run the file is created; on subsequent runs the collection

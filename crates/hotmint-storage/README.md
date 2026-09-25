@@ -24,7 +24,7 @@ Implements the `BlockStore` trait from `hotmint-consensus` using [vsdb](https://
 use hotmint_consensus::store::BlockStore;
 use hotmint_storage::block_store::VsdbBlockStore;
 
-// must be called after `vsdb_set_base_dir`
+// must be called after `vsdb_configure`
 let store = VsdbBlockStore::open(&data_dir)?;
 // genesis block is inserted automatically
 //
@@ -69,12 +69,14 @@ if let Some(h) = pstate.load_last_committed_height() {
 
 ### Data Directory
 
+Hotmint uses the crates.io release of VSDB 17.0.7. Initialize it with
+`VsdbOptions` before opening any collection.
+
 The storage backends explicitly use the default vsdb namespace configured by
-`vsdb_set_base_dir`. Their sidecar metadata continues to store 64-bit map IDs;
+`vsdb_configure`. Their sidecar metadata continues to store 64-bit map IDs;
 ambient namespace scopes do not change where these backends create collections.
 
-vsdb does not store data in the process working directory: it resolves the
-location from `$VSDB_BASE_DIR`, falling back to `$HOME/.vsdb`, and finally to a
+vsdb resolves the location from `$VSDB_BASE_DIR`, falling back to `$HOME/.vsdb`, and finally to a
 process-private temporary directory. Configure a custom location via environment
 variable or programmatically:
 
@@ -84,7 +86,7 @@ export VSDB_BASE_DIR=/var/lib/hotmint/data
 
 ```rust
 // must be called before any vsdb operation, can only be called once
-vsdb::vsdb_set_base_dir("/var/lib/hotmint/data").unwrap();
+vsdb::vsdb_configure(vsdb::VsdbOptions::new("/var/lib/hotmint/data")).unwrap();
 ```
 
 ## License

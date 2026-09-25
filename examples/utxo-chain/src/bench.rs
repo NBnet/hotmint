@@ -40,7 +40,7 @@ fn main() {
     // Initialize vsdb for the bench process itself (if needed by UTXO lib).
     let vsdb_dir = base_dir.join("vsdb");
     let _ = std::fs::create_dir_all(&vsdb_dir);
-    vsdb::vsdb_set_base_dir(&vsdb_dir).unwrap();
+    vsdb::vsdb_configure(vsdb::VsdbOptions::new(&vsdb_dir)).unwrap();
 
     let ports = hotmint_mgmt::find_free_ports((NUM_VALIDATORS * 2) as usize);
     let p2p_base = ports[0];

@@ -11,7 +11,7 @@ use hotmint_types::{
 #[test]
 fn stores_reopen_after_creation_inside_an_ambient_namespace() {
     let dir = tempfile::tempdir().unwrap();
-    vsdb::vsdb_set_base_dir(dir.path().join("db")).unwrap();
+    vsdb::vsdb_configure(vsdb::VsdbOptions::new(dir.path().join("db"))).unwrap();
     let namespace = vsdb::Namespace::create().unwrap();
     namespace.scope(|| {
         let mut blocks = VsdbBlockStore::open(dir.path()).unwrap();

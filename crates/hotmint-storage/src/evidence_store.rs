@@ -80,7 +80,7 @@ pub struct PersistentEvidenceStore {
 
 impl PersistentEvidenceStore {
     /// Open an existing store or create a new one.
-    /// Must be called after `vsdb::vsdb_set_base_dir`.
+    /// Must be called after `vsdb::vsdb_configure`.
     pub fn open(data_dir: &Path) -> Result<Self> {
         let meta_path = data_dir.join(META_FILE);
         if meta_path.exists() {

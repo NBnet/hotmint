@@ -22,7 +22,7 @@ pub struct VsdbBlockStore {
 impl VsdbBlockStore {
     /// Opens an existing block store or creates a fresh one.
     ///
-    /// Must be called after [`vsdb::vsdb_set_base_dir`].
+    /// Must be called after [`vsdb::vsdb_configure`].
     /// The instance IDs of the internal collections are stored in
     /// `data_dir/block_store.meta`. On first run the file is created;
     /// on subsequent runs the collections are recovered from saved IDs.

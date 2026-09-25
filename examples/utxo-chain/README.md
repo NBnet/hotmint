@@ -33,15 +33,36 @@ cargo run --release -p utxo-chain-example --bin bench-utxo
 
 - Full transaction validation: double-spend, ownership, signature, amount conservation
 - Sparse Merkle Tree proofs via `VerMapWithProof<[u8; 36], TxOutput, SmtCalc>`
-- Address-indexed UTXO queries with pagination
+- Address-indexed UTXO queries with pagination and streaming balance aggregation
 - Ed25519 `verify_strict` for signature verification
 
-The `prove` query takes a 36-byte outpoint key and returns the queried key hash
-(32 bytes), a leaf-present flag (1 byte), and, when present, the terminal leaf's
-key hash (32 bytes), value length (little-endian u32), and value bytes. The
-remaining bytes are sibling hashes (32 bytes each, root first). A terminal leaf
-with a different key hash proves non-membership; its key and value must be
-preserved when reconstructing a vsdb `SmtProof` for verification.
+The `prove` query takes a 36-byte outpoint key and returns
+`SmtProof::to_bytes()` in `QueryResponse.data`. VSDB 17.0.7 provides this
+versioned encoding, its matching `SmtProof::from_bytes()` decoder, and serde
+support for both SMT and MPT proofs. Proof generation synchronizes the current
+working state through `prove_at`; no preceding `utxo_root` query is required.
+
+```rust
+use hotmint_consensus::application::Application;
+use vsdb::{SmtCalc, SmtProof};
+
+let key = outpoint.to_key();
+let response = app.query("prove", &key)?;
+let proof = SmtProof::from_bytes(&response.data)?;
+assert!(SmtCalc::verify_proof(&trusted_root, &key, &proof)?);
+// After verification: Some(value) proves inclusion; None proves exclusion.
+let output = proof.value();
+```
+
+`trusted_root` must be obtained independently for the same application state.
+The lightweight client offers the equivalent
+`LightClient::verify_smt_state_proof` helper. A valid absence proof may contain
+a different terminal leaf; the VSDB codec preserves that leaf automatically.
+
+**Client migration:** this replaces the example's previous hand-built proof
+layout. Clients must switch to the VSDB decoder; old proof bytes are not
+accepted by the new codec. The `prove` query still returns bytes in `data`,
+and stored UTXOs and their root hashes are unchanged by this codec change.
 
 ## License
 

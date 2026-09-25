@@ -54,7 +54,7 @@ impl Default for UtxoConfig {
 /// - Persistent state via vsdb `VerMapWithProof` with SMT proofs
 /// - Address-indexed UTXO queries via `SlotDex`
 ///
-/// **Prerequisite:** `vsdb::vsdb_set_base_dir()` must be called before
+/// **Prerequisite:** `vsdb::vsdb_configure()` must be called before
 /// constructing this type.
 pub struct UtxoApplication {
     state: Mutex<UtxoState>,
@@ -284,26 +284,10 @@ impl Application for UtxoApplication {
                 Ok(supply.to_le_bytes().to_vec())
             }
             "prove" if data.len() == 36 => {
-                // Ensure trie is synced before proving
-                let _ = state.utxo_root();
                 let key: [u8; 36] = data.try_into().unwrap();
                 let outpoint = OutPoint::from_key(&key);
                 let proof = state.prove_utxo(&outpoint)?;
-                let mut buf = Vec::new();
-                buf.extend_from_slice(&proof.key_hash);
-                match &proof.leaf {
-                    Some((leaf_key_hash, v)) => {
-                        buf.push(1);
-                        buf.extend_from_slice(leaf_key_hash);
-                        buf.extend_from_slice(&(v.len() as u32).to_le_bytes());
-                        buf.extend_from_slice(v);
-                    }
-                    None => buf.push(0),
-                }
-                for sibling in &proof.siblings {
-                    buf.extend_from_slice(sibling);
-                }
-                Ok(buf)
+                proof.to_bytes().c(d!())
             }
             _ => Ok(vec![]),
         };
@@ -333,12 +317,6 @@ mod tests {
             }],
             ..UtxoConfig::default()
         });
-        let root: [u8; 32] = app
-            .query("utxo_root", &[])
-            .unwrap()
-            .data
-            .try_into()
-            .unwrap();
         let existing = OutPoint {
             txid: *blake3::hash(&0u64.to_le_bytes()).as_bytes(),
             vout: 0,
@@ -350,20 +328,18 @@ mod tests {
         for (outpoint, present) in [(existing, true), (absent, false)] {
             let key = outpoint.to_key();
             let bytes = app.query("prove", &key).unwrap().data;
+            let proof = SmtProof::from_bytes(&bytes).unwrap();
             // A one-leaf tree includes its terminal leaf even for absent keys.
-            assert_eq!(bytes[32], 1);
-            let value_len = u32::from_le_bytes(bytes[65..69].try_into().unwrap()) as usize;
-            let value_end = 69 + value_len;
-            let proof = SmtProof {
-                key_hash: bytes[..32].try_into().unwrap(),
-                leaf: Some((
-                    bytes[33..65].try_into().unwrap(),
-                    bytes[69..value_end].to_vec(),
-                )),
-                siblings: bytes[value_end..].as_chunks::<32>().0.to_vec(),
-            };
+            assert!(proof.leaf.is_some());
             assert_eq!(proof.value().is_some(), present);
+            let root: [u8; 32] = app
+                .query("utxo_root", &[])
+                .unwrap()
+                .data
+                .try_into()
+                .unwrap();
             assert!(SmtCalc::verify_proof(&root, &key, &proof).unwrap());
+            assert!(!SmtCalc::verify_proof(&root, &[0; 36], &proof).unwrap());
         }
     }
 }

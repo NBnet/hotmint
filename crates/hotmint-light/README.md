@@ -12,7 +12,7 @@ Checks block headers against quorum certificates (QCs) using a trusted validator
 - **Header verification** — verify that a QC was signed by more than 2/3 of the known validator set's voting power
 - **Validator set tracking** — replace the validator set at an externally trusted checkpoint
 - **Hash chain tracking** — require each header to extend the last accepted checkpoint
-- **State-proof verification** — `LightClient::verify_state_proof` checks MPT proofs (`MptProof`, re-exported from vsdb) against a trusted header's `app_hash`
+- **State proofs** — verify MPT and SMT inclusion/exclusion proofs with VSDB's versioned proof codec
 
 Header fields are not independently authenticated: the header omits the payload and evidence needed to recompute the certified block hash. Supply headers from a trusted source before relying on their fields, including `app_hash` for state proofs.
 
@@ -34,6 +34,22 @@ lc.verify_header(&block_header, &qc, &Ed25519Verifier).unwrap();
 
 // Install an externally trusted checkpoint after an epoch transition.
 lc.update_validator_set(new_validator_set, new_height, new_hash);
+```
+
+Decode application proof bytes with `MptProof::from_bytes` or
+`SmtProof::from_bytes`, then verify them against the expected key and an
+independently trusted application root. Both proof types also support serde.
+Choose the proof type matching the application's trie; MPT and SMT encodings
+and roots are distinct.
+
+```rust
+use hotmint_light::{LightClient, MptProof, SmtProof};
+
+let mpt = MptProof::from_bytes(&mpt_bytes)?;
+assert!(LightClient::verify_state_proof(&mpt_root, &expected_key, &mpt)?);
+
+let smt = SmtProof::from_bytes(&smt_bytes)?;
+assert!(LightClient::verify_smt_state_proof(&smt_root, &expected_key, &smt)?);
 ```
 
 ## License
