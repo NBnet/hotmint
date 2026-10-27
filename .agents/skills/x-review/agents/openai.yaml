@@ -1,0 +1,6 @@
+interface:
+  display_name: "Hotmint Deep Regression Review"
+  short_description: "Review hotmint for consensus defects and maintain the audit registry"
+
+policy:
+  allow_implicit_invocation: false

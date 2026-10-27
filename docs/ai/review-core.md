@@ -21,7 +21,7 @@ Before analyzing any change, gather context:
    - `crates/hotmint-light/src/` → light client
    - `crates/hotmint-staking/src/` → staking
    - `crates/hotmint-mgmt/src/` → cluster management
-3. **Load subsystem patterns** — read the relevant `.claude/docs/patterns/<subsystem>.md`
+3. **Load subsystem patterns** — read the relevant `docs/ai/patterns/<subsystem>.md`
 4. **Check call sites** — use grep/LSP to find all callers of changed functions
 5. **Check related tests** — identify which test files cover the changed code
 
@@ -122,10 +122,10 @@ Enforced project conventions — violations are findings (severity LOW):
 - **Prefer imports over inline paths**: Avoid `std::foo::Bar::new()` inline in function bodies when the same path appears 3+ times in a file; add a `use` import at file top instead. Function-body `use` statements (scoped imports) are fine. 1-2 inline uses of common `std::` items are acceptable.
 - **Grouped imports**: Merge common prefixes.
 - **Doc-code alignment**: Public API changes must update corresponding docs. When a change adds, removes, or renames a public type, module, or subsystem path, also verify:
-  - `CLAUDE.md` architecture table (paths, type names, dependency info)
-  - `.claude/docs/review-core.md` subsystem path mappings
-  - `.claude/commands/x-review.md` full-audit subsystem partitioning table
-  - `.claude/docs/patterns/` guides — referenced file lists and invariants
+  - `AGENTS.md` architecture table (paths, type names, dependency info)
+  - `docs/ai/review-core.md` subsystem path mappings
+  - `.agents/skills/x-review/SKILL.md` full-audit subsystem partitioning table
+  - `docs/ai/patterns/` guides — referenced file lists and invariants
 
 ## Phase 5: Reporting
 
@@ -152,4 +152,4 @@ Only report findings where you have **concrete evidence** from the code. Never r
 - Style preferences not related to correctness
 - "Consider" suggestions without a clear downside to the current code
 
-Consult `.claude/docs/false-positive-guide.md` before finalizing any finding.
+Consult [false-positive-guide.md](false-positive-guide.md) before finalizing any finding.

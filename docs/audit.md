@@ -1,6 +1,6 @@
 # Audit Findings
 
-> Auto-managed by /x-review and /x-fix.
+> Auto-managed by $x-review and $x-fix.
 > Historical audit rounds (formerly in `docs/security-audit-and-roadmap.md`) consolidated here.
 > Earlier rounds (C-1..C-7, H-1..H-12, R-1, A-1..A-8, B-1..B-3, C2-1..C2-5) were resolved prior to Round 3 and are not itemized.
 
@@ -405,7 +405,7 @@
 ### [LOW] style: grouped import and inline-`std` conventions still have violations
 - **Where**: crates/hotmint/src/bin/node.rs:9-32; crates/hotmint-mgmt/src/lib.rs:162,180,215
 - **What**: `tokio::sync` imports are split across multiple imports, and `std::thread::sleep` is used inline three times in one file.
-- **Why**: Violates project style rules in review-core.md and CLAUDE.md for grouped imports and repeated inline `std` paths.
+- **Why**: Violates project style rules in review-core.md and AGENTS.md for grouped imports and repeated inline `std` paths.
 - **Suggested fix**: Group the `tokio::sync` imports and import/use `std::thread::sleep` or `std::thread`.
 
 ---

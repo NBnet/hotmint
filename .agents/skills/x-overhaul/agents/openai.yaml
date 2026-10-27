@@ -1,0 +1,6 @@
+interface:
+  display_name: "Hotmint Full Codebase Overhaul"
+  short_description: "Audit, fix, and commit across the whole hotmint codebase"
+
+policy:
+  allow_implicit_invocation: false

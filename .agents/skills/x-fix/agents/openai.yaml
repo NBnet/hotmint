@@ -1,0 +1,6 @@
+interface:
+  display_name: "Hotmint Audit Backlog Fix"
+  short_description: "Fix recorded hotmint audit findings, self-review, and commit"
+
+policy:
+  allow_implicit_invocation: false

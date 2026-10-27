@@ -1,0 +1,6 @@
+interface:
+  display_name: "Hotmint Self-Reviewing Commit"
+  short_description: "Review, fix, format, version-bump, and commit hotmint changes"
+
+policy:
+  allow_implicit_invocation: false
