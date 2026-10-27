@@ -133,11 +133,9 @@ pub fn enter_view(
 pub fn propose(
     state: &mut ConsensusState,
     store: &mut dyn BlockStore,
-    network: &dyn NetworkSink,
-    app: &dyn Application,
-    signer: &dyn Signer,
+    deps: &ViewDeps<'_>,
     mut evidence: Vec<EquivocationProof>,
-    verifier: &dyn Verifier,
+    epochs: EpochContext<'_>,
 ) -> Result<Block> {
     let justify = state
         .highest_qc
@@ -168,7 +166,7 @@ pub fn propose(
         vote_extensions: std::mem::take(&mut state.pending_vote_extensions),
     };
 
-    let payload = app.create_payload(&ctx);
+    let payload = deps.app.create_payload(&ctx);
 
     // Queued proofs can outlive validator membership/key changes. Only embed
     // proofs that replicas can authenticate against the proposal's epoch.
@@ -177,8 +175,9 @@ pub fn propose(
             proof,
             state.current_view,
             &state.current_epoch,
+            epochs.previous_epoch,
             &state.chain_id_hash,
-            verifier,
+            deps.verifier,
         )
         .is_ok()
     });
@@ -212,7 +211,7 @@ pub fn propose(
         &block,
         &justify,
     );
-    let signature = signer.sign(&msg_bytes);
+    let signature = deps.signer.sign(&msg_bytes);
 
     info!(
         validator = %state.validator_id,
@@ -247,7 +246,7 @@ pub fn propose(
         }
     }
 
-    network.broadcast(ConsensusMessage::Propose {
+    deps.network.broadcast(ConsensusMessage::Propose {
         block: Box::new(block.clone()),
         justify: Box::new(justify),
         double_cert: state.highest_double_cert.clone().map(Box::new),
@@ -281,10 +280,9 @@ pub fn on_proposal(
     state: &mut ConsensusState,
     proposal: ProposalData,
     store: &mut dyn BlockStore,
-    network: &dyn NetworkSink,
-    app: &dyn Application,
-    signer: &dyn Signer,
-    verifier: &dyn Verifier,
+    deps: &ViewDeps<'_>,
+    persistence: &mut Option<Box<dyn crate::engine::StatePersistence>>,
+    epochs: EpochContext<'_>,
 ) -> Result<ProposalResult> {
     let ProposalData {
         block,
@@ -303,17 +301,22 @@ pub fn on_proposal(
         });
     }
 
-    // Safety check: justify.rank() >= locked_qc.rank()
+    // Safety check: the proposal must either extend the locked block, or be
+    // justified by a QC from a STRICTLY higher view than the lock. An
+    // equal-view justify for a different block would be a locked-QC bypass
+    // (technical-patterns.md 1.2) — it can only exist if conflicting
+    // same-view QCs were formed, which must not unlock the lock.
     if let Some(ref locked) = state.locked_qc
-        && justify.rank() < locked.rank()
+        && (justify.rank() < locked.rank()
+            || (justify.rank() == locked.rank() && justify.block_hash != locked.block_hash))
     {
         warn!(
             validator = %state.validator_id,
             justify_view = %justify.view,
             locked_view = %locked.view,
-            "rejecting proposal: justify rank < locked rank"
+            "rejecting proposal: justify does not dominate locked QC"
         );
-        return Err(eg!("proposal justify rank below locked QC rank"));
+        return Err(eg!("proposal justify does not dominate locked QC"));
     }
 
     // Verify proposer is the rightful leader for this view
@@ -406,10 +409,11 @@ pub fn on_proposal(
     crate::commit::validate_block_evidence(
         &block,
         &state.current_epoch,
+        epochs.previous_epoch,
         &state.chain_id_hash,
-        verifier,
+        deps.verifier,
     )?;
-    if !app.validate_block(&block, &ctx) {
+    if !deps.app.validate_block(&block, &ctx) {
         return Err(eg!("application rejected block"));
     }
 
@@ -432,9 +436,11 @@ pub fn on_proposal(
         match try_commit(
             dc,
             store,
-            app,
+            deps.app,
             &mut state.last_committed_height,
             &state.current_epoch,
+            epochs.previous_epoch,
+            epochs.in_flight_pending,
         ) {
             Ok(result) => {
                 if !result.committed_blocks.is_empty() {
@@ -452,7 +458,7 @@ pub fn on_proposal(
     // Verify app_hash matches local state AFTER fast-forward commit.
     // Skip when the application does not track state roots (e.g. fullnode
     // running NoopApplication against a chain produced by a real ABCI app).
-    if app.tracks_app_hash() && block.app_hash != state.last_app_hash {
+    if deps.app.tracks_app_hash() && block.app_hash != state.last_app_hash {
         warn!(
             block_app_hash = %block.app_hash,
             local_app_hash = %state.last_app_hash,
@@ -464,8 +470,25 @@ pub fn on_proposal(
         });
     }
 
-    // Vote (first phase) → send to current leader (only if we have voting power)
-    if state.validator_set.power_of(state.validator_id) > 0 {
+    // Vote (first phase) → send to current leader (only if we have voting power).
+    // The double-sign guard records the (view, hash) and the vote MUST be
+    // persisted before broadcast, so a crash-recovered node never signs a
+    // conflicting vote at a view it already voted in.
+    let may_sign = state.validator_set.power_of(state.validator_id) > 0
+        && state.check_and_record_vote(VoteType::Vote, state.current_view, block.hash);
+    if !may_sign {
+        warn!(
+            validator = %state.validator_id,
+            view = %state.current_view,
+            hash = %block.hash,
+            "refusing to sign Vote1: already voted for a different block at this view"
+        );
+    }
+    if may_sign {
+        if let Some(p) = persistence {
+            p.save_last_vote(VoteType::Vote, state.current_view, block.hash);
+            p.flush();
+        }
         let vote_bytes = Vote::signing_bytes(
             &state.chain_id_hash,
             state.current_epoch.number,
@@ -475,7 +498,7 @@ pub fn on_proposal(
             VoteType::Vote,
             None,
         );
-        let signature = signer.sign(&vote_bytes);
+        let signature = deps.signer.sign(&vote_bytes);
         let vote = Vote {
             epoch: state.current_epoch.number,
             block_hash: block.hash,
@@ -497,7 +520,8 @@ pub fn on_proposal(
             hash = %block.hash,
             "voting for block"
         );
-        network.send_to(leader_id, ConsensusMessage::VoteMsg(vote));
+        deps.network
+            .send_to(leader_id, ConsensusMessage::VoteMsg(vote));
     }
 
     state.step = ViewStep::Voted;
@@ -548,6 +572,7 @@ pub fn on_prepare(
     qc: QuorumCertificate,
     signer: &dyn Signer,
     vote_extension: Option<Vec<u8>>,
+    persistence: &mut Option<Box<dyn crate::engine::StatePersistence>>,
 ) -> PrepareResult {
     // C-1: Guard — only accept Prepare if we have already voted (sent Vote1).
     // Without this check, a Byzantine leader could cause us to lock a QC and
@@ -566,8 +591,16 @@ pub fn on_prepare(
     state.update_locked_qc(&qc);
     state.update_highest_qc(&qc);
 
-    // Vote2 → send to next leader (only if we have voting power)
-    if state.validator_set.power_of(state.validator_id) > 0 {
+    // Vote2 → send to next leader (only if we have voting power). Persist
+    // the vote record before handing the vote out for broadcast (see
+    // `ConsensusState::check_and_record_vote`).
+    if state.validator_set.power_of(state.validator_id) > 0
+        && state.check_and_record_vote(VoteType::Vote2, state.current_view, qc.block_hash)
+    {
+        if let Some(p) = persistence {
+            p.save_last_vote(VoteType::Vote2, state.current_view, qc.block_hash);
+            p.flush();
+        }
         let vote_bytes = Vote::signing_bytes(
             &state.chain_id_hash,
             state.current_epoch.number,
@@ -604,6 +637,22 @@ pub fn on_prepare(
 
     state.step = ViewStep::SentVote2;
     PrepareResult { vote2: None }
+}
+
+/// Cross-cutting dependencies shared by the view protocol entry points.
+pub struct ViewDeps<'a> {
+    pub network: &'a dyn NetworkSink,
+    pub app: &'a dyn Application,
+    pub signer: &'a dyn Signer,
+    pub verifier: &'a dyn Verifier,
+}
+
+/// Epoch context threading the previous epoch and the in-flight pending
+/// epoch through proposal/commit handling (see `commit::try_commit`).
+#[derive(Clone, Copy, Default)]
+pub struct EpochContext<'a> {
+    pub previous_epoch: Option<&'a Epoch>,
+    pub in_flight_pending: Option<&'a Epoch>,
 }
 
 // --- Signing helpers ---

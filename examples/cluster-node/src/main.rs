@@ -156,11 +156,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
                 pex
             },
             relay_consensus: config.node.relay_consensus,
-            initial_validators: validator_set
-                .validators()
-                .iter()
-                .map(|v| (v.id, v.public_key.clone()))
-                .collect(),
+            initial_validator_set: validator_set.clone(),
             chain_id_hash: state.chain_id_hash,
         })?
     };

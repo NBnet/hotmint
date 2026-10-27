@@ -33,7 +33,8 @@ let mut lc = LightClient::new_with_trusted_hash(
 lc.verify_header(&block_header, &qc, &Ed25519Verifier).unwrap();
 
 // Install an externally trusted checkpoint after an epoch transition.
-lc.update_validator_set(new_validator_set, new_height, new_hash);
+// The checkpoint must be justified by the outgoing set; regressions are rejected.
+lc.update_validator_set(new_validator_set, new_height, new_hash)?;
 ```
 
 Decode application proof bytes with `MptProof::from_bytes` or

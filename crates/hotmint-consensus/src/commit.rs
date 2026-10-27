@@ -14,6 +14,10 @@ pub struct CommitResult {
     pub commit_qc: hotmint_types::QuorumCertificate,
     /// If an epoch transition was triggered by end_block, the new epoch (start_view is placeholder)
     pub pending_epoch: Option<Epoch>,
+    /// The epoch that became ACTIVE mid-batch because a committed block reached
+    /// its start_view (mirrors sync replay activation). Callers must adopt it
+    /// as their current epoch after processing the result.
+    pub activated_epoch: Option<Epoch>,
     /// Application state root after executing the last committed block.
     pub last_app_hash: BlockHash,
     /// EndBlockResponse for each committed block (same order as committed_blocks).
@@ -48,6 +52,13 @@ pub fn decode_payload(payload: &[u8]) -> Vec<&[u8]> {
 /// For each committed block, runs the full application lifecycle:
 /// on_evidence (per embedded proof) → execute_block → on_commit
 ///
+/// Epoch derivation (mirrors sync replay, keeping all commit paths identical):
+/// - `previous_epoch` supplies the context for blocks certified before
+///   `current_epoch.start_view` (fast-forward commits racing a transition).
+/// - `in_flight_pending` is the not-yet-activated pending epoch; a committed
+///   block at or past its start_view ACTIVATES it for that block and later
+///   ones, and further validator updates chain onto the activated epoch.
+///
 /// # Safety
 /// Caller MUST verify both inner_qc and outer_qc aggregate signatures
 /// and quorum counts before calling this function. Embedded evidence is checked
@@ -60,6 +71,8 @@ pub fn try_commit(
     app: &dyn Application,
     last_committed_height: &mut Height,
     current_epoch: &Epoch,
+    previous_epoch: Option<&Epoch>,
+    in_flight_pending: Option<&Epoch>,
 ) -> Result<CommitResult> {
     let commit_hash = double_cert.inner_qc.block_hash;
     let commit_block = store
@@ -71,6 +84,7 @@ pub fn try_commit(
             committed_blocks: vec![],
             commit_qc: double_cert.inner_qc.clone(),
             pending_epoch: None,
+            activated_epoch: None,
             last_app_hash: BlockHash::GENESIS,
             block_responses: vec![],
         });
@@ -113,18 +127,42 @@ pub fn try_commit(
     }
     to_commit.reverse();
 
-    let mut pending_epoch: Option<Epoch> = None;
+    let mut pending_epoch: Option<Epoch> = in_flight_pending.cloned();
+    let mut activated_epoch: Option<Epoch> = None;
+    let mut active_epoch: Epoch = current_epoch.clone();
+    let mut previous_epoch: Option<Epoch> = previous_epoch.cloned();
     let mut last_app_hash = BlockHash::GENESIS;
     let mut block_responses = Vec::with_capacity(to_commit.len());
 
     for block in &to_commit {
+        // Activate the in-flight pending epoch when a committed block reaches
+        // its start_view — mirroring sync replay so every commit path executes
+        // the block under the same epoch.
+        if pending_epoch
+            .as_ref()
+            .is_some_and(|p| block.view >= p.start_view)
+        {
+            previous_epoch = Some(active_epoch.clone());
+            active_epoch = pending_epoch.take().expect("pending epoch checked above");
+            activated_epoch = Some(active_epoch.clone());
+        }
+
+        // Blocks certified before the active epoch's start_view were produced
+        // under the previous epoch; execute them with the epoch live at their
+        // view so live and replayed nodes derive identical application state.
+        let ctx_epoch = if block.view < active_epoch.start_view {
+            previous_epoch.as_ref().unwrap_or(&active_epoch)
+        } else {
+            &active_epoch
+        };
+
         let ctx = BlockContext {
             height: block.height,
             view: block.view,
             proposer: block.proposer,
-            epoch: current_epoch.number,
-            epoch_start_view: current_epoch.start_view,
-            validator_set: &current_epoch.validator_set,
+            epoch: ctx_epoch.number,
+            epoch_start_view: ctx_epoch.start_view,
+            validator_set: &ctx_epoch.validator_set,
             timestamp: block.timestamp,
             vote_extensions: vec![],
         };
@@ -143,23 +181,23 @@ pub fn try_commit(
         };
 
         if !response.validator_updates.is_empty() {
-            // Chain epoch transitions onto the in-flight pending epoch (if any)
-            // so multiple updates within one commit batch accumulate
-            // deterministically — identically to the engine and sync paths.
+            // Chain epoch transitions onto the in-flight pending (or freshly
+            // activated) epoch so multiple updates accumulate deterministically
+            // and identically across the live, engine, and sync replay paths.
             pending_epoch = Some(
                 chained_pending_epoch(
-                    current_epoch,
+                    &active_epoch,
                     pending_epoch.as_ref(),
                     block.view,
                     &response.validator_updates,
                 )
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "FATAL: invalid validator updates at committed height {}: {}",
+                .map_err(|e| {
+                    eg!(
+                        "invalid validator updates at committed height {}: {}",
                         block.height.as_u64(),
                         e
                     )
-                }),
+                })?,
             );
         }
 
@@ -171,6 +209,7 @@ pub fn try_commit(
         committed_blocks: to_commit,
         commit_qc: double_cert.inner_qc.clone(),
         pending_epoch,
+        activated_epoch,
         last_app_hash,
         block_responses,
     })
@@ -180,11 +219,19 @@ pub fn try_commit(
 pub(crate) fn validate_block_evidence(
     block: &Block,
     epoch: &Epoch,
+    previous_epoch: Option<&Epoch>,
     chain_id_hash: &[u8; 32],
     verifier: &dyn hotmint_types::Verifier,
 ) -> Result<()> {
     for proof in &block.evidence {
-        validate_evidence(proof, block.view, epoch, chain_id_hash, verifier)?;
+        validate_evidence(
+            proof,
+            block.view,
+            epoch,
+            previous_epoch,
+            chain_id_hash,
+            verifier,
+        )?;
     }
     Ok(())
 }
@@ -193,13 +240,17 @@ pub(crate) fn validate_evidence(
     proof: &hotmint_types::EquivocationProof,
     block_view: ViewNumber,
     epoch: &Epoch,
+    previous_epoch: Option<&Epoch>,
     chain_id_hash: &[u8; 32],
     verifier: &dyn hotmint_types::Verifier,
 ) -> Result<()> {
     use hotmint_types::{Vote, VoteType};
+    // A validator removed by the latest transition can still have its
+    // signatures verified against the retained previous-epoch set.
     let validator = epoch
         .validator_set
         .get(proof.validator)
+        .or_else(|| previous_epoch.and_then(|e| e.validator_set.get(proof.validator)))
         .ok_or_else(|| eg!("evidence references unknown validator"))?;
     if proof.block_hash_a == proof.block_hash_b
         || proof.epoch > epoch.number
@@ -348,7 +399,7 @@ mod tests {
         };
 
         let mut last = Height::GENESIS;
-        let result = try_commit(&dc, &store, &app, &mut last, &epoch).unwrap();
+        let result = try_commit(&dc, &store, &app, &mut last, &epoch, None, None).unwrap();
         assert_eq!(result.committed_blocks.len(), 1);
         assert_eq!(result.committed_blocks[0].height, Height(1));
         assert_eq!(last, Height(1));
@@ -374,7 +425,7 @@ mod tests {
         };
 
         let mut last = Height::GENESIS;
-        let result = try_commit(&dc, &store, &app, &mut last, &epoch).unwrap();
+        let result = try_commit(&dc, &store, &app, &mut last, &epoch, None, None).unwrap();
         assert_eq!(result.committed_blocks.len(), 3);
         assert_eq!(result.committed_blocks[0].height, Height(1));
         assert_eq!(result.committed_blocks[1].height, Height(2));
@@ -397,7 +448,7 @@ mod tests {
         };
 
         let mut last = Height(1);
-        let result = try_commit(&dc, &store, &app, &mut last, &epoch).unwrap();
+        let result = try_commit(&dc, &store, &app, &mut last, &epoch, None, None).unwrap();
         assert!(result.committed_blocks.is_empty());
     }
 
@@ -420,7 +471,7 @@ mod tests {
         };
 
         let mut last = Height(1);
-        let result = try_commit(&dc, &store, &app, &mut last, &epoch).unwrap();
+        let result = try_commit(&dc, &store, &app, &mut last, &epoch, None, None).unwrap();
         assert_eq!(result.committed_blocks.len(), 2);
         assert_eq!(result.committed_blocks[0].height, Height(2));
         assert_eq!(result.committed_blocks[1].height, Height(3));
@@ -437,7 +488,7 @@ mod tests {
             outer_qc: make_qc(BlockHash([99u8; 32]), 1),
         };
         let mut last = Height::GENESIS;
-        assert!(try_commit(&dc, &store, &app, &mut last, &epoch).is_err());
+        assert!(try_commit(&dc, &store, &app, &mut last, &epoch, None, None).is_err());
     }
 
     #[test]
@@ -458,7 +509,18 @@ mod tests {
                 outer_qc: make_qc(block.hash, height),
             };
             let mut last = Height::GENESIS;
-            assert!(try_commit(&dc, &store, &NoopApplication, &mut last, &make_epoch()).is_err());
+            assert!(
+                try_commit(
+                    &dc,
+                    &store,
+                    &NoopApplication,
+                    &mut last,
+                    &make_epoch(),
+                    None,
+                    None
+                )
+                .is_err()
+            );
             assert_eq!(last, Height::GENESIS);
         }
     }

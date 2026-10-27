@@ -36,24 +36,32 @@ impl IpcApplicationClient {
         }
     }
 
-    /// IPC read/write timeout.  Prevents the consensus engine from hanging
-    /// indefinitely when the application process is deadlocked or unresponsive.
+    /// IPC read/write timeout for NON-commit-path requests. Prevents the
+    /// consensus engine from hanging indefinitely when the application
+    /// process is deadlocked or unresponsive on advisory calls.
+    ///
+    /// Commit-path requests (ExecuteBlock / OnCommit / OnEvidence) are
+    /// exempt: their failure is FATAL and retry-unsafe, so a timeout only
+    /// converts a slow (healthy) app into a deterministic crash loop — the
+    /// same block is re-executed on replay and times out again. Tendermint
+    /// semantics: a commit-path call blocks until the app responds.
     const IPC_TIMEOUT: Duration = Duration::from_secs(5);
 
     /// Try to connect to the ABCI socket. Returns an error if unreachable.
     pub fn check_connection(&self) -> Result<()> {
         let stream = UnixStream::connect(&self.socket_path).c(d!("connect to ABCI socket"))?;
-        Self::set_timeouts(&stream)?;
+        Self::set_timeouts(&stream, false)?;
         drop(stream);
         Ok(())
     }
 
-    fn set_timeouts(stream: &UnixStream) -> Result<()> {
+    fn set_timeouts(stream: &UnixStream, commit_path: bool) -> Result<()> {
+        let timeout = (!commit_path).then_some(Self::IPC_TIMEOUT);
         stream
-            .set_read_timeout(Some(Self::IPC_TIMEOUT))
+            .set_read_timeout(timeout)
             .c(d!("set IPC read timeout"))?;
         stream
-            .set_write_timeout(Some(Self::IPC_TIMEOUT))
+            .set_write_timeout(timeout)
             .c(d!("set IPC write timeout"))?;
         Ok(())
     }
@@ -63,17 +71,23 @@ impl IpcApplicationClient {
         let payload = protocol::encode_request(req);
 
         let mut guard = self.conn.lock().map_err(|e| eg!(e.to_string()))?;
-        let resp_bytes = match self.call_once(&mut guard, &payload) {
+        // Apply the per-request timeout policy on the live connection:
+        // commit-path calls get no deadline (see IPC_TIMEOUT docs).
+        if let Some(ref stream) = *guard {
+            Self::set_timeouts(stream, req.is_commit_path()).c(d!("apply IPC timeout policy"))?;
+        }
+        let commit_path = req.is_commit_path();
+        let resp_bytes = match self.call_once(&mut guard, &payload, commit_path) {
             Ok(bytes) => bytes,
             Err(CallFailure::Write(err)) if err.bytes_written == 0 => {
                 *guard = None;
-                self.call_once(&mut guard, &payload)
+                self.call_once(&mut guard, &payload, commit_path)
                     .map_err(|failure| eg!(failure.into_error()))
                     .c(d!("retry request after pre-write IPC failure"))?
             }
             Err(CallFailure::Read(_)) if req.may_retry_after_write() => {
                 *guard = None;
-                self.call_once(&mut guard, &payload)
+                self.call_once(&mut guard, &payload, commit_path)
                     .map_err(|failure| eg!(failure.into_error()))
                     .c(d!("retry idempotent request after IPC read failure"))?
             }
@@ -94,10 +108,11 @@ impl IpcApplicationClient {
         &self,
         guard: &mut Option<UnixStream>,
         payload: &[u8],
+        commit_path: bool,
     ) -> std::result::Result<Vec<u8>, CallFailure> {
         if guard.is_none() {
             let stream = UnixStream::connect(&self.socket_path).map_err(CallFailure::Connect)?;
-            Self::set_timeouts(&stream)
+            Self::set_timeouts(&stream, commit_path)
                 .map_err(|e| CallFailure::Connect(io::Error::other(e.to_string())))?;
             *guard = Some(stream);
         }
@@ -123,6 +138,16 @@ impl CallFailure {
 }
 
 impl Request {
+    /// Requests that mutate committed application state. Their failure is
+    /// FATAL and retry-unsafe, and waiting longer only ever means "slow app",
+    /// so these calls are exempt from the IPC read/write deadline.
+    fn is_commit_path(&self) -> bool {
+        matches!(
+            self,
+            Request::ExecuteBlock { .. } | Request::OnCommit { .. } | Request::OnEvidence(_)
+        )
+    }
+
     fn may_retry_after_write(&self) -> bool {
         matches!(
             self,
@@ -480,8 +505,18 @@ impl Application for IpcApplicationClient {
         }
 
         let req = Request::TracksAppHash;
-        let tracks = match self.call(&req) {
-            Ok(Response::TracksAppHash(tracks)) => tracks,
+        match self.call(&req) {
+            Ok(Response::TracksAppHash(tracks)) => {
+                // Cache only a successful response. Caching the error-fallback
+                // `true` would pin a stale value for the process lifetime and
+                // make sync reject every valid block for an app that actually
+                // tracks no state root.
+                *self
+                    .tracks_app_hash_cache
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()) = Some(tracks);
+                tracks
+            }
             Ok(other) => {
                 tracing::error!(?other, "IPC_FAULT: unexpected response for tracks_app_hash");
                 true
@@ -490,12 +525,7 @@ impl Application for IpcApplicationClient {
                 tracing::error!(%e, "IPC_FAULT: tracks_app_hash call failed");
                 true
             }
-        };
-        *self
-            .tracks_app_hash_cache
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = Some(tracks);
-        tracks
+        }
     }
 }
 

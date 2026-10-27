@@ -317,9 +317,35 @@ pub(crate) async fn handle_request(
                     return RpcResponse::err(req.id, -32602, "invalid hex".to_string());
                 }
             };
-            // Validate via Application if available
+            // Validate via Application if available. Validation may perform
+            // blocking IPC (ABCI client), so run it on the blocking pool
+            // behind the shared semaphore — never directly on a core worker
+            // shared with the consensus engine.
             let (priority, gas_wanted) = if let Some(ref app) = state.app {
-                let result = app.validate_tx(&tx_bytes, None);
+                let permit = match state.query_semaphore.clone().try_acquire_owned() {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        return RpcResponse::err(
+                            req.id,
+                            -32000,
+                            "too many concurrent validations".to_string(),
+                        );
+                    }
+                };
+                let app = app.clone();
+                let tx = tx_bytes.clone();
+                let result = match tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    app.validate_tx(&tx, None)
+                })
+                .await
+                {
+                    Ok(result) => result,
+                    Err(e) => {
+                        warn!(error = %e, "submit_tx validation task failed");
+                        return RpcResponse::err(req.id, -32603, "internal error".to_string());
+                    }
+                };
                 if !result.valid {
                     return RpcResponse::err(
                         req.id,
@@ -705,9 +731,60 @@ pub(crate) async fn handle_request(
                 .collect();
             let vs = hotmint_types::ValidatorSet::new(validators);
             let status = *state.status_rx.borrow();
-            let lc = hotmint_light::LightClient::new(
+
+            // Committed heights are verified against the node's own stored
+            // commit QC — authoritative evidence, no trust-path emulation.
+            if header.height.as_u64() <= status.last_committed_height {
+                let stored_qc = {
+                    let store = state.store.read();
+                    store.get_commit_qc(header.height)
+                };
+                return match stored_qc {
+                    Some(stored) if stored.block_hash == header.hash => json_ok(
+                        req.id,
+                        &VerifyHeaderResult {
+                            valid: true,
+                            error: None,
+                        },
+                    ),
+                    _ => json_ok(
+                        req.id,
+                        &VerifyHeaderResult {
+                            valid: false,
+                            error: Some("header does not match the committed chain".to_string()),
+                        },
+                    ),
+                };
+            }
+
+            // Uncommitted heights: verify the next header after the last
+            // commit via the light client, anchored at an explicit trusted
+            // checkpoint (LightClient::new alone has no trusted hash past
+            // genesis and would always fail).
+            let trusted_height = hotmint_types::Height(status.last_committed_height);
+            let trusted_hash = if trusted_height == hotmint_types::Height::GENESIS {
+                hotmint_types::BlockHash::GENESIS
+            } else {
+                match state
+                    .store
+                    .read()
+                    .get_block_by_height(trusted_height)
+                    .map(|b| b.hash)
+                {
+                    Some(hash) => hash,
+                    None => {
+                        return RpcResponse::err(
+                            req.id,
+                            -32603,
+                            "trusted checkpoint block unavailable".to_string(),
+                        );
+                    }
+                }
+            };
+            let lc = hotmint_light::LightClient::new_with_trusted_hash(
                 vs.clone(),
-                hotmint_types::Height(status.last_committed_height),
+                trusted_height,
+                trusted_hash,
                 state.chain_id_hash,
             );
             let verifier = hotmint_crypto::Ed25519Verifier;

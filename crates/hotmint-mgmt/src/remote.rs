@@ -328,7 +328,12 @@ pub fn deploy(
                      if ps -p \"$pid\" -o command= | grep -F -- {esc_bin} >/dev/null && \
                         ps -p \"$pid\" -o command= | grep -F -- '--home' >/dev/null && \
                         ps -p \"$pid\" -o command= | grep -F -- {esc_home} >/dev/null; then \
-                       kill \"$pid\" 2>/dev/null; sleep 1; \
+                       kill \"$pid\" 2>/dev/null; \
+                       for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 \"$pid\" 2>/dev/null || break; sleep 1; done; \
+                       if kill -0 \"$pid\" 2>/dev/null; then kill -9 \"$pid\" 2>/dev/null; sleep 1; fi; \
+                       if kill -0 \"$pid\" 2>/dev/null; then \
+                         echo \"old process $pid did not exit; aborting start\" >&2; exit 1; \
+                       fi; \
                      fi ;; \
                    esac; \
                    rm -f {esc_pid}; \

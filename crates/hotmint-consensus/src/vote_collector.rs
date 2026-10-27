@@ -95,6 +95,13 @@ impl VoteCollector {
             });
         }
 
+        // Reject non-members BEFORE caching: an unknown validator makes
+        // aggregate_votes fail permanently below, which would poison this
+        // (epoch, view, block, type) bucket for every subsequent vote.
+        if vs.get(vote.validator).is_none() {
+            return Err(eg!("vote from unknown validator {}", vote.validator));
+        }
+
         votes.push(vote);
 
         let agg = aggregate_votes(vs, votes).c(d!())?;

@@ -490,6 +490,7 @@ pub fn replay_blocks(
         commit::validate_block_evidence(
             block,
             &replay_epoch,
+            state.previous_epoch.as_ref(),
             state.chain_id_hash,
             &hotmint_crypto::Ed25519Verifier,
         )?;
@@ -571,7 +572,12 @@ pub fn replay_blocks(
                 .store
                 .put_tx_index(*blake3::hash(tx).as_bytes(), block.height, index as u32);
         }
-        state.store.put_block_results(block.height, response);
+        // Idempotent result write: the reconnect re-sync watcher replays with
+        // a NoopApplication concurrently with the live engine and must never
+        // overwrite real application results with defaults.
+        if state.store.get_block_results(block.height).is_none() {
+            state.store.put_block_results(block.height, response);
+        }
         state.store.flush();
 
         *state.last_committed_height = block.height;
@@ -747,6 +753,8 @@ mod tests {
             &live_app,
             &mut live_height,
             &epoch,
+            None,
+            None,
         )
         .unwrap();
         let replay_app = EvidenceApp(AtomicU8::new(0));
@@ -785,6 +793,7 @@ mod tests {
             commit::validate_block_evidence(
                 &block,
                 &epoch,
+                None,
                 &TEST_CHAIN,
                 &hotmint_crypto::Ed25519Verifier
             )
@@ -1012,6 +1021,13 @@ mod tests {
         }
         fn save_pending_epoch(&mut self, epoch: Option<&Epoch>) {
             self.pending_epochs.push(epoch.map(|e| e.number));
+        }
+        fn save_last_vote(
+            &mut self,
+            _vote_type: VoteType,
+            _view: ViewNumber,
+            _block_hash: BlockHash,
+        ) {
         }
         fn flush(&self) {}
     }

@@ -176,6 +176,15 @@ pub fn init_cluster(
     rpc_base_port: u16,
     bind_ip: &str,
 ) -> Result<()> {
+    // Fail fast on meaningless cluster sizes: 0 yields an unusable genesis,
+    // and counts above u16::MAX wrap the per-validator port arithmetic.
+    if !(1..=(u16::MAX as u32 + 1)).contains(&validator_count) {
+        return Err(eg!(
+            "validator_count must be between 1 and {}, got {}",
+            u16::MAX as u32 + 1,
+            validator_count
+        ));
+    }
     if base_dir.join("cluster.json").exists() {
         return Err(eg!(
             "cluster already initialized at {}. Use 'destroy' first.",

@@ -137,6 +137,16 @@ async fn json_rpc_handler(
 /// Maximum concurrent WebSocket connections to prevent resource exhaustion.
 const MAX_WS_CONNECTIONS: usize = 1024;
 
+/// Inbound WebSocket message cap. Client messages are subscription filters,
+/// so a few KiB is generous; without an explicit cap axum's 64 MiB default
+/// applies and each of the 1024 connections could retain a huge parsed filter.
+const MAX_WS_MESSAGE_BYTES: usize = 64 * 1024;
+
+/// Sanity bounds for parsed subscription filters (a guard against
+/// pathological-but-small-enough allocations inside the parsed structure).
+const MAX_FILTER_EVENT_TYPES: usize = 16;
+const MAX_FILTER_STRING_LEN: usize = 128;
+
 /// GET /ws handler: upgrade to WebSocket and stream chain events.
 async fn ws_upgrade_handler(
     State(state): State<Arc<HttpRpcState>>,
@@ -167,14 +177,15 @@ async fn ws_upgrade_handler(
             .into_response();
     }
     let failed_state = state.clone();
-    ws.on_failed_upgrade(move |error| {
-        failed_state
-            .ws_connection_count
-            .fetch_sub(1, Ordering::Relaxed);
-        warn!(%error, "WebSocket upgrade failed");
-    })
-    .on_upgrade(move |socket| handle_ws(socket, state))
-    .into_response()
+    ws.max_message_size(MAX_WS_MESSAGE_BYTES)
+        .on_failed_upgrade(move |error| {
+            failed_state
+                .ws_connection_count
+                .fetch_sub(1, Ordering::Relaxed);
+            warn!(%error, "WebSocket upgrade failed");
+        })
+        .on_upgrade(move |socket| handle_ws(socket, state))
+        .into_response()
 }
 
 /// Client-sent subscription filter for WebSocket events.
@@ -295,8 +306,13 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<HttpRpcState>) {
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        // Try to parse as a subscribe filter.
-                        if let Ok(f) = serde_json::from_str::<SubscribeFilter>(&text) {
+                        // Try to parse as a subscribe filter, applying sanity
+                        // bounds so a crafted filter cannot pin large memory.
+                        if let Ok(f) = serde_json::from_str::<SubscribeFilter>(&text)
+                            && f.event_types.len() <= MAX_FILTER_EVENT_TYPES
+                            && f.event_types.iter().all(|t| t.len() <= MAX_FILTER_STRING_LEN)
+                            && f.tx_hash.as_ref().is_none_or(|h| h.len() <= MAX_FILTER_STRING_LEN)
+                        {
                             filter = f;
                         }
                     }

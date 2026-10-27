@@ -16,6 +16,9 @@
 //! - [`mempool`] — Transaction buffering and deduplication
 //! - [`abci`] — IPC proxy for out-of-process applications (Unix socket)
 //! - [`api`] — JSON-RPC API for external interaction
+//! - [`staking`] — Validator registration, delegation, slashing, rewards
+//! - [`config`] — Node/genesis configuration loading and validation
+//! - [`prelude`] — Re-exported essentials for downstream applications
 //!
 //! # Quick Start
 //!

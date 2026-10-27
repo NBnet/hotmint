@@ -37,6 +37,10 @@ pub trait StatePersistence: Send {
     fn save_previous_epoch(&mut self, epoch: Option<&Epoch>);
     fn save_last_app_hash(&mut self, hash: BlockHash);
     fn save_pending_epoch(&mut self, epoch: Option<&Epoch>);
+    /// Persist the last vote the local node signed for `vote_type`.
+    /// Callers MUST invoke this (and `flush`) BEFORE broadcasting the signed
+    /// vote, so a crash-recovered node never double-signs at the same view.
+    fn save_last_vote(&mut self, vote_type: VoteType, view: ViewNumber, block_hash: BlockHash);
     fn flush(&self);
 }
 
@@ -408,11 +412,17 @@ impl ConsensusEngine {
                 view_protocol::propose(
                     &mut self.state,
                     store.as_mut(),
-                    self.network.as_ref(),
-                    self.app.as_ref(),
-                    self.signer.as_ref(),
+                    &view_protocol::ViewDeps {
+                        network: self.network.as_ref(),
+                        app: self.app.as_ref(),
+                        signer: self.signer.as_ref(),
+                        verifier: self.verifier.as_ref(),
+                    },
                     pending_evidence,
-                    self.verifier.as_ref(),
+                    view_protocol::EpochContext {
+                        previous_epoch: self.previous_epoch.as_ref(),
+                        in_flight_pending: None,
+                    },
                 )
             }; // lock released here
 
@@ -433,6 +443,25 @@ impl ConsensusEngine {
     }
 
     async fn leader_self_vote(&mut self, block_hash: BlockHash) {
+        // Double-sign guard: persist the vote record BEFORE adding the
+        // self-vote, so a crash-recovered leader never re-signs a conflicting
+        // block at a view it already voted in.
+        if !self
+            .state
+            .check_and_record_vote(VoteType::Vote, self.state.current_view, block_hash)
+        {
+            warn!(
+                validator = %self.state.validator_id,
+                view = %self.state.current_view,
+                hash = %block_hash,
+                "refusing leader self-vote: already voted for a different block at this view"
+            );
+            return;
+        }
+        if let Some(p) = self.persistence.as_mut() {
+            p.save_last_vote(VoteType::Vote, self.state.current_view, block_hash);
+            p.flush();
+        }
         let vote_bytes = Vote::signing_bytes(
             &self.state.chain_id_hash,
             self.state.current_epoch.number,
@@ -476,9 +505,12 @@ impl ConsensusEngine {
 /// check.  Messages whose signing bytes depend on receiver state (StatusCert needs
 /// `current_view`) are also allowed through; the engine will reject them if invalid.
 ///
-/// `ordered_validators` is the validator list in round-robin order (same order used by
-/// `ValidatorSet::leader_for_view`).  Pass an empty slice to skip the leader-for-view
-/// check (e.g., in tests where the set is not available).
+/// `ordered_validators` is the validator list in `ValidatorSet::validators()`
+/// order, used for the TimeoutCert signer-bitfield mapping. `leader_for_view`
+/// is the POWER-WEIGHTED leader for a Prepare certificate's view, computed by
+/// the caller via `ValidatorSet::leader_for_view` — a count-based round-robin
+/// lookup would reject valid Prepares under skewed voting powers. Pass `None`
+/// for other message types (or to skip the leader check in tests).
 ///
 /// Returns `false` when:
 /// - The claimed sender is not in `validator_keys` (unknown/non-validator peer), OR
@@ -489,6 +521,7 @@ pub fn verify_relay_sender(
     msg: &ConsensusMessage,
     validator_keys: &HashMap<ValidatorId, hotmint_types::crypto::PublicKey>,
     ordered_validators: &[ValidatorId],
+    leader_for_view: Option<ValidatorId>,
     chain_id_hash: &[u8; 32],
     epoch: hotmint_types::epoch::EpochNumber,
 ) -> bool {
@@ -533,13 +566,12 @@ pub fn verify_relay_sender(
             signature,
         } => {
             // Prepare is broadcast by the current leader. Verify that the relay
-            // sender is the leader for this view, then check the signature.
-            if !ordered_validators.is_empty() {
-                let n = ordered_validators.len();
-                let expected_leader = ordered_validators[certificate.view.as_u64() as usize % n];
-                if sender != expected_leader {
-                    return false;
-                }
+            // sender is the power-weighted leader for this view, then check the
+            // signature.
+            if let Some(expected_leader) = leader_for_view
+                && sender != expected_leader
+            {
+                return false;
             }
             let Some(pk) = validator_keys.get(&sender) else {
                 return false;
@@ -1177,10 +1209,17 @@ impl ConsensusEngine {
                         double_cert,
                     },
                     store.as_mut(),
-                    self.network.as_ref(),
-                    self.app.as_ref(),
-                    self.signer.as_ref(),
-                    self.verifier.as_ref(),
+                    &view_protocol::ViewDeps {
+                        network: self.network.as_ref(),
+                        app: self.app.as_ref(),
+                        signer: self.signer.as_ref(),
+                        verifier: self.verifier.as_ref(),
+                    },
+                    &mut self.persistence,
+                    view_protocol::EpochContext {
+                        previous_epoch: self.previous_epoch.as_ref(),
+                        in_flight_pending: self.pending_epoch.as_ref(),
+                    },
                 )
                 .c(d!())
                 {
@@ -1199,7 +1238,9 @@ impl ConsensusEngine {
                 // evidence marking, liveness tracking, persist_state).
                 if let Some(result) = proposal_result.commit_result {
                     let committed = !result.committed_blocks.is_empty();
-                    self.update_pending_epoch_from_commit(&result)?;
+                    if committed {
+                        self.adopt_commit_epoch(&result);
+                    }
                     self.process_commit_result(&result);
                     if !committed && let Some(height) = fast_forward_intent_height {
                         self.finish_wal_intent(height);
@@ -1290,6 +1331,7 @@ impl ConsensusEngine {
                         certificate,
                         self.signer.as_ref(),
                         vote_extension,
+                        &mut self.persistence,
                     );
                     self.persist_state();
                     if let Some((next_leader_id, vote)) = prepare_result.vote2 {
@@ -1346,6 +1388,13 @@ impl ConsensusEngine {
                 signature,
             } => {
                 if target_view < self.state.current_view {
+                    return Ok(());
+                }
+                // Bound the wish horizon: honest nodes only ever wish for
+                // current_view + 1. Far-future wishes create one pacemaker
+                // bucket per target view that is never pruned during a stall,
+                // so without this cap view wishes are an unbounded memory sink.
+                if target_view.as_u64() > self.state.current_view.as_u64().saturating_add(1) {
                     return Ok(());
                 }
                 // Validate carried highest_qc (C4 mitigation).
@@ -1424,8 +1473,15 @@ impl ConsensusEngine {
                 // C-6: Cryptographically verify evidence before accepting.
                 // Both signatures must be valid from the alleged validator for
                 // different block hashes at the same (view, vote_type).
-                let vs = &self.state.validator_set;
-                let vi = match vs.get(proof.validator) {
+                // Fall back to the retained previous-epoch set so evidence
+                // for a validator removed by the latest transition stays
+                // actionable instead of being dropped as "unknown".
+                let vi = self.state.validator_set.get(proof.validator).or_else(|| {
+                    self.previous_epoch
+                        .as_ref()
+                        .and_then(|e| e.validator_set.get(proof.validator))
+                });
+                let vi = match vi {
                     Some(vi) => vi,
                     None => {
                         warn!(validator = %proof.validator, "evidence for unknown validator");
@@ -1527,6 +1583,25 @@ impl ConsensusEngine {
                 self.app.extend_vote(&block, &ctx)
             })
         };
+        // Double-sign guard: persist the vote record BEFORE signing/sending
+        // the leader's own Vote2.
+        if !self.state.check_and_record_vote(
+            VoteType::Vote2,
+            self.state.current_view,
+            qc.block_hash,
+        ) {
+            warn!(
+                validator = %self.state.validator_id,
+                view = %self.state.current_view,
+                hash = %qc.block_hash,
+                "refusing leader self-Vote2: already voted for a different block at this view"
+            );
+            return;
+        }
+        if let Some(p) = self.persistence.as_mut() {
+            p.save_last_vote(VoteType::Vote2, self.state.current_view, qc.block_hash);
+            p.flush();
+        }
         let vote_bytes = Vote::signing_bytes(
             &self.state.chain_id_hash,
             self.state.current_epoch.number,
@@ -1720,31 +1795,25 @@ impl ConsensusEngine {
         }
     }
 
-    fn update_pending_epoch_from_commit(&mut self, result: &CommitResult) -> Result<()> {
-        let mut pending_epoch = self.pending_epoch.clone();
-        for (block, response) in result
-            .committed_blocks
-            .iter()
-            .zip(result.block_responses.iter())
-        {
-            if response.validator_updates.is_empty() {
-                continue;
-            }
-            pending_epoch = Some(
-                crate::commit::chained_pending_epoch(
-                    &self.state.current_epoch,
-                    pending_epoch.as_ref(),
-                    block.view,
-                    &response.validator_updates,
-                )
-                .c(d!(
-                    "invalid validator updates at committed height {}",
-                    block.height.as_u64()
-                ))?,
+    /// Adopt the epoch state derived by `try_commit` for a non-empty commit:
+    /// apply a mid-batch activation (the block that crossed `start_view` was
+    /// already executed under the new epoch) and replace the in-flight
+    /// pending epoch with the post-batch fold. `try_commit` chains from the
+    /// caller-provided in-flight pending epoch, so its result is the single
+    /// authoritative derivation shared by the live and sync replay paths.
+    fn adopt_commit_epoch(&mut self, result: &CommitResult) {
+        if let Some(ref activated) = result.activated_epoch {
+            info!(
+                validator = %self.state.validator_id,
+                old_epoch = %self.state.current_epoch.number,
+                new_epoch = %activated.number,
+                "epoch activated by commit crossing start_view"
             );
+            self.previous_epoch = Some(self.state.current_epoch.clone());
+            self.state.current_epoch = activated.clone();
+            self.state.validator_set = activated.validator_set.clone();
         }
-        self.pending_epoch = pending_epoch;
-        Ok(())
+        self.pending_epoch = result.pending_epoch.clone();
     }
 
     /// Apply the result of a successful try_commit: update app_hash, pending epoch,
@@ -1772,6 +1841,8 @@ impl ConsensusEngine {
             self.app.as_ref(),
             &mut self.state.last_committed_height,
             &self.state.current_epoch,
+            self.previous_epoch.as_ref(),
+            self.pending_epoch.as_ref(),
         ) {
             Ok(result) => {
                 let committed = !result.committed_blocks.is_empty();
@@ -1779,8 +1850,10 @@ impl ConsensusEngine {
                     self.state.last_app_hash = result.last_app_hash;
                 }
                 drop(store);
-                if let Err(e) = self.update_pending_epoch_from_commit(&result) {
-                    panic!("FATAL: invalid commit result during {context}: {e}");
+                // try_commit's epoch derivation is authoritative for this
+                // commit; adopt it directly (see adopt_commit_epoch).
+                if committed {
+                    self.adopt_commit_epoch(&result);
                 }
                 self.process_commit_result(&result);
                 if !committed && let Some(height) = intent_height {
@@ -2103,6 +2176,7 @@ mod tests {
             &message,
             &keys,
             &ordered,
+            None,
             &test_chain_id_hash(),
             EpochNumber(0)
         ));

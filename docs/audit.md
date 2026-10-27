@@ -10,6 +10,115 @@
 
 ---
 
+## Resolved — Full Overhaul (2026-10-27)
+
+> **Scope:** All crates — consensus core, pacemaker & sync, engine, types & crypto, storage, network, mempool, API & ABCI, light & staking, facade & mgmt (one read-only reviewer per subsystem group).
+> **Findings:** 25 actionable (1 critical, 5 high, 9 medium, 10 low), all fixed; 3 observations moved to Won't Fix with reasons; the remaining observations were folded into the fixes (evidence meta doc, dead PEX commands removed, relay dedup seeding, rate limiter byte-metering).
+> **Validation:** `make fmt`, `make lint` (clippy -D warnings), full workspace test run — 50 test binaries, 0 failures, including the e2e and four_node consensus integration suites.
+> **Compatibility:** No legacy data-format compatibility required; the consensus-state store gains two new keys (last Vote1/Vote2 records), which older states simply lack (both load as `None`).
+
+### [CRITICAL] consensus/persistence: cast votes were never persisted (amnesia double-sign)
+- **Where**: engine.rs run/leader paths, view_protocol.rs, StatePersistence, storage consensus_state.rs
+- **Resolution**: Privval-style double-sign protection. `ConsensusState::check_and_record_vote` records the last Vote1/Vote2 `(view, block_hash)`; every local signing site (replica Vote1, leader self-Vote1, replica Vote2, leader self-Vote2) refuses conflicting same-view re-signs and persists the record (new `StatePersistence::save_last_vote`, keys 9/10 with fsync) BEFORE broadcasting. node.rs restores the records on startup, so a crash-recovered node can never sign a conflicting vote at a view it already voted in. Regression tests: guard semantics + persistence round-trip.
+
+### [HIGH] sync/node: reconnect re-sync watcher overwrote live block results with NoopApplication defaults
+- **Where**: sync.rs replay_blocks, node.rs reconnect watcher
+- **Resolution**: `replay_blocks` now writes block results only when absent (idempotent), so the watcher and the live engine converge on the real application results regardless of ordering.
+
+### [HIGH] consensus/view_protocol: equal-rank justify QC for a different block bypassed the locked-QC rule
+- **Where**: view_protocol.rs justify/lock check
+- **Resolution**: A proposal is now rejected unless the justify QC dominates the lock strictly — `justify.view > locked.view`, or same view with the same block hash (i.e. the proposal extends the locked block), matching the HotStuff-2 voting rule.
+
+### [HIGH] consensus/commit: try_commit chained validator updates onto current_epoch, used one epoch for the whole batch, and panicked
+- **Where**: commit.rs try_commit/chained_pending_epoch, engine.rs
+- **Resolution**: try_commit now receives the previous epoch and the in-flight pending epoch (via `view_protocol::EpochContext` on the proposal paths), activates the pending epoch per-block at `start_view` mirroring sync replay, and uses the per-block epoch for the application `BlockContext`. The FATAL panic was replaced with an error return. `CommitResult.activated_epoch` lets the engine adopt the activation immediately (`adopt_commit_epoch`); its result is now the single authoritative pending-epoch derivation across live and replay paths (the engine re-computation was removed).
+
+### [HIGH] api: submit_tx ran blocking validate_tx on tokio workers shared with the consensus engine
+- **Where**: rpc.rs submit_tx, node.rs mempool gossip task
+- **Resolution**: Both validation paths now run via `spawn_blocking`; submit_tx is additionally bounded by the shared query semaphore, mirroring the query handler.
+
+### [MEDIUM] consensus/pacemaker: unbounded wish accumulation for far-future target views
+- **Where**: engine.rs wish handler, pacemaker.rs
+- **Resolution**: Wishes with `target_view > current_view + 1` (saturating) are dropped; honest nodes only ever wish for the next view.
+
+### [MEDIUM] storage/evidence: committed-set key truncated blake3 to 64 bits
+- **Where**: evidence_store.rs committed_key
+- **Resolution**: The committed map is now keyed by the raw 16-byte `(view, validator)` composite — no hash, no collision window. The reserved meta field was documented (bytes 16..24 formerly next_id, ignored on reopen).
+
+### [MEDIUM] storage: fresh block store's genesis insert was never fsynced before first use
+- **Where**: block_store.rs open
+- **Resolution**: `vsdb_flush()` right after the genesis insert; the reopen path also re-inserts genesis idempotently if it is missing (self-heal after mid-open power loss).
+
+### [MEDIUM] network/PEX: unauthenticated validator-role claim was pinned permanently and propagated
+- **Where**: service.rs PEX Advertise, peer.rs
+- **Resolution**: A validator-role claim is accepted only when peer_map currently routes that validator to the advertising peer; otherwise it is downgraded to a fullnode entry without a validator id, so forged claims can no longer become unprunable validator entries re-gossiped network-wide.
+
+### [MEDIUM] api: verify_header RPC could never return valid:true after genesis
+- **Where**: rpc.rs verify_header
+- **Resolution**: Committed heights are verified against the node's own stored commit QC (authoritative). Uncommitted heights use `LightClient::new_with_trusted_hash` anchored at the last committed block hash.
+
+### [MEDIUM] abci: fixed 5s IPC timeout on commit-path calls turned a slow app into a crash loop
+- **Where**: abci client.rs
+- **Resolution**: Commit-path requests (ExecuteBlock / OnCommit / OnEvidence) are exempt from the read/write deadline (Tendermint semantics: a commit call blocks until the app responds); advisory calls keep the 5s timeout, applied per-request on the live connection.
+
+### [MEDIUM] api: WebSocket filter state per connection was bounded only by axum's 64 MiB default
+- **Where**: http_rpc.rs
+- **Resolution**: Explicit 64 KiB max WebSocket message size plus sanity bounds on parsed filters (≤16 event types, ≤128-byte strings).
+
+### [MEDIUM] staking: no minimum-set-size guard — an empty formal set bricked the chain
+- **Where**: staking manager.rs compute_validator_updates
+- **Resolution**: Empty formal list or cumulative voting-power overflow now emits no updates (retains the current set) with an error log, instead of activating a set that can never form a QC or panicking consensus at the epoch boundary.
+
+### [MEDIUM] mgmt: stop() reported success and deleted the PID file without confirming exit
+- **Where**: mgmt local.rs stop, remote.rs deploy
+- **Resolution**: SIGTERM is now followed by a bounded exit poll with SIGKILL escalation; the pid file is removed only after confirmed exit and kept on failure. Remote deploy aborts the start if the old process does not exit.
+
+### [LOW] consensus: equivocation evidence was verified only against the current epoch's set
+- **Where**: engine.rs evidence handler, commit.rs validate_evidence
+- **Resolution**: Both the gossip path and commit-time validation (and the proposer's embed filter) now fall back to the retained previous-epoch validator set, so evidence for a just-removed validator stays actionable.
+
+### [LOW] consensus/engine: Prepare relay leader check was count-based round-robin
+- **Where**: engine.rs verify_relay_sender, network service.rs
+- **Resolution**: The epoch channel and `NetworkConfig` now carry the full `ValidatorSet`; the relay layer computes the power-weighted leader via `leader_for_view`. Dead `AddPeer`/`RemovePeer`/`EpochChange` command variants (with latent inconsistencies, no senders) were removed — epoch changes flow exclusively through the watch channel.
+
+### [LOW] network/relay: dedup sets were not seeded for locally originated broadcasts
+- **Where**: service.rs NetCommand::Broadcast
+- **Resolution**: Local broadcasts now insert the canonical relay identity hash into seen_active before sending, eliminating the one-cycle echo re-flood.
+
+### [LOW] network/mempool: tx gossip limiter counted messages, not bytes
+- **Where**: service.rs mempool notification handler
+- **Resolution**: The limiter now meters bytes/second (cap 4 MiB/s/peer), matching the consensus byte-budget approach; the off-by-one comparison is gone.
+
+### [LOW] abci: tracks_app_hash permanently cached the error-fallback true
+- **Where**: abci client.rs
+- **Resolution**: Only a successful response is cached; faults re-probe on the next call.
+
+### [LOW] staking: slash() used per-reason constant evidence IDs
+- **Where**: staking manager.rs
+- **Resolution**: Documented the one-slash-per-reason semantics on `slash()` with a WARNING pointing production callers to `slash_with_evidence`.
+
+### [LOW] light: update_validator_set allowed a non-monotone trust hand-off
+- **Where**: light lib.rs
+- **Resolution**: The method now returns `Result` and rejects checkpoints below the current trusted height; the doc states the caller's justification obligation. README example updated.
+
+### [LOW] facade: lib.rs Crate Layout doc omitted staking/config/prelude
+- **Where**: hotmint lib.rs rustdoc
+- **Resolution**: Missing entries added to the layout list.
+
+### [LOW] mgmt: init_cluster accepted validator_count = 0 (and > u16::MAX)
+- **Where**: cluster.rs init_cluster
+- **Resolution**: `1 <= count <= 65536` is validated before any directory is created.
+
+### [LOW] facade/node: validator mode with a key absent from genesis silently demoted to fullnode
+- **Where**: node.rs startup
+- **Resolution**: Startup now fails and names the mismatched public key; only explicit fullnode mode may run without voting power.
+
+### [LOW] consensus/vote_collector: unknown-validator vote stayed cached after aggregate failure
+- **Where**: vote_collector.rs add_vote
+- **Resolution**: Set membership is checked before the vote is cached, so an invalid vote can never poison a vote bucket (defensive depth at a safety-critical API).
+
+---
+
 ## Resolved — Full Overhaul (2026-09-23)
 
 > **Scope:** All Rust source, tests, benches, examples, and handwritten Go SDK code; consensus, crypto/types/light, staking/mempool, storage, networking, API/ABCI, node/configuration, and management.
@@ -411,6 +520,21 @@
 ---
 
 ## Won't Fix
+
+### [INFO] crypto: Ed25519Verifier::verify_aggregate is dead code with weaker-than-strict semantics
+- **Where**: crates/hotmint-crypto/src/signer.rs:67-110
+- **What**: The batch-verification API has zero callers (all QC verification uses per-signer `verify_strict`), is backed by cofactored batch verification rather than the strict path, passes vacuously on an empty batch, and structurally cannot verify real QCs (every signer signs its own payload).
+- **Reason**: Removing it would be a breaking change to the public `Verifier` trait for a currently unreachable hazard. Left in place deliberately; do not wire it into vote/QC verification without a redesign over per-signer messages and an explicit quorum check.
+
+### [INFO] network: over-cap or evicted peers are never actually disconnected
+- **Where**: crates/hotmint-network/src/service.rs:990-1023
+- **What**: Non-validator peers beyond `max_peers` are ignored locally but their TCP connections/substreams stay alive because litep2p exposes no disconnect API; `pick_non_validator_to_evict` picks an arbitrary (not oldest) peer.
+- **Reason**: Requires transport-level support that the pinned litep2p version does not provide. Impact is bounded to extra sockets/substream state: every inbound path already refuses work for such peers (covered by tests). Revisit if litep2p gains a disconnect API.
+
+### [INFO] staking: applied_slashes dedup is per-registration — re-register resets double-slash protection
+- **Where**: crates/hotmint-staking/src/manager.rs:66-107
+- **What**: Evidence idempotence lives inside per-validator state, so unregister + re-register resets it and the same authenticated evidence could be re-applied against the new stake.
+- **Reason**: Reachable only with a 100%-slash configuration (unregister requires zero stake and there is no withdrawal path), and consensus intentionally allows old authenticated evidence to be embedded in later blocks. A robust fix needs a validator-lifecycle-independent evidence tombstone — cross-layer redesign deferred; applications that need it can dedup globally by evidence id.
 
 ### [HIGH] light: BlockHeader fields not cryptographically bound to QC-verified hash
 - **Where**: crates/hotmint-light/src/lib.rs:149-156,196-198

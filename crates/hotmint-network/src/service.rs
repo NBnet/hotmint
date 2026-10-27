@@ -28,10 +28,7 @@ use tokio::sync::{RwLock, mpsc, watch};
 use tracing::{debug, info, trace, warn};
 
 /// Type alias for the epoch update payload: (EpochNumber, validator public keys).
-type EpochUpdate = Option<(
-    EpochNumber,
-    Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>,
-)>;
+type EpochUpdate = Option<(EpochNumber, hotmint_types::ValidatorSet)>;
 
 use crate::codec;
 use crate::peer::{PeerBook, PeerInfo, PeerRole};
@@ -104,14 +101,10 @@ pub struct PeerStatus {
 pub enum NetCommand {
     Broadcast(Vec<u8>),
     SendTo(ValidatorId, Vec<u8>),
-    AddPeer(ValidatorId, PeerId, Vec<Multiaddr>),
-    RemovePeer(ValidatorId),
     /// Send a sync request to a specific peer
     SyncRequest(PeerId, Vec<u8>),
     /// Respond to a sync request
     SyncRespond(RequestId, Vec<u8>),
-    /// Update peer_map from new validator set (epoch transition)
-    EpochChange(Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>),
     /// Broadcast a raw transaction to all connected peers via mempool gossip.
     BroadcastTx(Vec<u8>),
 }
@@ -159,9 +152,12 @@ pub struct NetworkService {
     /// Public keys of known validators, used to verify individual message signatures
     /// before relaying.  Updated on epoch transitions via [`NetCommand::EpochChange`].
     validator_keys: HashMap<ValidatorId, hotmint_types::crypto::PublicKey>,
-    /// Validators in round-robin order for leader-for-view computation.
-    /// Must match the ordering in `ValidatorSet::validators()`.
+    /// Validators in `ValidatorSet::validators()` order — used for the
+    /// TimeoutCert signer-bitfield mapping in relay verification.
     validator_ids_ordered: Vec<ValidatorId>,
+    /// Full current validator set — used for the power-weighted
+    /// leader-for-view check in relay verification.
+    current_validator_set: hotmint_types::ValidatorSet,
     /// Blake3 hash of the chain identifier — used for relay signature verification.
     chain_id_hash: [u8; 32],
     /// Current epoch number — used for relay signature verification.
@@ -197,7 +193,7 @@ pub struct NetworkService {
     /// Peers with open mempool notification substreams.
     mempool_notif_connected_peers: HashSet<PeerId>,
     /// C-2: Per-peer mempool tx gossip rate limit (Instant, count).
-    mempool_peer_rate: HashMap<PeerId, (Instant, u32)>,
+    mempool_peer_rate: HashMap<PeerId, (Instant, usize)>,
 }
 
 /// Configuration for creating a [`NetworkService`].
@@ -209,7 +205,7 @@ pub struct NetworkConfig {
     pub peer_book: Arc<RwLock<PeerBook>>,
     pub pex_config: PexConfig,
     pub relay_consensus: bool,
-    pub initial_validators: Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>,
+    pub initial_validator_set: hotmint_types::ValidatorSet,
     pub chain_id_hash: [u8; 32],
 }
 
@@ -224,7 +220,7 @@ impl NetworkService {
             peer_book,
             pex_config,
             relay_consensus,
-            initial_validators,
+            initial_validator_set,
             chain_id_hash,
         } = config;
         // H-6: Use chain_id_hash as handshake bytes for chain isolation.
@@ -314,12 +310,8 @@ impl NetworkService {
             .collect();
         let (peer_info_tx, peer_info_rx) = watch::channel(initial_peers);
 
-        let (epoch_tx, epoch_rx) = watch::channel::<
-            Option<(
-                EpochNumber,
-                Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>,
-            )>,
-        >(None);
+        let (epoch_tx, epoch_rx) =
+            watch::channel::<Option<(EpochNumber, hotmint_types::ValidatorSet)>>(None);
 
         let sink = Litep2pNetworkSink {
             cmd_tx: cmd_tx.clone(),
@@ -332,10 +324,12 @@ impl NetworkService {
         // Save persistent peers for auto-reconnect
         let persistent_peers: HashMap<ValidatorId, PeerId> = peer_map.validator_to_peer.clone();
 
-        let validator_ids_ordered: Vec<ValidatorId> =
-            initial_validators.iter().map(|(vid, _)| *vid).collect();
         let validator_keys: HashMap<ValidatorId, hotmint_types::crypto::PublicKey> =
-            initial_validators.into_iter().collect();
+            initial_validator_set
+                .validators()
+                .iter()
+                .map(|v| (v.id, v.public_key.clone()))
+                .collect();
 
         Ok(NetworkServiceHandles {
             service: Self {
@@ -352,7 +346,12 @@ impl NetworkService {
                 initial_dial_addresses,
                 relay_consensus,
                 validator_keys,
-                validator_ids_ordered,
+                validator_ids_ordered: initial_validator_set
+                    .validators()
+                    .iter()
+                    .map(|v| v.id)
+                    .collect(),
+                current_validator_set: initial_validator_set,
                 chain_id_hash,
                 current_epoch: EpochNumber::GENESIS,
                 msg_tx,
@@ -510,11 +509,19 @@ impl NetworkService {
             return false;
         }
 
+        let leader_for_view = match msg {
+            ConsensusMessage::Prepare { certificate, .. } => self
+                .current_validator_set
+                .leader_for_view(certificate.view)
+                .map(|v| v.id),
+            _ => None,
+        };
         hotmint_consensus::engine::verify_relay_sender(
             sender,
             msg,
             &self.validator_keys,
             &self.validator_ids_ordered,
+            leader_for_view,
             &self.chain_id_hash,
             self.current_epoch,
         )
@@ -834,20 +841,33 @@ impl NetworkService {
                             self.pex_handle.reject_request(request_id);
                             return;
                         }
-                        // P2: If claiming validator_id, verify PeerId matches peer_map
-                        if let Some(vid) = validator_id
-                            && let Some(&expected_peer) =
-                                self.peer_map.validator_to_peer.get(&ValidatorId(vid))
-                            && expected_peer != peer
-                        {
-                            warn!(
-                                peer = %peer,
-                                claimed_vid = vid,
-                                "PEX Advertise validator_id mismatch, rejecting"
-                            );
-                            self.pex_handle.reject_request(request_id);
-                            return;
-                        }
+                        // P2: A validator-role claim is only accepted when the
+                        // claimed validator_id is currently routed to THIS peer
+                        // in peer_map. Unknown or mismatched claims are
+                        // unauthenticated and are downgraded to fullnode
+                        // entries — otherwise a forged claim becomes an
+                        // unprunable Validator peer-book entry that is
+                        // re-gossiped network-wide.
+                        let (role, validator_id) = match (role, validator_id) {
+                            (PeerRole::Validator, Some(vid)) => {
+                                let routed_here = self
+                                    .peer_map
+                                    .validator_to_peer
+                                    .get(&ValidatorId(vid))
+                                    .is_some_and(|expected| *expected == peer);
+                                if routed_here {
+                                    (PeerRole::Validator, Some(vid))
+                                } else {
+                                    warn!(
+                                        peer = %peer,
+                                        claimed_vid = vid,
+                                        "PEX Advertise validator claim not routed to this peer, downgrading"
+                                    );
+                                    (PeerRole::Fullnode, None)
+                                }
+                            }
+                            (_, _) => (PeerRole::Fullnode, None),
+                        };
                         // F-10: Limit addresses to max 8 to prevent abuse.
                         let addresses: Vec<_> = addresses.iter().take(8).cloned().collect();
                         let mut info = PeerInfo::new(
@@ -1084,6 +1104,25 @@ impl NetworkService {
     async fn handle_command(&mut self, cmd: NetCommand) {
         match cmd {
             NetCommand::Broadcast(bytes) => {
+                // Seed the relay dedup set for locally originated messages, so
+                // a peer echoing our own broadcast back does not trigger a
+                // redundant re-flood. Must use the relay identity form
+                // (blake3 over canonical postcard encoding), matching
+                // relay_consensus_message.
+                if let Ok(msg) = codec::decode::<ConsensusMessage>(&bytes) {
+                    let canonical_identity = match postcard_encode(&msg) {
+                        Ok(identity) => identity,
+                        Err(e) => {
+                            warn!(error = %e, "failed to encode local relay identity");
+                            return;
+                        }
+                    };
+                    let msg_hash: [u8; 32] = *blake3::hash(&canonical_identity).as_bytes();
+                    self.seen_active.insert(msg_hash);
+                    if self.seen_active.len() > 10_000 {
+                        self.seen_backup = mem::take(&mut self.seen_active);
+                    }
+                }
                 // Broadcast to peers with open notification substreams only.
                 for &peer in &self.notif_connected_peers {
                     let _ = self
@@ -1099,20 +1138,6 @@ impl NetworkService {
                         .await;
                 }
             }
-            NetCommand::AddPeer(vid, pid, addrs) => {
-                info!(validator = %vid, peer = %pid, "adding peer");
-                self.peer_map.insert(vid, pid);
-                self.litep2p.add_known_address(pid, addrs.into_iter());
-                self.update_peer_info();
-            }
-            NetCommand::RemovePeer(vid) => {
-                if let Some(pid) = self.peer_map.remove(vid) {
-                    info!(validator = %vid, peer = %pid, "removed peer");
-                } else {
-                    warn!(validator = %vid, "peer not found for removal");
-                }
-                self.update_peer_info();
-            }
             NetCommand::SyncRequest(peer_id, bytes) => {
                 let _ = self
                     .sync_handle
@@ -1121,9 +1146,6 @@ impl NetworkService {
             }
             NetCommand::SyncRespond(request_id, bytes) => {
                 self.sync_handle.send_response(request_id, bytes);
-            }
-            NetCommand::EpochChange(validators) => {
-                self.handle_epoch_change(validators).await;
             }
             NetCommand::BroadcastTx(bytes) => {
                 for &peer in &self.mempool_notif_connected_peers {
@@ -1168,15 +1190,17 @@ impl NetworkService {
                 if !self.mempool_notif_connected_peers.contains(&peer) {
                     return;
                 }
-                // C-2: Per-peer tx gossip rate limit — max 500 tx/sec per peer.
-                const MAX_TX_PER_SEC: u32 = 500;
+                // C-2: Per-peer tx gossip rate limit, measured in bytes/sec so
+                // the cap tracks real bandwidth/max-amplification rather than
+                // message count (each frame may be up to MAX_MEMPOOL_NOTIF_SIZE).
+                const MAX_TX_BYTES_PER_SEC: usize = 4 * 1024 * 1024;
                 let now = Instant::now();
                 let entry = self.mempool_peer_rate.entry(peer).or_insert((now, 0));
                 if now.duration_since(entry.0).as_secs() >= 1 {
-                    *entry = (now, 1);
+                    *entry = (now, notification.len());
                 } else {
-                    entry.1 += 1;
-                    if entry.1 > MAX_TX_PER_SEC {
+                    entry.1 += notification.len();
+                    if entry.1 > MAX_TX_BYTES_PER_SEC {
                         return;
                     }
                 }
@@ -1209,10 +1233,12 @@ impl NetworkService {
         }
     }
 
-    async fn handle_epoch_change(
-        &mut self,
-        validators: Vec<(ValidatorId, hotmint_types::crypto::PublicKey)>,
-    ) {
+    async fn handle_epoch_change(&mut self, new_set: hotmint_types::ValidatorSet) {
+        let validators: Vec<(ValidatorId, hotmint_types::crypto::PublicKey)> = new_set
+            .validators()
+            .iter()
+            .map(|v| (v.id, v.public_key.clone()))
+            .collect();
         // Derive routing identities from consensus keys, including key rotations
         // that retain the same validator ID.
         for (vid, pubkey) in &validators {
@@ -1242,9 +1268,10 @@ impl NetworkService {
             info!(validator = %vid, "removing validator from peer_map after epoch change");
             self.peer_map.remove(vid);
         }
-        // Update relay verification key map to match new epoch
+        // Update relay verification state to match new epoch
         self.validator_ids_ordered = validators.iter().map(|(vid, _)| *vid).collect();
         self.validator_keys = validators.into_iter().collect();
+        self.current_validator_set = new_set;
         // F-28: Rebuild persistent_peers from updated peer_map
         self.persistent_peers = self.peer_map.validator_to_peer.clone();
         self.update_peer_info();
@@ -1260,18 +1287,6 @@ pub struct Litep2pNetworkSink {
 }
 
 impl Litep2pNetworkSink {
-    pub fn add_peer(&self, vid: ValidatorId, pid: PeerId, addrs: Vec<Multiaddr>) {
-        if let Err(e) = self.cmd_tx.try_send(NetCommand::AddPeer(vid, pid, addrs)) {
-            warn!("add_peer cmd dropped: {e}");
-        }
-    }
-
-    pub fn remove_peer(&self, vid: ValidatorId) {
-        if let Err(e) = self.cmd_tx.try_send(NetCommand::RemovePeer(vid)) {
-            warn!("remove_peer cmd dropped: {e}");
-        }
-    }
-
     pub fn send_sync_request(&self, peer_id: PeerId, request: &SyncRequest) {
         match codec::encode(request) {
             Ok(bytes) => {
@@ -1332,13 +1347,8 @@ impl NetworkSink for Litep2pNetworkSink {
     }
 
     fn on_epoch_change(&self, epoch: EpochNumber, new_validator_set: &hotmint_types::ValidatorSet) {
-        let validators: Vec<_> = new_validator_set
-            .validators()
-            .iter()
-            .map(|v| (v.id, v.public_key.clone()))
-            .collect();
         // F-02: Use dedicated watch channel so epoch changes are never dropped.
-        let _ = self.epoch_tx.send(Some((epoch, validators)));
+        let _ = self.epoch_tx.send(Some((epoch, new_validator_set.clone())));
     }
 
     fn broadcast_evidence(&self, proof: &hotmint_types::evidence::EquivocationProof) {
@@ -1385,6 +1395,19 @@ mod tests {
         }
     }
 
+    fn test_validators(pairs: Vec<(ValidatorId, PublicKey)>) -> hotmint_types::ValidatorSet {
+        hotmint_types::ValidatorSet::new(
+            pairs
+                .into_iter()
+                .map(|(id, public_key)| hotmint_types::ValidatorInfo {
+                    id,
+                    public_key,
+                    power: 1,
+                })
+                .collect(),
+        )
+    }
+
     fn test_network(
         peer_map: PeerMap,
         initial_validators: Vec<(ValidatorId, PublicKey)>,
@@ -1397,7 +1420,7 @@ mod tests {
             peer_book: Arc::new(RwLock::new(PeerBook::new("unused-test-peer-book"))),
             pex_config: PexConfig::default(),
             relay_consensus: false,
-            initial_validators,
+            initial_validator_set: test_validators(initial_validators),
             chain_id_hash: [0; 32],
         })
         .unwrap()
@@ -1425,10 +1448,10 @@ mod tests {
 
         assert!(service.peer_book.read().await.is_empty());
         service
-            .handle_epoch_change(vec![
+            .handle_epoch_change(test_validators(vec![
                 (rotated, PublicKey(new_key.to_bytes().to_vec())),
                 (unchanged, PublicKey(unchanged_key.to_bytes().to_vec())),
-            ])
+            ]))
             .await;
 
         let new_peer = new_key.to_peer_id();

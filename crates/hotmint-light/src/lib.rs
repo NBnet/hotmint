@@ -200,12 +200,27 @@ impl LightClient {
     }
 
     /// Update the trusted validator set after an epoch transition.
+    ///
+    /// The caller MUST have verified that the transition to `new_vs` is
+    /// justified by a QC from the outgoing trusted set (e.g. by verifying the
+    /// header chain carrying the epoch change). This entry point cannot check
+    /// that justification itself, but it does enforce monotonicity: a
+    /// checkpoint below the current trusted height is rejected, so a caller
+    /// regression cannot re-arm acceptance of already-superseded headers.
     pub fn update_validator_set(
         &mut self,
         new_vs: ValidatorSet,
         new_height: Height,
         new_hash: BlockHash,
-    ) {
+    ) -> ruc::Result<()> {
+        let current = self.trusted_height();
+        if new_height < current {
+            return Err(ruc::eg!(
+                "refusing to regress trusted checkpoint from height {} to {}",
+                current,
+                new_height
+            ));
+        }
         self.trusted_validator_set = new_vs;
         *self
             .trusted_state
@@ -214,6 +229,7 @@ impl LightClient {
             height: new_height,
             hash: Some(new_hash),
         };
+        Ok(())
     }
 
     /// Return the current trusted height.
@@ -439,7 +455,9 @@ mod tests {
         let new_vs = ValidatorSet::new(new_infos);
 
         let checkpoint_hash = BlockHash([9u8; 32]);
-        client.update_validator_set(new_vs, Height(100), checkpoint_hash);
+        client
+            .update_validator_set(new_vs, Height(100), checkpoint_hash)
+            .unwrap();
         assert_eq!(client.trusted_height(), Height(100));
         assert_eq!(client.trusted_hash(), Some(checkpoint_hash));
         assert_eq!(client.trusted_validator_set().validator_count(), 4);

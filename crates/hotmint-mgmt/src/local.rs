@@ -182,34 +182,68 @@ pub fn stop(base_dir: &Path, node: Option<u32>) -> Result<()> {
 
     for v in &nodes {
         if let Some(pid) = read_pid(base_dir, v.id) {
+            let pid_file = base_dir.join(format!("v{}.pid", v.id));
             if is_running(pid) && is_cluster_node(pid, Path::new(&v.home_dir)) {
                 // SAFETY: The pid has been validated by is_running() (process exists)
                 // and is_cluster_node() (confirmed to be a hotmint/cluster-node process).
                 // Signal 15 (SIGTERM) is a standard, catchable termination signal.
                 let rc = unsafe { libc::kill(pid as i32, 15) }; // SIGTERM
                 if rc == 0 {
-                    println!("V{}: stopped (pid {})", v.id, pid);
+                    // Signal delivery is not process exit. Confirm exit before
+                    // touching the pid file — it is the only handle managing
+                    // this process — escalating to SIGKILL after a grace period.
+                    let exited = wait_for_exit(pid, Duration::from_secs(5)) || {
+                        // SAFETY: same validated pid as the SIGTERM above.
+                        // Signal 9 (SIGKILL) force-terminates a wedged node.
+                        let _ = unsafe { libc::kill(pid as i32, 9) }; // SIGKILL
+                        wait_for_exit(pid, Duration::from_secs(3))
+                    };
+                    if exited {
+                        println!("V{}: stopped (pid {})", v.id, pid);
+                        let _ = fs::remove_file(&pid_file);
+                    } else {
+                        eprintln!(
+                            "V{}: pid {} did not exit after SIGTERM/SIGKILL; keeping pid file",
+                            v.id, pid
+                        );
+                    }
                 } else {
                     let err = std::io::Error::last_os_error();
-                    eprintln!("V{}: failed to stop pid {}: {}", v.id, pid, err);
+                    eprintln!(
+                        "V{}: failed to signal pid {}: {}; keeping pid file",
+                        v.id, pid, err
+                    );
                 }
             } else if is_running(pid) {
                 println!(
                     "V{}: pid {} is not a cluster-node (stale pid file?)",
                     v.id, pid
                 );
+                let _ = fs::remove_file(&pid_file);
             } else {
                 println!("V{}: not running", v.id);
+                let _ = fs::remove_file(&pid_file);
             }
-            // Clean up pid file
-            let pid_file = base_dir.join(format!("v{}.pid", v.id));
-            let _ = fs::remove_file(&pid_file);
         } else {
             println!("V{}: not running (no pid file)", v.id);
         }
     }
 
     Ok(())
+}
+
+/// Poll until the process exits or the timeout elapses.
+fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if !is_running(pid) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 pub fn status(base_dir: &Path) -> Result<()> {

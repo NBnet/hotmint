@@ -1,4 +1,4 @@
-use hotmint_types::{BlockHash, Epoch, Height, QuorumCertificate, ViewNumber};
+use hotmint_types::{BlockHash, Epoch, Height, QuorumCertificate, ViewNumber, vote::VoteType};
 use ruc::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -13,6 +13,8 @@ const KEY_CURRENT_EPOCH: u64 = 5;
 const KEY_LAST_APP_HASH: u64 = 6;
 const KEY_PENDING_EPOCH: u64 = 7;
 const KEY_PREVIOUS_EPOCH: u64 = 8;
+const KEY_LAST_VOTE1: u64 = 9;
+const KEY_LAST_VOTE2: u64 = 10;
 
 /// Persisted consensus state fields (serialized as a single blob per key)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +24,7 @@ enum StateValue {
     Qc(QuorumCertificate),
     Epoch(Epoch),
     AppHash(BlockHash),
+    Vote(ViewNumber, BlockHash),
 }
 
 /// File name for the persisted instance ID of the consensus state collection.
@@ -194,6 +197,29 @@ impl PersistentConsensusState {
             })
     }
 
+    /// Persist the last locally signed vote of the given type (`Vote` for
+    /// phase-1, `Vote2` for phase-2) so restarts can refuse conflicting
+    /// re-signs. Other vote types leave the stored record untouched.
+    pub fn save_last_vote(&mut self, vote_type: VoteType, view: ViewNumber, block_hash: BlockHash) {
+        let key = match vote_type {
+            VoteType::Vote => KEY_LAST_VOTE1,
+            VoteType::Vote2 => KEY_LAST_VOTE2,
+        };
+        self.store.insert(&key, &StateValue::Vote(view, block_hash));
+    }
+
+    /// Load the last persisted vote record for a vote type.
+    pub fn load_last_vote(&self, vote_type: VoteType) -> Option<(ViewNumber, BlockHash)> {
+        let key = match vote_type {
+            VoteType::Vote => KEY_LAST_VOTE1,
+            VoteType::Vote2 => KEY_LAST_VOTE2,
+        };
+        self.store.get(&key).and_then(|v| match v {
+            StateValue::Vote(view, hash) => Some((view, hash)),
+            _ => None,
+        })
+    }
+
     pub fn flush(&self) {
         vsdb::vsdb_flush();
     }
@@ -223,6 +249,9 @@ impl hotmint_consensus::engine::StatePersistence for PersistentConsensusState {
     }
     fn save_previous_epoch(&mut self, epoch: Option<&Epoch>) {
         self.save_previous_epoch(epoch);
+    }
+    fn save_last_vote(&mut self, vote_type: VoteType, view: ViewNumber, block_hash: BlockHash) {
+        self.save_last_vote(vote_type, view, block_hash);
     }
     fn flush(&self) {
         self.flush();
@@ -265,5 +294,40 @@ mod tests {
         assert_eq!(pcs.load_current_view(), Some(ViewNumber(42)));
         assert_eq!(pcs.load_last_committed_height(), Some(Height(7)));
         assert_eq!(pcs.load_last_app_hash(), Some(BlockHash([0xFF; 32])));
+    }
+}
+
+#[cfg(test)]
+mod last_vote_tests {
+    use super::*;
+    use hotmint_types::vote::VoteType;
+
+    #[test]
+    fn last_vote_round_trips_per_type() {
+        let mut pcs = PersistentConsensusState::new();
+        assert_eq!(pcs.load_last_vote(VoteType::Vote), None);
+        assert_eq!(pcs.load_last_vote(VoteType::Vote2), None);
+
+        pcs.save_last_vote(VoteType::Vote, ViewNumber(3), BlockHash([1; 32]));
+        pcs.save_last_vote(VoteType::Vote2, ViewNumber(3), BlockHash([2; 32]));
+        assert_eq!(
+            pcs.load_last_vote(VoteType::Vote),
+            Some((ViewNumber(3), BlockHash([1; 32])))
+        );
+        assert_eq!(
+            pcs.load_last_vote(VoteType::Vote2),
+            Some((ViewNumber(3), BlockHash([2; 32])))
+        );
+
+        // Advance on one slot only.
+        pcs.save_last_vote(VoteType::Vote, ViewNumber(4), BlockHash([3; 32]));
+        assert_eq!(
+            pcs.load_last_vote(VoteType::Vote),
+            Some((ViewNumber(4), BlockHash([3; 32])))
+        );
+        assert_eq!(
+            pcs.load_last_vote(VoteType::Vote2),
+            Some((ViewNumber(3), BlockHash([2; 32])))
+        );
     }
 }

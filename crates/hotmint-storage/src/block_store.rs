@@ -37,14 +37,24 @@ impl VsdbBlockStore {
                 let commit_qcs_id = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
                 let tx_index_id = u64::from_le_bytes(bytes[24..32].try_into().unwrap());
                 let block_results_id = u64::from_le_bytes(bytes[32..40].try_into().unwrap());
-                Ok(Self {
+                let mut store = Self {
                     by_hash: MapxOrd::from_meta(by_hash_id).c(d!("restore by_hash"))?,
                     by_height: MapxOrd::from_meta(by_height_id).c(d!("restore by_height"))?,
                     commit_qcs: MapxOrd::from_meta(commit_qcs_id).c(d!("restore commit_qcs"))?,
                     tx_index: MapxOrd::from_meta(tx_index_id).c(d!("restore tx_index"))?,
                     block_results: MapxOrd::from_meta(block_results_id)
                         .c(d!("restore block_results"))?,
-                })
+                };
+                // Self-heal a store that lost its genesis insert (e.g. power
+                // loss between the first open and the first flush): without
+                // the genesis block the commit chain can never advance.
+                let genesis = Block::genesis();
+                if store.get_block(&genesis.hash).is_none() {
+                    warn!("genesis block missing from reopened store, re-inserting");
+                    store.put_block(genesis);
+                    store.flush();
+                }
+                Ok(store)
             } else {
                 Err(eg!(
                     "corrupt block_store.meta: expected 40 bytes, got {}",
@@ -89,7 +99,11 @@ impl VsdbBlockStore {
                 tx_index,
                 block_results,
             };
+            // The genesis insert must be durable before first use: a power
+            // loss before the first flush would otherwise leave an openable
+            // but empty store that can never commit block 1.
             store.put_block(Block::genesis());
+            store.flush();
             Ok(store)
         }
     }

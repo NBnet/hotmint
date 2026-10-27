@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use tokio::sync::{RwLock, broadcast, watch};
-use tracing::{Level, error, info};
+use tracing::{Level, error, info, warn};
 
 use hotmint::abci::client::IpcApplicationClient;
 use hotmint::api::rpc::ConsensusStatus;
@@ -267,6 +267,15 @@ async fn run_node(
         .iter()
         .find(|v| &v.public_key == our_pk_hex);
     let is_fullnode = config.node.mode == NodeMode::Fullnode || genesis_validator.is_none();
+    // A node configured as a validator whose key is absent from genesis would
+    // otherwise run silently as a fullnode — the cluster would lose that
+    // voting power with only an INFO line. Misconfiguration must fail fast.
+    if config.node.mode == NodeMode::Validator && genesis_validator.is_none() {
+        return Err(eg!(
+            "node is configured as a validator, but its public key {} is not in the genesis validator set",
+            our_pk_hex
+        ));
+    }
     let our_vid = if is_fullnode {
         sentinel
     } else {
@@ -319,6 +328,10 @@ async fn run_node(
     if let Some(hash) = pcs.load_last_app_hash() {
         state.last_app_hash = hash;
     }
+    // Double-sign guard: restore last signed votes so a crash-recovered node
+    // never signs a conflicting vote at a view it already voted in.
+    state.last_vote1 = pcs.load_last_vote(VoteType::Vote);
+    state.last_vote2 = pcs.load_last_vote(VoteType::Vote2);
     // A-1: Restore pending epoch transition for crash-safety.
     let restored_pending_epoch = pcs.load_pending_epoch();
 
@@ -380,11 +393,7 @@ async fn run_node(
                 pex
             },
             relay_consensus: config.node.relay_consensus,
-            initial_validators: validator_set
-                .validators()
-                .iter()
-                .map(|v| (v.id, v.public_key.clone()))
-                .collect(),
+            initial_validator_set: validator_set.clone(),
             chain_id_hash: state.chain_id_hash,
         })?
     };
@@ -532,7 +541,19 @@ async fn run_node(
     let gossip_app = app.clone();
     tokio::spawn(async move {
         while let Some(tx_bytes) = mempool_tx_rx.recv().await {
-            let result = gossip_app.validate_tx(&tx_bytes, None);
+            // Validation may perform blocking IPC (ABCI client); keep it off
+            // the core workers shared with the consensus engine.
+            let result = {
+                let app = gossip_app.clone();
+                let tx = tx_bytes.clone();
+                match tokio::task::spawn_blocking(move || app.validate_tx(&tx, None)).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        warn!(error = %e, "gossip tx validation task failed");
+                        continue;
+                    }
+                }
+            };
             if !result.valid {
                 continue;
             }

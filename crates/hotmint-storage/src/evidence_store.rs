@@ -71,10 +71,13 @@ const META_FILE: &str = "evidence_store.meta";
 ///
 /// Proofs survive node restarts. Uses a `MapxOrd<u64, EquivocationProof>` for
 /// the proof list (keyed by auto-increment ID) and a `MapxOrd<u64, u8>` as a
-/// committed-set (keyed by a hash of (view, validator)).
+/// committed-set (keyed by the raw 16-byte (view, validator) composite —
+/// no hash truncation, so no collision can silently drop pending evidence).
+/// The third 8 bytes of the meta file are reserved (historically next_id;
+/// ignored on reopen, which re-derives next_id from the durable proofs map).
 pub struct PersistentEvidenceStore {
     proofs: MapxOrd<u64, EquivocationProof>,
-    committed: MapxOrd<u64, u8>,
+    committed: MapxOrd<[u8; 16], u8>,
     next_id: u64,
 }
 
@@ -103,7 +106,7 @@ impl PersistentEvidenceStore {
             })
         } else {
             let proofs: MapxOrd<u64, EquivocationProof> = MapxOrd::new_in(&Namespace::default_ns());
-            let committed: MapxOrd<u64, u8> = MapxOrd::new_in(&Namespace::default_ns());
+            let committed: MapxOrd<[u8; 16], u8> = MapxOrd::new_in(&Namespace::default_ns());
             let proofs_id = proofs.save_meta().c(d!())?.map_id;
             let committed_id = committed.save_meta().c(d!())?.map_id;
             let next_id = 0u64;
@@ -136,12 +139,11 @@ impl PersistentEvidenceStore {
             .unwrap_or(0)
     }
 
-    fn committed_key(view: ViewNumber, validator: ValidatorId) -> u64 {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&view.as_u64().to_le_bytes());
-        hasher.update(&validator.0.to_le_bytes());
-        let hash = hasher.finalize();
-        u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap())
+    fn committed_key(view: ViewNumber, validator: ValidatorId) -> [u8; 16] {
+        let mut key = [0u8; 16];
+        key[..8].copy_from_slice(&view.as_u64().to_le_bytes());
+        key[8..].copy_from_slice(&validator.0.to_le_bytes());
+        key
     }
 
     fn is_duplicate(&self, proof: &EquivocationProof) -> bool {

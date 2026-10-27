@@ -1,4 +1,5 @@
 use ruc::*;
+use tracing::error;
 
 use std::{cmp, collections::HashSet};
 
@@ -209,6 +210,13 @@ impl<S: StakingStore> StakingManager<S> {
     ///
     /// Reduces self-stake and delegated stakes proportionally, jails the
     /// validator, and returns the total slashed amount.
+    ///
+    /// WARNING: the evidence ID is derived from `reason` alone, so this
+    /// convenience API can slash only ONE offense per reason per validator
+    /// registration — a second, distinct incident of the same reason is
+    /// rejected as already-applied. Production callers MUST use
+    /// [`Self::slash_with_evidence`] with a unique per-offense evidence ID
+    /// (e.g. derived from the equivocation proof).
     pub fn slash(
         &mut self,
         id: ValidatorId,
@@ -500,6 +508,30 @@ impl<S: StakingStore> StakingManager<S> {
     pub fn compute_validator_updates(&self, current_set: &ValidatorSet) -> Vec<ValidatorUpdate> {
         let formal = self.formal_validator_list();
         let mut updates = Vec::new();
+
+        // Liveness guard: never emit an empty validator set. If every
+        // candidate is jailed/tombstoned/slashed below the minimum self-stake,
+        // retain the current set — activating an empty set can never form a
+        // QC and permanently bricks the chain.
+        if formal.is_empty() {
+            if current_set.validator_count() > 0 {
+                error!("staking: formal validator list is empty — retaining current validator set");
+            }
+            return updates;
+        }
+
+        // Overflow guard: cumulative voting power must fit u64. Consensus
+        // applies updates with checked arithmetic and treats overflow as
+        // FATAL, so emit nothing (retain the current set) rather than an
+        // overflowing set that halts the chain at activation.
+        let mut total: u64 = 0;
+        for vs in &formal {
+            let Some(t) = total.checked_add(vs.voting_power()) else {
+                error!("staking: total voting power overflow — retaining current validator set");
+                return Vec::new();
+            };
+            total = t;
+        }
 
         // Add or update validators in the formal list
         for vs in &formal {
