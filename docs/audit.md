@@ -12,25 +12,27 @@
 
 ## Won't Fix
 
+> Rechecked after the dependency bump (`litep2p` 0.17, `vsdb` 17.0.19, `ed25519-dalek` 3). All of the entries below still match the current tree. Locations were refreshed. `litep2p` 0.17 adds `TransportService::force_close`, but that method is not on `NotificationHandle`, which is what `hotmint-network` holds.
+
 ### [CRITICAL] sync: a Vote QC is not a double certificate
-- **Where**: `crates/hotmint-consensus/src/sync.rs` `verify_vote_qc`
+- **Where**: `crates/hotmint-consensus/src/sync.rs` `verify_vote_qc` (hard-coded `VoteType::Vote`)
 - **What**: Catch-up accepts a quorum Vote QC as proof a block was committed. A Vote QC exists before Prepare, so it is not the two-chain commit proof.
 - **Reason**: The sync response and the stored commit QC are a single Vote QC (the DC's inner certificate). Requiring a DC means a new stored proof and a new sync payload, shipped together. Half of that change would make current peers unable to serve blocks. Left for a dedicated protocol change.
 
 ### [CRITICAL] consensus: a second validator update inside one commit walk rewrites the pending epoch's start view
-- **Where**: `crates/hotmint-consensus/src/commit.rs` `chained_pending_epoch`
+- **Where**: `crates/hotmint-consensus/src/commit.rs` `chained_pending_epoch` (`epoch_start = block_view + 2`)
 - **What**: Folding a later block's validator updates into the in-flight pending epoch moves `start_view` to that later view + 2. Live activation uses the first schedule. Replay of both blocks in one walk does not.
 - **Reason**: The fix is a queue of immutable pending epochs in consensus state, used by both `try_commit` and `replay_blocks`. That is a state-format change, not a local guard.
 
 ### [HIGH] storage: vsdb maps are not one crash-atomic checkpoint
 - **Where**: `crates/hotmint-storage/src/block_store.rs`, `consensus_state.rs`
 - **What**: Height, hash, commit QC, and consensus keys are separate maps. `vsdb_flush` does not fsync them as one record.
-- **Reason**: Needs a single versioned checkpoint record in vsdb. Refusing to replace a commit QC with a different block, and rolling back a torn WAL write, are the guards that landed in this round.
+- **Reason**: `vsdb` 17.0.19 still documents `vsdb_flush` as not a transaction across collections or shards. Needs a single versioned checkpoint record. Refusing to replace a commit QC with a different block, and rolling back a torn WAL write, are the guards that landed in this round.
 
 ### [HIGH] network: peer cap and PEX do not drop sockets or authenticate address-book records
-- **Where**: `crates/hotmint-network/src/service.rs`
+- **Where**: `crates/hotmint-network/src/service.rs` eviction path (`connected_peers.remove` around the `pick_non_validator_to_evict` branch)
 - **What**: Over-limit connections stay open, and a PEX peer response can replace another peer's record.
-- **Reason**: Closing the socket needs a litep2p disconnect path this crate does not call. PEX authentication is a protocol change of its own. Not patched blindly.
+- **Reason**: `NotificationHandle` in litep2p 0.17 can close a notification substream (`close_substream`) but cannot force-close the connection. `TransportService::force_close` is not on that handle. PEX authentication is a protocol change of its own. Not patched blindly.
 
 ## Resolved — Overhaul (2026-11-16)
 
@@ -590,58 +592,60 @@
 
 ## Won't Fix
 
+> Rechecked after the dependency bump. Locations below name the current functions. `ed25519-dalek` 3.0 `verify_batch` still does not reject small-order keys.
+
 ### [INFO] crypto: Ed25519Verifier::verify_aggregate is dead code with weaker-than-strict semantics
-- **Where**: crates/hotmint-crypto/src/signer.rs:67-110
+- **Where**: `crates/hotmint-crypto/src/signer.rs` `verify_aggregate` (calls `ed25519_dalek::verify_batch`). No production caller.
 - **What**: The batch-verification API has zero callers (all QC verification uses per-signer `verify_strict`), is backed by cofactored batch verification rather than the strict path, passes vacuously on an empty batch, and structurally cannot verify real QCs (every signer signs its own payload).
 - **Reason**: Removing it would be a breaking change to the public `Verifier` trait for a currently unreachable hazard. Left in place deliberately; do not wire it into vote/QC verification without a redesign over per-signer messages and an explicit quorum check.
 
 ### [INFO] network: over-cap or evicted peers are never actually disconnected
-- **Where**: crates/hotmint-network/src/service.rs:990-1023
+- **Where**: `crates/hotmint-network/src/service.rs` `pick_non_validator_to_evict` branch. The comment there still says litep2p exposes no disconnect.
 - **What**: Non-validator peers beyond `max_peers` are ignored locally but their TCP connections/substreams stay alive because litep2p exposes no disconnect API; `pick_non_validator_to_evict` picks an arbitrary (not oldest) peer.
-- **Reason**: Requires transport-level support that the pinned litep2p version does not provide. Impact is bounded to extra sockets/substream state: every inbound path already refuses work for such peers (covered by tests). Revisit if litep2p gains a disconnect API.
+- **Reason**: litep2p 0.17's `NotificationHandle` still has no transport disconnect. `close_substream` drops the notification substream only. Impact stays extra sockets: inbound paths already refuse work for peers that are not in the local set. Revisit if that handle gains `force_close`.
 
 ### [INFO] staking: applied_slashes dedup is per-registration — re-register resets double-slash protection
-- **Where**: crates/hotmint-staking/src/manager.rs:66-107
+- **Where**: `crates/hotmint-staking/src/manager.rs` `register_validator` (fresh `applied_slashes: Vec::new()`) and `slash`
 - **What**: Evidence idempotence lives inside per-validator state, so unregister + re-register resets it and the same authenticated evidence could be re-applied against the new stake.
 - **Reason**: Reachable only with a 100%-slash configuration (unregister requires zero stake and there is no withdrawal path), and consensus intentionally allows old authenticated evidence to be embedded in later blocks. A robust fix needs a validator-lifecycle-independent evidence tombstone — cross-layer redesign deferred; applications that need it can dedup globally by evidence id.
 
 ### [HIGH] light: BlockHeader fields not cryptographically bound to QC-verified hash
-- **Where**: crates/hotmint-light/src/lib.rs:149-156,196-198
+- **Where**: `crates/hotmint-light/src/lib.rs` `verify_header` (QC hash compared with `header.hash`; no check that the header fields hash to that value)
 - **What**: verify_header checks qc.block_hash == header.hash but never verifies header fields produce that hash. Block::compute_hash() mixes in payload and evidence which BlockHeader omits. An attacker with a valid QC can craft a BlockHeader with arbitrary field values (e.g. forged app_hash) and set header.hash to the real hash.
 - **Reason**: Requires architectural redesign — either adding a fields_hash to Block/BlockHeader and restructuring compute_hash() as hash(header_fields_hash || payload_hash || evidence_hash), or carrying the full payload/evidence hashes in BlockHeader. Both approaches change the block serialization format and affect many subsystems. Tracked for a future protocol version.
 
 ### [LOW] crypto: verify_batch() does not perform small-order public key rejection unlike verify_strict()
-- **Where**: crates/hotmint-crypto/src/signer.rs:64 vs :109
+- **Where**: `crates/hotmint-crypto/src/signer.rs` `verify` uses `verify_strict`; `verify_aggregate` calls `ed25519_dalek::verify_batch`
 - **What**: Individual verification uses verify_strict() which rejects small-order public keys. Batch verification uses ed25519_dalek::verify_batch() which does not. A validator with one of the 8 small-order Curve25519 points could produce signatures passing batch but failing strict verification.
-- **Reason**: ed25519_dalek's verify_batch API does not expose a strict mode. A workaround (loop of verify_strict) trades ~2× batch throughput. Practical risk is negligible: only 8 small-order points exist, and validator registration controls key acceptance. Tracked for upstream ed25519-dalek enhancement.
+- **Reason**: `ed25519-dalek` 3.0 `verify_batch` still has no strict mode and does not call `is_small_order` before the multiscalar check. A loop of `verify_strict` trades batch throughput. Only 8 small-order points exist, and this batch API has no production caller. Revisit if upstream adds a strict batch verifier.
 
 ### [MEDIUM] network: compressed consensus frames are rate-limited by compressed size before zstd expansion
-- **Where**: crates/hotmint-network/src/service.rs:599 (ingress budget on `notification.len()`); crates/hotmint-network/src/codec.rs:56-66
+- **Where**: `crates/hotmint-network/src/service.rs` `check_consensus_ingress_budget(peer, notification.len())`; `crates/hotmint-network/src/codec.rs` `Decoder::take(MAX_DECOMPRESSED_SIZE + 1)` with a 16 MiB cap
 - **What**: The per-peer ingress budget charges the compressed frame size, while a frame may expand up to 16 MiB during zstd decode, allowing a known peer to amplify CPU/allocation work relative to its compressed-byte budget.
 - **Reason**: The classic decompression bomb is already bounded — `codec::decode` caps each frame with `Decoder::take(MAX_DECOMPRESSED_SIZE + 1)` and rejects anything over 16 MiB, so per-frame work is bounded. The residual amplification is limited and charging by decompressed size is not possible before decoding. Accepted; revisit if a streaming decompressed-byte budget is added.
 
 ### [MEDIUM] staking: register_validator accepts caller-supplied ValidatorId not bound to the public key
-- **Where**: crates/hotmint-staking/src/manager.rs:48-77
+- **Where**: `crates/hotmint-staking/src/manager.rs` `register_validator`
 - **What**: Registration stores the caller-supplied `id` after validating only key length/uniqueness; it is later used as the equal-power tie-break (`id.0` ascending), so a caller could bias formal-set selection.
 - **Reason**: `hotmint-staking` is a pluggable reference module; validator ids are assigned by genesis/the embedding application, and the consensus-layer `ValidatorSet` independently rejects duplicate ids and duplicate public keys. Binding `id == ValidatorId::from_public_key(pubkey)` here would force a 64-bit-truncated identity and break the sequential-id convention used throughout genesis and tests. Left to the embedding application to enforce if required.
 
 ### [LOW] types: ValidatorId::from_public_key truncates Blake3 to 64 bits
-- **Where**: crates/hotmint-types/src/validator.rs:24-29
+- **Where**: `crates/hotmint-types/src/validator.rs` `ValidatorId::from_public_key` (first 8 bytes of Blake3)
 - **What**: Derives a `ValidatorId(u64)` from the first 8 bytes of `blake3(pubkey)`, a 64-bit identity with a ~2^32 birthday bound.
 - **Reason**: `ValidatorId` is a `u64` by type and the helper has no production callers (ids are assigned explicitly; `ValidatorSet::try_from_parts` rejects duplicate ids and pubkeys). Widening the identity is a type-level change out of scope; the helper is latent.
 
 ### [HIGH] storage: a mid-commit crash before state persistence requires operator recovery (WAL fail-closed)
-- **Where**: crates/hotmint/src/bin/node.rs:324-340; crates/hotmint-storage/src/wal.rs:39-44; crates/hotmint-consensus/src/engine.rs:1750-1769
+- **Where**: `crates/hotmint/src/bin/node.rs` startup `WalRecovery::NeedsReplay` returns an error; `crates/hotmint-storage/src/wal.rs` `NeedsReplay`; commit path in `crates/hotmint-consensus/src/engine.rs` `process_commit_result`
 - **What**: `WalRecovery::NeedsReplay` causes startup to refuse to start rather than automatically replaying `last_committed_height+1..=target_height`. The app commit also runs before the block-store auxiliary indices are flushed.
 - **Reason**: This is the explicitly-accepted resolution of a prior finding ("fail closed if replay cannot complete"). Automatic replay requires the application to be safely re-executable (an ABCI-app idempotency contract) which is a protocol-level change. The WAL intent is fsynced before app execution (fatal on failure), so safety is preserved; only automatic liveness recovery is deferred. Not a new regression.
 
 ### [HIGH] consensus: liveness/offline tracking is non-deterministic across nodes (per-DC, omitted during sync)
-- **Where**: crates/hotmint-consensus/src/engine.rs:1689-1692; crates/hotmint-consensus/src/sync.rs replay_blocks; liveness.rs
+- **Where**: `crates/hotmint-consensus/src/engine.rs` `process_commit_result` calls `record_commit` once per commit batch; `sync.rs` `replay_blocks` does not call it; caveat in `crates/hotmint-consensus/src/liveness.rs`
 - **What**: `record_commit` samples liveness once per DoubleCertificate (not per committed height) and is not invoked during sync replay, so a fast-forwarding or state-synced node accumulates different `(missed, total_commits)` than a steady node. If a slashing application acts on `offline_validators()`, app_hash can diverge.
 - **Reason**: A fully deterministic fix requires sampling each committed height from its on-chain commit-QC signer bitfield in all paths (live batch commit, fast-forward, and sync). The current commit structure stores a commit QC only for the DC target, not for ancestor blocks committed by the two-chain rule, so per-height signer data is not available without a protocol/storage change. A partial fix risks making divergence worse. The default `NoopApplication` does not act on offline evidence and consensus safety is unaffected. The doc comment in `liveness.rs` was updated to state the determinism caveat. Tracked for a future protocol version.
 
 ### [MEDIUM] consensus/facade: app/consensus divergence is not detected when the application reports height 0
-- **Where**: crates/hotmint-consensus/src/engine.rs:307-328
+- **Where**: `crates/hotmint-consensus/src/engine.rs` `ConsensusEngine::run`, the `last_block_height > 0` guard
 - **What**: The startup divergence check only runs when `app.info().last_block_height > 0`, so a wiped application DB (height 0) with consensus state past genesis is not flagged.
 - **Reason**: At the startup check point the engine cannot distinguish a wiped application (true divergence) from a node that is bootstrapping via join/sync, whose application legitimately starts fresh and is replayed up to the persisted consensus height afterwards (exercised by `test_validator_join`). Halting on app height 0 breaks those legitimate flows, so this is intentionally left as-is.
 
