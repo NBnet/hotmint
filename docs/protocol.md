@@ -45,10 +45,11 @@ Where:
 Each replica performs the **safety check** before voting:
 
 ```
-justify.rank >= locked_qc.rank
+justify.rank > locked_qc.rank
+    or (justify.rank == locked_qc.rank and justify.block_hash == locked_qc.block_hash)
 ```
 
-If the justify QC's rank (view number) is at least as high as the replica's locked QC, the proposal is safe to vote for. The replica sends a `VoteMsg` to the current leader.
+Rank is the QC view. A strictly higher view dominates the lock. An equal view is accepted only when the justify QC is for the same block the replica locked. An equal-view QC for a different block is rejected. With no lock, the check is skipped. The replica then sends a `VoteMsg` to the current leader.
 
 If the proposal itself carries a `double_cert` field, the replica verifies it and applies the two-chain commit for its inner block before voting. A justify QC alone never triggers commit — a double certificate needs the outer Vote2 QC, which is assembled when the next leader aggregates Vote2 messages.
 
@@ -75,10 +76,11 @@ When the next leader collects `Vote2Msg` messages covering more than 2/3 of the 
 A replica updates its `locked_qc` upon receiving a valid Prepare message. The lock represents the highest QC the replica has seen and accepted. When voting on a new proposal, the replica requires:
 
 ```
-proposal.justify.rank >= self.locked_qc.rank
+proposal.justify.rank > self.locked_qc.rank
+    or same rank and the same block hash
 ```
 
-This ensures that a replica never votes for a proposal that conflicts with a block it has already locked on, unless a higher-ranked QC proves that the network has moved past that lock.
+This ensures that a replica never votes for a proposal that conflicts with a block it has already locked on, unless a strictly higher-ranked QC proves that the network has moved past that lock. Same-rank equality is not enough when the block hash differs.
 
 ### Commit Rule
 

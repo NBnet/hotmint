@@ -167,7 +167,8 @@ Each `ConsensusMessage` variant is dispatched to a specific handler:
 
 ```
 Propose ──> view_protocol::on_proposal()
-         ──> safety check: justify.rank >= locked_qc.rank
+         ──> safety check: justify.rank > locked_qc.rank,
+             or same rank and the same block hash
          ──> if safe: send VoteMsg to leader
 ```
 

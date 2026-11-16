@@ -47,13 +47,14 @@ Hotmint is not just a consensus engine. It is the foundation for a **next-genera
 
 A battle-hardened BFT consensus engine that any Rust developer can embed to build application-specific blockchains, with the same ABCI-style ergonomics that made Tendermint successful — but with lower latency, stronger type safety, and no C/C++ dependencies in the consensus state machine, crypto, or storage stack (only the P2P codec links zstd, for payload compression).
 
-### Phase 2 — EVM-Compatible Chain *(complete — lives in [nbnet](https://github.com/NBnet/nbnet))*
+### Phase 2 — EVM Execution *(in [nbnet](https://github.com/NBnet/nbnet))*
 
-A production-grade EVM-compatible chain built on Hotmint consensus. Extracted into its own repository:
+EVM block execution on Hotmint consensus lives in its own repository. It is not a full Ethereum client.
 
-- **[nbnet](https://github.com/NBnet/nbnet)** — Ethereum-compatible chain: revm execution, Ethereum JSON-RPC, EVM tx pool, custom precompiles
-- **[alloy](https://github.com/alloy-rs)** — modern Ethereum primitives, RLP codec, and Web3 RPC types
-- **AI-ported [Substrate Pallets](https://github.com/niccolocorsini/polkadot-sdk/tree/master/substrate/frame)** — battle-tested economic models (staking, governance, multi-asset) ported into Hotmint's `std + vsdb + serde` environment
+- **[nbnet](https://github.com/NBnet/nbnet)** — revm execution, an Ethereum JSON-RPC subset, an EIP-1559 tx pool, and two in-process precompiles (balances at `0x0800`, a staking lock at `0x0801`)
+- **[alloy](https://github.com/alloy-rs)** — Ethereum primitives and RLP used by nbnet
+
+Native validator staking for Hotmint itself is the in-tree `hotmint-staking` crate. nbnet does not embed Substrate pallets.
 
 ### Phase 3 — Full-Stack Blockchain Framework
 
@@ -65,7 +66,7 @@ The long-term goal is a **"hexagonal warrior" (六边形战士)** — a framewor
 | **Execution** | revm — world's fastest EVM engine |
 | **Storage** | vsdb + mmdb — pure-Rust, zero C deps, Git-model versioning + Merkle proofs |
 | **Networking** | litep2p — lightweight, from Polkadot ecosystem |
-| **Business Logic** | AI-ported Substrate Pallets — type-safe Rust, audited by top security firms |
+| **Business Logic** | In-tree `hotmint-staking`; EVM balances and the staking lock live in nbnet precompiles |
 | **Developer Experience** | ABCI-style trait API, Go SDK, cross-language IPC, cluster management tooling |
 
 > 📖 **[Security audit findings →](docs/audit.md)**
@@ -118,7 +119,7 @@ Each view follows a 5-step protocol:
 Enter  →  Propose  →  Vote  →  Prepare (QC)  →  Vote2  →  [DC triggers Commit]
 ```
 
-- **Safety**: Locking rule (`justify.rank ≥ locked_qc.rank`) prevents conflicting commits; double certificate commits the block and all uncommitted ancestors
+- **Safety**: A replica votes only when the justify QC is from a strictly higher view than its lock, or from the same view and the same block. A double certificate commits that block and its uncommitted ancestors
 - **Liveness**: Timeout → Wish → TimeoutCert mechanism with exponential backoff (1.5×, capped at 30s)
 - **Epochs**: Validator set changes take effect at `commit_view + 2`, ensuring all honest nodes agree on the transition point
 

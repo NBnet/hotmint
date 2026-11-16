@@ -19,3 +19,5 @@ Comprehensive documentation for the Hotmint BFT consensus framework.
 | [Metrics](metrics.md) | Prometheus metrics and observability |
 | [Wire Protocol](wire-protocol.md) | Codec framing, postcard format, ABCI IPC protocol, block hash spec |
 | [Security Audit](audit.md) | Audit findings and resolution history |
+
+Review guides under `ai/` are for the `$x-review` / `$x-fix` / `$x-commit` / `$x-overhaul` skills in `AGENTS.md`. They are not part of this user guide.
