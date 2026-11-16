@@ -1134,6 +1134,22 @@ impl ConsensusEngine {
                         if !block_in_place(|| self.validate_double_cert(dc)) {
                             return Ok(());
                         }
+                        // A DC commits its own view. The proposal that carries it
+                        // must be the next view, not an ancient certificate glued
+                        // onto an arbitrary future block.view.
+                        let expected_proposal = dc.outer_qc.view.next();
+                        if block.view != expected_proposal
+                            || dc.outer_qc.view < self.state.current_view
+                        {
+                            warn!(
+                                validator = %self.state.validator_id,
+                                block_view = %block.view,
+                                dc_view = %dc.outer_qc.view,
+                                current_view = %self.state.current_view,
+                                "rejecting fast-forward: proposal view is not the DC's next view"
+                            );
+                            return Ok(());
+                        }
 
                         // Fast-forward via double cert
                         self.apply_commit(dc, "fast-forward").await;
@@ -1170,18 +1186,6 @@ impl ConsensusEngine {
                     && !block_in_place(|| self.validate_double_cert(dc))
                 {
                     return Ok(());
-                }
-
-                // R-28: persist justify QC as commit evidence for the block it certifies.
-                // When blocks are committed via the 2-chain rule (possibly multiple blocks at
-                // once), the innermost block gets its own commit QC, but ancestor blocks only
-                // get the chain-rule commit and have no stored QC.  Storing the justify QC here
-                // ensures that sync responders can later serve those ancestor blocks with proof.
-                if justify.aggregate_signature.count() > 0
-                    && let Some(justified_block) = store.get_block(&justify.block_hash)
-                    && store.get_commit_qc(justified_block.height).is_none()
-                {
-                    store.put_commit_qc(justified_block.height, justify.clone());
                 }
 
                 // WAL: log commit intent before fast-forward commit in on_proposal.
@@ -2031,7 +2035,11 @@ impl ConsensusEngine {
                 .on_epoch_change(self.state.current_epoch.number, &self.state.validator_set);
             // Full clear: old votes/wishes are from the previous epoch's validator set
             self.vote_collector = VoteCollector::new();
+            // A timeout cascade that crosses the epoch boundary must keep its
+            // backoff. Wishes are still dropped with the new pacemaker.
+            let carried = self.pacemaker.backoff_state();
             self.pacemaker = Pacemaker::with_config(self.pacemaker_config.clone());
+            self.pacemaker.restore_backoff(carried);
         }
 
         view_protocol::enter_view(

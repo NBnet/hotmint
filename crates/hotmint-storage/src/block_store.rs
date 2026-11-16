@@ -182,6 +182,17 @@ impl BlockStore for VsdbBlockStore {
 
     fn put_commit_qc(&mut self, height: Height, qc: QuorumCertificate) {
         let h = height.as_u64();
+        if let Some(existing) = self.commit_qcs.get(&h)
+            && existing.block_hash != qc.block_hash
+        {
+            warn!(
+                height = h,
+                existing = %existing.block_hash,
+                rejected = %qc.block_hash,
+                "refusing to replace commit QC with a different block"
+            );
+            return;
+        }
         self.commit_qcs.insert(&h, &qc);
         if let Some(block) = self.by_hash.get(&qc.block_hash.0) {
             if block.height == height {

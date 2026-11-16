@@ -532,6 +532,14 @@ impl<S: StakingStore> StakingManager<S> {
             };
             total = t;
         }
+        // A non-empty formal list of zero-power validators still emits
+        // power-0 updates, which removes the live set and bricks QCs.
+        if total == 0 {
+            error!(
+                "staking: formal validator list has zero voting power — retaining current validator set"
+            );
+            return Vec::new();
+        }
 
         // Add or update validators in the formal list
         for vs in &formal {

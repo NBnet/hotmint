@@ -181,11 +181,7 @@ impl UtxoApplication {
                 None => return false,
             };
         }
-        if output_sum > input_sum {
-            return false;
-        }
-
-        true
+        output_sum <= input_sum
     }
 }
 

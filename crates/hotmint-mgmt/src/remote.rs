@@ -325,9 +325,15 @@ pub fn deploy(
                  if [ -f {esc_pid} ]; then \
                    pid=$(cat {esc_pid} 2>/dev/null || true); \
                    case \"$pid\" in ''|*[!0-9]*) ;; *) \
-                     if ps -p \"$pid\" -o command= | grep -F -- {esc_bin} >/dev/null && \
-                        ps -p \"$pid\" -o command= | grep -F -- '--home' >/dev/null && \
-                        ps -p \"$pid\" -o command= | grep -F -- {esc_home} >/dev/null; then \
+                     cmd=$(ps -p \"$pid\" -o command= || true); \
+                     home_exact={esc_home}; \
+                     ok=0; prev=; \
+                     for tok in $cmd; do \
+                       if [ \"$prev\" = --home ] && [ \"$tok\" = \"$home_exact\" ]; then ok=1; fi; \
+                       case \"$tok\" in --home=\"$home_exact\") ok=1 ;; esac; \
+                       prev=$tok; \
+                     done; \
+                     if [ \"$ok\" = 1 ] && printf '%s\n' \"$cmd\" | grep -F -q -e {esc_bin}; then \
                        kill \"$pid\" 2>/dev/null; \
                        for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 \"$pid\" 2>/dev/null || break; sleep 1; done; \
                        if kill -0 \"$pid\" 2>/dev/null; then kill -9 \"$pid\" 2>/dev/null; sleep 1; fi; \

@@ -140,12 +140,18 @@ pub async fn sync_to_tip(
         }
         Ok(None) => return Err(eg!("sync channel closed")),
         Err(_) => {
-            info!("sync status request timed out, starting from current state");
-            return Ok(());
+            return Err(eg!("sync status request timed out; trying another peer"));
         }
     };
 
-    if peer_status <= *state.last_committed_height {
+    if peer_status < *state.last_committed_height {
+        return Err(eg!(
+            "peer height {} is behind local height {}",
+            peer_status.as_u64(),
+            state.last_committed_height.as_u64()
+        ));
+    }
+    if peer_status == *state.last_committed_height {
         info!(
             our_height = state.last_committed_height.as_u64(),
             peer_height = peer_status.as_u64(),
@@ -160,28 +166,9 @@ pub async fn sync_to_tip(
         "starting block sync"
     );
 
-    // A-3: Try snapshot sync first for large gaps. If the peer has snapshots
-    // and the application accepts one, we skip most of the block replay.
-    let gap = peer_status
-        .as_u64()
-        .saturating_sub(state.last_committed_height.as_u64());
-    if gap > MAX_SYNC_BATCH {
-        match sync_via_snapshot(state, request_tx, response_rx).await {
-            Ok(true) => {
-                info!(
-                    height = state.last_committed_height.as_u64(),
-                    "snapshot sync succeeded, continuing with block sync for remaining blocks"
-                );
-                // Fall through to block sync for any blocks after the snapshot
-            }
-            Ok(false) => {
-                info!("no suitable snapshot available, using full block sync");
-            }
-            Err(e) => {
-                warn!(error = %e, "snapshot sync failed, falling back to block sync");
-            }
-        }
-    }
+    // Snapshot apply is disabled (see sync_via_snapshot). Do not send
+    // GetSnapshots: a late Snapshots reply is untagged and the next
+    // GetBlocks read treats it as a protocol error.
 
     // If we're caught up after snapshot, return early
     if *state.last_committed_height >= peer_status {
@@ -226,6 +213,13 @@ pub async fn sync_to_tip(
         };
 
         if blocks.is_empty() {
+            if *state.last_committed_height < peer_status {
+                return Err(eg!(
+                    "peer closed block sync at height {} before reported tip {}",
+                    state.last_committed_height.as_u64(),
+                    peer_status.as_u64()
+                ));
+            }
             break;
         }
 
@@ -373,6 +367,13 @@ pub fn replay_blocks(
             .is_some_and(|epoch| block.view >= epoch.start_view);
         let replay_epoch = if activates_epoch {
             pending_epoch.as_ref().unwrap().clone()
+        } else if block.view < state.current_epoch.start_view {
+            // A block committed in the previous epoch can still be missing
+            // after a timeout crosses start_view. Verify it with that set.
+            state
+                .previous_epoch
+                .clone()
+                .unwrap_or_else(|| state.current_epoch.clone())
         } else {
             state.current_epoch.clone()
         };

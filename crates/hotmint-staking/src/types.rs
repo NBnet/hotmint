@@ -117,6 +117,9 @@ impl StakingConfig {
         if self.max_validators == 0 {
             return Err(eg!("max_validators must be > 0"));
         }
+        if self.min_self_stake == 0 {
+            return Err(eg!("min_self_stake must be > 0"));
+        }
         if self.slash_rate_double_sign > 10_000 {
             return Err(eg!(
                 "slash_rate_double_sign must be <= 10000 (basis points)"

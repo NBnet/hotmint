@@ -732,29 +732,34 @@ pub(crate) async fn handle_request(
             let vs = hotmint_types::ValidatorSet::new(validators);
             let status = *state.status_rx.borrow();
 
-            // Committed heights are verified against the node's own stored
-            // commit QC — authoritative evidence, no trust-path emulation.
+            // Committed heights are checked against the stored block. Matching
+            // only the hash field would accept a header that reuses a real
+            // hash and forges app_hash, parent, view, or proposer.
             if header.height.as_u64() <= status.last_committed_height {
-                let stored_qc = {
+                let stored = {
                     let store = state.store.read();
-                    store.get_commit_qc(header.height)
+                    store.get_block_by_height(header.height)
                 };
-                return match stored_qc {
-                    Some(stored) if stored.block_hash == header.hash => json_ok(
-                        req.id,
-                        &VerifyHeaderResult {
-                            valid: true,
-                            error: None,
+                let matches = stored.is_some_and(|block| {
+                    header.hash == block.hash
+                        && header.parent_hash == block.parent_hash
+                        && header.view == block.view
+                        && header.proposer == block.proposer
+                        && header.app_hash == block.app_hash
+                        && header.timestamp == block.timestamp
+                        && header.height == block.height
+                });
+                return json_ok(
+                    req.id,
+                    &VerifyHeaderResult {
+                        valid: matches,
+                        error: if matches {
+                            None
+                        } else {
+                            Some("header does not match the committed chain".to_string())
                         },
-                    ),
-                    _ => json_ok(
-                        req.id,
-                        &VerifyHeaderResult {
-                            valid: false,
-                            error: Some("header does not match the committed chain".to_string()),
-                        },
-                    ),
-                };
+                    },
+                );
             }
 
             // Uncommitted heights: verify the next header after the last

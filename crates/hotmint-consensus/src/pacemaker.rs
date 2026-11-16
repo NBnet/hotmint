@@ -57,6 +57,17 @@ impl Pacemaker {
         Self::with_config(PacemakerConfig::default())
     }
 
+    pub fn backoff_state(&self) -> (u32, Duration) {
+        (self.consecutive_timeouts, self.current_timeout)
+    }
+
+    /// Keep a timeout storm's backoff across an epoch-boundary rebuild.
+    pub fn restore_backoff(&mut self, carried: (u32, Duration)) {
+        self.consecutive_timeouts = carried.0;
+        self.current_timeout = carried.1;
+        self.reset_timer();
+    }
+
     pub fn with_config(config: PacemakerConfig) -> Self {
         let base_timeout = Duration::from_millis(config.base_timeout_ms);
         Self {

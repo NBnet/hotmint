@@ -10,6 +10,75 @@
 
 ---
 
+## Won't Fix
+
+### [CRITICAL] sync: a Vote QC is not a double certificate
+- **Where**: `crates/hotmint-consensus/src/sync.rs` `verify_vote_qc`
+- **What**: Catch-up accepts a quorum Vote QC as proof a block was committed. A Vote QC exists before Prepare, so it is not the two-chain commit proof.
+- **Reason**: The sync response and the stored commit QC are a single Vote QC (the DC's inner certificate). Requiring a DC means a new stored proof and a new sync payload, shipped together. Half of that change would make current peers unable to serve blocks. Left for a dedicated protocol change.
+
+### [CRITICAL] consensus: a second validator update inside one commit walk rewrites the pending epoch's start view
+- **Where**: `crates/hotmint-consensus/src/commit.rs` `chained_pending_epoch`
+- **What**: Folding a later block's validator updates into the in-flight pending epoch moves `start_view` to that later view + 2. Live activation uses the first schedule. Replay of both blocks in one walk does not.
+- **Reason**: The fix is a queue of immutable pending epochs in consensus state, used by both `try_commit` and `replay_blocks`. That is a state-format change, not a local guard.
+
+### [HIGH] storage: vsdb maps are not one crash-atomic checkpoint
+- **Where**: `crates/hotmint-storage/src/block_store.rs`, `consensus_state.rs`
+- **What**: Height, hash, commit QC, and consensus keys are separate maps. `vsdb_flush` does not fsync them as one record.
+- **Reason**: Needs a single versioned checkpoint record in vsdb. Refusing to replace a commit QC with a different block, and rolling back a torn WAL write, are the guards that landed in this round.
+
+### [HIGH] network: peer cap and PEX do not drop sockets or authenticate address-book records
+- **Where**: `crates/hotmint-network/src/service.rs`
+- **What**: Over-limit connections stay open, and a PEX peer response can replace another peer's record.
+- **Reason**: Closing the socket needs a litep2p disconnect path this crate does not call. PEX authentication is a protocol change of its own. Not patched blindly.
+
+## Resolved — Overhaul (2026-11-16)
+
+> **Scope:** Full codebase. Types and crypto had no findings. The items below were fixed; the four above are Won't Fix.
+> **Validation:** `make fmt`, `make lint`, workspace tests.
+
+### [CRITICAL] consensus: a rejected proposal stored its justify QC as a commit proof
+- **Where**: `engine.rs` same-view propose path
+- **Resolution**: The justify QC is no longer written before `on_proposal`. `put_commit_qc` refuses to replace an existing proof for a different block.
+
+### [CRITICAL] consensus: an old double certificate fast-forwarded to an arbitrary view
+- **Where**: `engine.rs` future-view propose path
+- **Resolution**: Fast-forward requires `block.view == dc.outer_qc.view + 1` and `dc.outer_qc.view >= current_view`.
+
+### [HIGH] node: recheck and snapshot IPC shared the consensus ABCI socket
+- **Where**: `crates/hotmint/src/bin/node.rs`
+- **Resolution**: Recheck and snapshot serving use their own clients. Recheck runs in `spawn_blocking` and does not hold the mempool locks across `validate_tx`.
+
+### [HIGH] sync: the first behind or silent peer ended catch-up
+- **Where**: `sync.rs` `sync_to_tip`
+- **Resolution**: A peer behind the local height, a status timeout, or an empty batch before the reported tip is an error, so the node tries the next peer. `GetSnapshots` is not sent while snapshot apply is disabled.
+
+### [HIGH] sync: previous-epoch certificates were verified with the new set
+- **Where**: `sync.rs` `replay_blocks`
+- **Resolution**: A block whose view is below `current_epoch.start_view` is checked with `previous_epoch` when that epoch is still retained.
+
+### [MEDIUM] pacemaker: epoch entry cleared timeout backoff
+- **Where**: `engine.rs` `advance_view_to`
+- **Resolution**: The new pacemaker keeps `consecutive_timeouts` and `current_timeout`.
+
+### [HIGH] storage: a failed WAL append left a torn tail
+- **Where**: `wal.rs` `write_entry`
+- **Resolution**: On write error the file is truncated back to the pre-write offset and synced.
+
+### [MEDIUM] api: verify_header trusted a matching hash and ignored the other header fields
+- **Where**: `crates/hotmint-api/src/rpc.rs`
+- **Resolution**: A committed height is valid only when hash, parent, view, proposer, app hash, timestamp, and height match the stored block.
+
+### [MEDIUM] staking: a zero-power formal list removed the live validator set
+- **Where**: `StakingManager::compute_validator_updates`
+- **Resolution**: Total voting power 0 keeps the current set. `StakingConfig::validate` rejects `min_self_stake == 0`.
+
+### [MEDIUM] mgmt: stop treated a zombie as alive and remote kill matched a home prefix
+- **Where**: `hotmint-mgmt` `local.rs`, `remote.rs`
+- **Resolution**: `wait_for_exit` reaps with `waitpid`. Failure to exit is an error. SIGKILL re-checks the process. Remote deploy matches `--home` as a token.
+
+---
+
 ## Resolved — Full Overhaul (2026-10-27)
 
 > **Scope:** All crates — consensus core, pacemaker & sync, engine, types & crypto, storage, network, mempool, API & ABCI, light & staking, facade & mgmt (one read-only reviewer per subsystem group).

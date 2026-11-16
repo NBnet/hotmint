@@ -178,6 +178,11 @@ impl BlockStore for MemoryBlockStore {
 
     fn put_commit_qc(&mut self, height: Height, qc: QuorumCertificate) {
         let h = height.as_u64();
+        if let Some(existing) = self.commit_qcs.get(&h)
+            && existing.block_hash != qc.block_hash
+        {
+            return;
+        }
         if let Some(block) = self.by_hash.get(&qc.block_hash)
             && block.height == height
         {

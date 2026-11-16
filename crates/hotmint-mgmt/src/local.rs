@@ -113,8 +113,11 @@ fn is_cluster_node(pid: u32, home_dir: &Path) -> bool {
 mod libc {
     unsafe extern "C" {
         pub fn kill(pid: i32, sig: i32) -> i32;
+        pub fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
     }
 }
+
+const WNOHANG: i32 = 1;
 
 pub fn start(base_dir: &Path, node: Option<u32>, binary: Option<&Path>) -> Result<()> {
     let state = ClusterState::load(base_dir)?;
@@ -193,19 +196,29 @@ pub fn stop(base_dir: &Path, node: Option<u32>) -> Result<()> {
                     // touching the pid file — it is the only handle managing
                     // this process — escalating to SIGKILL after a grace period.
                     let exited = wait_for_exit(pid, Duration::from_secs(5)) || {
-                        // SAFETY: same validated pid as the SIGTERM above.
-                        // Signal 9 (SIGKILL) force-terminates a wedged node.
-                        let _ = unsafe { libc::kill(pid as i32, 9) }; // SIGKILL
-                        wait_for_exit(pid, Duration::from_secs(3))
+                        if !is_cluster_node(pid, Path::new(&v.home_dir)) {
+                            eprintln!(
+                                "V{}: pid {} changed identity before SIGKILL; keeping pid file",
+                                v.id, pid
+                            );
+                            false
+                        } else {
+                            // SAFETY: same validated pid as the SIGTERM above,
+                            // re-checked immediately before SIGKILL.
+                            // Signal 9 (SIGKILL) force-terminates a wedged node.
+                            let _ = unsafe { libc::kill(pid as i32, 9) };
+                            wait_for_exit(pid, Duration::from_secs(3))
+                        }
                     };
                     if exited {
                         println!("V{}: stopped (pid {})", v.id, pid);
                         let _ = fs::remove_file(&pid_file);
                     } else {
-                        eprintln!(
+                        return Err(eg!(
                             "V{}: pid {} did not exit after SIGTERM/SIGKILL; keeping pid file",
-                            v.id, pid
-                        );
+                            v.id,
+                            pid
+                        ));
                     }
                 } else {
                     let err = std::io::Error::last_os_error();
@@ -236,6 +249,13 @@ pub fn stop(base_dir: &Path, node: Option<u32>) -> Result<()> {
 fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     loop {
+        // Reap our own child. kill(pid, 0) stays true for a zombie, so a
+        // start-then-stop in this process would otherwise never observe exit.
+        let mut status = 0;
+        let rc = unsafe { libc::waitpid(pid as i32, &mut status, WNOHANG) };
+        if rc == pid as i32 {
+            return true;
+        }
         if !is_running(pid) {
             return true;
         }

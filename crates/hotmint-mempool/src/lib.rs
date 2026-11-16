@@ -288,23 +288,33 @@ impl Mempool {
         self.entries.lock().await.len()
     }
 
-    /// Re-validate all pending transactions after a block commit.
-    ///
-    /// Calls `validator` on each pending tx. If it returns `None`, the tx
-    /// is evicted (no longer valid against updated state). If it returns
-    /// `Some((priority, gas_wanted))`, the tx is kept with possibly updated
-    /// priority.
-    pub async fn recheck(&self, validator: impl Fn(&[u8]) -> Option<(u64, u64)>) {
-        let mut entries = self.entries.lock().await;
-        let mut seen = self.seen.lock().await;
-
-        let old: Vec<TxEntry> = entries.iter().cloned().collect();
-        entries.clear();
-        seen.clear();
-
-        let mut removed = 0usize;
-        for entry in old {
-            match validator(&entry.tx) {
+    /// Same as [`Self::recheck`], but takes `tokio` mutexes with
+    /// `blocking_lock` so a `spawn_blocking` task can run ABCI validation
+    /// without holding the locks across the callback and without occupying
+    /// a runtime worker.
+    pub fn recheck_blocking(&self, validator: impl Fn(&[u8]) -> Option<(u64, u64)>) {
+        let snapshot: Vec<TxEntry> = {
+            let entries = self.entries.blocking_lock();
+            entries.iter().cloned().collect()
+        };
+        let decisions: Vec<_> = snapshot
+            .into_iter()
+            .map(|entry| {
+                let decision = validator(&entry.tx);
+                (entry, decision)
+            })
+            .collect();
+        let mut entries = self.entries.blocking_lock();
+        let mut seen = self.seen.blocking_lock();
+        for (entry, decision) in decisions {
+            let Some(current) = entries.iter().find(|e| e.hash == entry.hash).cloned() else {
+                continue;
+            };
+            if current.tx != entry.tx {
+                continue;
+            }
+            entries.remove(&current);
+            match decision {
                 Some((new_priority, new_gas)) => {
                     seen.insert(entry.hash, new_priority);
                     entries.insert(TxEntry {
@@ -315,7 +325,54 @@ impl Mempool {
                     });
                 }
                 None => {
-                    removed += 1;
+                    seen.remove(&entry.hash);
+                }
+            }
+        }
+    }
+
+    /// Re-validate all pending transactions after a block commit.
+    ///
+    /// Calls `validator` on each pending tx. If it returns `None`, the tx
+    /// is evicted (no longer valid against updated state). If it returns
+    /// `Some((priority, gas_wanted))`, the tx is kept with possibly updated
+    /// priority.
+    pub async fn recheck(&self, validator: impl Fn(&[u8]) -> Option<(u64, u64)>) {
+        let snapshot: Vec<TxEntry> = {
+            let entries = self.entries.lock().await;
+            entries.iter().cloned().collect()
+        };
+        let mut removed = 0usize;
+        let mut decisions = Vec::with_capacity(snapshot.len());
+        for entry in snapshot {
+            let decision = validator(&entry.tx);
+            if decision.is_none() {
+                removed += 1;
+            }
+            decisions.push((entry, decision));
+        }
+        let mut entries = self.entries.lock().await;
+        let mut seen = self.seen.lock().await;
+        for (entry, decision) in decisions {
+            let Some(current) = entries.iter().find(|e| e.hash == entry.hash).cloned() else {
+                continue;
+            };
+            if current.tx != entry.tx {
+                continue;
+            }
+            entries.remove(&current);
+            match decision {
+                Some((new_priority, new_gas)) => {
+                    seen.insert(entry.hash, new_priority);
+                    entries.insert(TxEntry {
+                        tx: entry.tx,
+                        priority: new_priority,
+                        gas_wanted: new_gas,
+                        hash: entry.hash,
+                    });
+                }
+                None => {
+                    seen.remove(&entry.hash);
                 }
             }
         }

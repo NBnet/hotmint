@@ -179,10 +179,21 @@ impl ConsensusWal {
     fn write_entry(&mut self, entry: &WalEntry) -> io::Result<()> {
         let payload = postcard::to_allocvec(entry).map_err(io::Error::other)?;
         let len = payload.len() as u32;
-        self.file.write_all(&ENTRY_MAGIC)?;
-        self.file.write_all(&len.to_le_bytes())?;
-        self.file.write_all(&payload)?;
-        Ok(())
+        let start = self.file.stream_position()?;
+        let write = (|| {
+            self.file.write_all(&ENTRY_MAGIC)?;
+            self.file.write_all(&len.to_le_bytes())?;
+            self.file.write_all(&payload)?;
+            Ok(())
+        })();
+        if write.is_err() {
+            // A short write must not stay as a torn tail that hides a later
+            // synced record. Roll the file back to the pre-write offset.
+            let _ = self.file.set_len(start);
+            let _ = self.file.seek(io::SeekFrom::Start(start));
+            let _ = self.file.sync_all();
+        }
+        write
     }
 }
 

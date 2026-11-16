@@ -187,6 +187,8 @@ type ApplicationBundle = (
     Box<dyn Application>,
     Box<dyn Application>,
     Option<Arc<dyn Application>>,
+    Arc<dyn Application>,
+    Arc<dyn Application>,
 );
 
 async fn run_node(
@@ -404,32 +406,43 @@ async fn run_node(
     // Validators MUST have proxy_app configured — enforced at startup (step 1b) before
     // any resources are allocated. By this point validator+empty proxy_app is impossible.
     let use_abci = !config.proxy_app.is_empty();
-    let (app_box, sync_app_box, query_app): ApplicationBundle = if use_abci {
-        let proxy_path = config
-            .proxy_app
-            .strip_prefix("unix://")
-            .unwrap_or(&config.proxy_app);
-        let ipc_client = IpcApplicationClient::new(proxy_path);
-        ipc_client.check_connection().c(d!(
-            "ABCI application not reachable at '{}' — start your application first",
-            proxy_path
-        ))?;
-        let ipc_client_for_sync = IpcApplicationClient::new(proxy_path);
-        let ipc_client_for_queries: Arc<dyn Application> =
-            Arc::new(IpcApplicationClient::new(proxy_path));
-        (
-            Box::new(ipc_client),
-            Box::new(ipc_client_for_sync),
-            Some(ipc_client_for_queries),
-        )
-    } else {
-        info!("fullnode mode: using embedded no-op application");
-        (
-            Box::new(hotmint::consensus::application::NoopApplication),
-            Box::new(hotmint::consensus::application::NoopApplication),
-            None,
-        )
-    };
+    let (app_box, sync_app_box, query_app, recheck_app, snapshot_app): ApplicationBundle =
+        if use_abci {
+            let proxy_path = config
+                .proxy_app
+                .strip_prefix("unix://")
+                .unwrap_or(&config.proxy_app);
+            let ipc_client = IpcApplicationClient::new(proxy_path);
+            ipc_client.check_connection().c(d!(
+                "ABCI application not reachable at '{}' — start your application first",
+                proxy_path
+            ))?;
+            let ipc_client_for_sync = IpcApplicationClient::new(proxy_path);
+            let ipc_client_for_queries: Arc<dyn Application> =
+                Arc::new(IpcApplicationClient::new(proxy_path));
+            // Recheck and snapshot serving must not share the consensus socket.
+            // A slow advisory call otherwise holds the commit connection.
+            let ipc_client_for_recheck: Arc<dyn Application> =
+                Arc::new(IpcApplicationClient::new(proxy_path));
+            let ipc_client_for_snapshots: Arc<dyn Application> =
+                Arc::new(IpcApplicationClient::new(proxy_path));
+            (
+                Box::new(ipc_client),
+                Box::new(ipc_client_for_sync),
+                Some(ipc_client_for_queries),
+                ipc_client_for_recheck,
+                ipc_client_for_snapshots,
+            )
+        } else {
+            info!("fullnode mode: using embedded no-op application");
+            (
+                Box::new(hotmint::consensus::application::NoopApplication),
+                Box::new(hotmint::consensus::application::NoopApplication),
+                None,
+                Arc::new(hotmint::consensus::application::NoopApplication),
+                Arc::new(hotmint::consensus::application::NoopApplication),
+            )
+        };
     let mut engine_state_epoch = state.current_epoch.clone();
     let mut engine_previous_epoch = pcs.load_previous_epoch();
     let mut engine_state_height = state.last_committed_height;
@@ -475,6 +488,7 @@ async fn run_node(
 
     let app: Arc<dyn Application> = Arc::new(AppWithStatus {
         inner: Arc::from(app_box),
+        recheck_app,
         status_tx,
         vs_tx,
         epoch_tx,
@@ -571,7 +585,7 @@ async fn run_node(
         let sync_status_rx = sync_status_rx;
         let mut sync_req_rx = sync_req_rx;
         let sync_sink = sync_sink.clone();
-        let responder_app = app.clone();
+        let responder_snapshots = snapshot_app;
         tokio::spawn(async move {
             use hotmint_types::sync::{SyncRequest, SyncResponse};
             while let Some(req) = sync_req_rx.recv().await {
@@ -609,13 +623,13 @@ async fn run_node(
                         SyncResponse::Blocks(blocks_with_qcs)
                     }
                     SyncRequest::GetSnapshots => {
-                        SyncResponse::Snapshots(responder_app.list_snapshots())
+                        SyncResponse::Snapshots(responder_snapshots.list_snapshots())
                     }
                     SyncRequest::GetSnapshotChunk {
                         height,
                         chunk_index,
                     } => {
-                        let data = responder_app.load_snapshot_chunk(height, chunk_index);
+                        let data = responder_snapshots.load_snapshot_chunk(height, chunk_index);
                         SyncResponse::SnapshotChunk {
                             height,
                             chunk_index,
@@ -1016,6 +1030,8 @@ async fn forward_chain_events(
 /// while also updating the RPC status watch channel on each commit.
 struct AppWithStatus {
     inner: Arc<dyn Application>,
+    /// Separate ABCI connection for post-commit mempool recheck.
+    recheck_app: Arc<dyn Application>,
     status_tx: watch::Sender<ConsensusStatus>,
     vs_tx: watch::Sender<Vec<ValidatorInfoResponse>>,
     epoch_tx: watch::Sender<hotmint_types::epoch::Epoch>,
@@ -1098,24 +1114,22 @@ impl Application for AppWithStatus {
                 });
             }
         }
-        // A-5: Mempool re-validation runs in a background task to avoid
-        // blocking the commit path. Evicts txs no longer valid after commit.
-        let app = self.inner.clone();
+        // Recheck on its own ABCI connection, off the consensus worker.
+        // The pool locks are not held across validate_tx.
+        let app = self.recheck_app.clone();
         let mempool = self.mempool.clone();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().spawn(async move {
-                mempool
-                    .recheck(|tx| {
-                        let result = app.validate_tx(tx, None);
-                        if result.valid {
-                            Some((result.priority, result.gas_wanted))
-                        } else {
-                            None
-                        }
-                    })
-                    .await;
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn_blocking(move || {
+                mempool.recheck_blocking(|tx| {
+                    let result = app.validate_tx(tx, None);
+                    if result.valid {
+                        Some((result.priority, result.gas_wanted))
+                    } else {
+                        None
+                    }
+                });
             });
-        });
+        }
         Ok(())
     }
 
