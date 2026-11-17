@@ -69,7 +69,7 @@ if let Some(h) = pstate.load_last_committed_height() {
 
 ### Data Directory
 
-Hotmint uses the crates.io release of VSDB 17.0.7. Initialize it with
+Hotmint uses the crates.io release of VSDB 17.0.19. Initialize it with
 `VsdbOptions` before opening any collection.
 
 The storage backends explicitly use the default vsdb namespace configured by

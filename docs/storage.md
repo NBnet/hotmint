@@ -14,7 +14,7 @@ Hotmint provides two `BlockStore` implementations and a `PersistentConsensusStat
 
 [vsdb](https://crates.io/crates/vsdb) is a high-performance embedded key-value database whose API mirrors Rust standard collections (HashMap / BTreeMap). Under the hood it uses MMDB, a pure-Rust LSM-Tree storage engine, so there are no C library dependencies.
 
-Hotmint declares `vsdb = "17.0.7"` from crates.io.
+Hotmint declares `vsdb = "17.0.19"` from crates.io.
 
 ### Core Types
 
@@ -416,7 +416,7 @@ Potential use case: optimistic execution and rollback of application state.
 
 `VerMapWithProof` combines versioned storage with Merkle root computation: `merkle_root(branch)` returns the 32-byte state root, updating an ephemeral trie incrementally from its last synced commit rather than recomputing the whole tree.
 
-Both trie backends provide the same proof workflow in VSDB 17.0.7:
+Both trie backends provide the same proof workflow in VSDB 17.0.19:
 
 | Operation | SMT | MPT |
 |:----------|:----|:----|

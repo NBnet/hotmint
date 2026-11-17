@@ -39,7 +39,7 @@ use hotmint::prelude::*;
 [dependencies]
 hotmint = { git = "https://github.com/NBnet/hotmint" }
 tokio = { version = "1", features = ["full"] }
-ruc = "11.0.1"
+ruc = "11.0.3"
 ```
 
 ```rust

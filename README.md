@@ -75,7 +75,7 @@ The long-term goal is a **"hexagonal warrior" (六边形战士)** — a framewor
 
 ## Full-Stack Self-Developed Core
 
-Unlike frameworks that aggregate third-party C/C++ components for their most critical paths, Hotmint's deepest layers are **independently developed** under the same organization ([rust-util-collections](https://github.com/rust-util-collections)):
+Unlike frameworks that aggregate third-party C/C++ components for their most critical paths, Hotmint's consensus stack is developed in this repository ([NBnet/hotmint](https://github.com/NBnet/hotmint)). The embedded database and the error library are separate crates under [rust-util-collections](https://github.com/rust-util-collections):
 
 ### 🔷 Consensus — Hotmint *(this project)*
 
@@ -211,9 +211,10 @@ Add `hotmint` as a dependency:
 
 ```toml
 [dependencies]
-hotmint = "0.8"
+# This tree is workspace version 0.8.15. crates.io currently publishes 0.8.14.
+hotmint = { git = "https://github.com/NBnet/hotmint" }
 tokio = { version = "1", features = ["full"] }
-ruc = "11.0.1"
+ruc = "11.0.3"
 ```
 
 Implement the `Application` trait — all methods have default no-op implementations:

@@ -76,10 +76,7 @@ let known_addresses = vec![
     (peer_id_3, vec!["/ip4/10.0.0.4/tcp/20000".parse().unwrap()]),
 ];
 
-// validator_keys: list of (ValidatorId, PublicKey) for relay signature verification
-let validator_keys = genesis.validators.iter()
-    .map(|v| (v.id, v.public_key.clone()))
-    .collect();
+// validator_set: the same ValidatorSet the consensus engine starts with
 
 let NetworkServiceHandles {
     service: net_service,
@@ -99,7 +96,7 @@ let NetworkServiceHandles {
     peer_book,                 // Arc<tokio::sync::RwLock<PeerBook>> (persistent peer address store)
     pex_config,                // PexConfig (peer exchange settings)
     relay_consensus: false,    // whether to relay consensus messages to other peers
-    initial_validators: validator_keys, // initial validator public keys for relay sender verification
+    initial_validator_set: validator_set, // ValidatorSet used for relay sender verification
     chain_id_hash,             // [u8; 32] — Blake3 hash of the chain ID (for relay signature verification)
 }).unwrap();
 ```
@@ -112,7 +109,7 @@ let NetworkServiceHandles {
 5. `peer_book` — persistent peer address store (`Arc<tokio::sync::RwLock<PeerBook>>`)
 6. `pex_config` — peer exchange settings
 7. `relay_consensus: bool` — whether to relay consensus messages to other validators
-8. `initial_validators` — initial set of `(ValidatorId, PublicKey)` for relay sender signature verification
+8. `initial_validator_set` — `ValidatorSet` used for relay sender signature verification
 9. `chain_id_hash: [u8; 32]` — Blake3 hash of the chain identifier, used for relay signature verification (must match the `chain_id_hash` in `ConsensusState`)
 
 It returns a `NetworkServiceHandles` struct with named fields:
@@ -211,7 +208,7 @@ async fn run_validator(
     let pstate = PersistentConsensusState::open(&data_dir).unwrap();
 
     // recover state (with chain ID for cross-chain replay prevention)
-    let mut state = ConsensusState::with_chain_id(vid, validator_set, chain_id);
+    let mut state = ConsensusState::with_chain_id(vid, validator_set.clone(), chain_id);
     if let Some(v) = pstate.load_current_view() {
         state.current_view = v;
     }
@@ -244,7 +241,7 @@ async fn run_validator(
         peer_book,
         pex_config,
         relay_consensus: false,
-        initial_validators: validator_keys,
+        initial_validator_set: validator_set,
         chain_id_hash: state.chain_id_hash,
     }).unwrap();
     tokio::spawn(async move { net_service.run().await });

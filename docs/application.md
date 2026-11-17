@@ -8,7 +8,7 @@ The `Application` trait is hotmint's equivalent of Tendermint's ABCI (Applicatio
 pub trait Application: Send + Sync {
     // Startup & genesis
     fn info(&self) -> AppInfo                                           { AppInfo::default() }
-    fn init_chain(&self, _app_state: &[u8]) -> Result<BlockHash>       { Ok(BlockHash::default()) }
+    fn init_chain(&self, _app_state: &[u8]) -> Result<BlockHash>       { Ok(BlockHash::GENESIS) }
     // Block lifecycle
     fn create_payload(&self, _ctx: &BlockContext) -> Vec<u8>            { vec![] }
     fn validate_block(&self, _block: &Block, _ctx: &BlockContext) -> bool { true }

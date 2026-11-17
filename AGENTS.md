@@ -32,7 +32,7 @@ mempool, crypto, and api).
 crates/
 ├── hotmint              # Library facade + node binary
 ├── hotmint-types        # Core data types (Block, Vote, QC, DC, TC, Epoch)
-├── hotmint-consensus    # HotStuff-2 state machine (largest: ~6.4K LOC in src, ~7.7K incl. tests/)
+├── hotmint-consensus    # HotStuff-2 state machine (largest: ~6.7K LOC in src, ~8.0K incl. tests/)
 ├── hotmint-crypto       # Ed25519 + Blake3 signing/verification
 ├── hotmint-storage      # vsdb persistence layer
 ├── hotmint-network      # litep2p P2P networking (5 sub-protocols)
@@ -91,9 +91,10 @@ System dependency: `protobuf-compiler` (for proto code generation).
 - `tokio` async runtime (full features).
 - `ruc` for error handling.
 - `postcard` for compact binary serialization.
-- Only 3 unsafe constructs (two `libc::kill` call sites plus the
-  `unsafe extern "C"` declaration of `kill`), all in
-  `crates/hotmint-mgmt/src/local.rs`; none on the consensus path.
+- `unsafe` is only in `crates/hotmint-mgmt/src/local.rs`: `libc::kill`
+  (existence check, SIGTERM, SIGKILL), `libc::waitpid`, and the
+  `unsafe extern "C"` block that declares those two functions. None of
+  it is on the consensus path.
 - Pluggable trait design: `Application`, `BlockStore`, `NetworkSink`,
   `Signer`, `Verifier`.
 - Keep repository documentation, instructions, and commit messages in

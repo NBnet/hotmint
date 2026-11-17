@@ -28,7 +28,7 @@ Provides a TCP-based newline-delimited JSON-RPC server and an HTTP/WebSocket ser
 ## Transaction Flow
 
 When `submit_tx` is called:
-1. Rate-limit check (per-IP, 100 tx/sec)
+1. Per-IP rate-limit check (100 requests/sec, shared by every method)
 2. `Application::validate_tx()` — application-level validation
 3. `MempoolAdapter::add_tx()` — add to the pluggable mempool
 4. `NetworkSink::broadcast_tx()` — gossip to all connected peers
