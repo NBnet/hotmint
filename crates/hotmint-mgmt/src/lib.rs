@@ -233,17 +233,57 @@ pub fn kill_stale_nodes(base_dir: &Path) {
         };
         let home_dir = base_dir.join(format!("v{id}"));
         if is_expected_node_process(pid, &home_dir) {
-            let _ = Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            if !signal_and_confirm_exit(pid) {
+                eprintln!(
+                    "WARNING: pid {pid} did not exit after SIGKILL; keeping {}",
+                    pid_file.display()
+                );
+                continue;
+            }
+        } else if process_alive(pid) {
+            eprintln!(
+                "WARNING: pid {pid} is alive but is not a confirmed node; keeping {}",
+                pid_file.display()
+            );
+            continue;
         }
         let _ = fs::remove_file(&pid_file);
     }
 
     // Brief pause to let OS reclaim resources.
     sleep(Duration::from_millis(100));
+}
+
+fn process_alive(pid: u32) -> bool {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// SIGKILL `pid` and wait until it is gone. A still-live process keeps its
+/// pid file so a later start cannot share the data directory.
+fn signal_and_confirm_exit(pid: u32) -> bool {
+    let _ = Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        if !process_alive(pid) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        sleep(Duration::from_millis(50));
+    }
 }
 
 fn read_pid_file(path: &Path) -> Option<u32> {
@@ -335,6 +375,16 @@ pub fn start_cluster_nodes(
 
     let mut children = Vec::new();
     for (i, v) in state.validators.iter().enumerate() {
+        let pid_path = base_dir.join(format!("v{}.pid", v.id));
+        if let Some(pid) = read_pid_file(&pid_path)
+            && process_alive(pid)
+        {
+            eprintln!(
+                "V{}: pid {} is still alive; not starting a second process on {}",
+                v.id, pid, v.home_dir
+            );
+            continue;
+        }
         let log = std::fs::File::create(base_dir.join(format!("v{}.log", v.id)))
             .expect("create log file");
         let log_err = log.try_clone().expect("clone log file");

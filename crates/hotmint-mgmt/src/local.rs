@@ -228,11 +228,11 @@ pub fn stop(base_dir: &Path, node: Option<u32>) -> Result<()> {
                     );
                 }
             } else if is_running(pid) {
-                println!(
-                    "V{}: pid {} is not a cluster-node (stale pid file?)",
-                    v.id, pid
-                );
-                let _ = fs::remove_file(&pid_file);
+                return Err(eg!(
+                    "V{}: pid {} is alive but its identity could not be confirmed; keeping pid file",
+                    v.id,
+                    pid
+                ));
             } else {
                 println!("V{}: not running", v.id);
                 let _ = fs::remove_file(&pid_file);

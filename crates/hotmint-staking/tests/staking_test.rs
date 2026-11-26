@@ -463,6 +463,31 @@ fn slash_hits_unbonding_entries() {
 }
 
 #[test]
+fn slash_split_unbonding_charges_the_aggregate() {
+    let mut mgr = make_manager();
+    mgr.register_validator(ValidatorId(0), pk(0), 10_000)
+        .unwrap();
+    let chunk = 19u64;
+    let chunks = 53u64;
+    mgr.delegate(b"alice", ValidatorId(0), chunk * chunks)
+        .unwrap();
+    for _ in 0..chunks {
+        mgr.undelegate(b"alice", ValidatorId(0), chunk, 1).unwrap();
+    }
+    let result = mgr
+        .slash(ValidatorId(0), SlashReason::DoubleSign, 1)
+        .unwrap();
+    let total = chunk * chunks;
+    let expected = total * 500 / 10_000;
+    assert_eq!(result.delegated_slashed, expected);
+    let released = mgr.process_unbonding(1_001);
+    assert_eq!(
+        released.iter().map(|entry| entry.amount).sum::<u64>(),
+        total - expected
+    );
+}
+
+#[test]
 fn unregister_tombstones_pending_unbondings_and_slash_hits_them() {
     let mut mgr = make_manager();
     mgr.register_validator(ValidatorId(0), pk(0), 100).unwrap();

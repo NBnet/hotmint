@@ -12,4 +12,4 @@ prost = { workspace = true }
 hotmint-types = { workspace = true }
 
 [build-dependencies]
-prost-build = "0.14.4"
+prost-build = "0.14.6"

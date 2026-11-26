@@ -5,6 +5,7 @@ use std::future;
 use std::path::Path;
 use std::process;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use clap::{Parser, Subcommand};
 use tokio::sync::{RwLock, broadcast, watch};
@@ -187,6 +188,7 @@ type ApplicationBundle = (
     Box<dyn Application>,
     Box<dyn Application>,
     Option<Arc<dyn Application>>,
+    Arc<dyn Application>,
     Arc<dyn Application>,
     Arc<dyn Application>,
 );
@@ -406,7 +408,7 @@ async fn run_node(
     // Validators MUST have proxy_app configured — enforced at startup (step 1b) before
     // any resources are allocated. By this point validator+empty proxy_app is impossible.
     let use_abci = !config.proxy_app.is_empty();
-    let (app_box, sync_app_box, query_app, recheck_app, snapshot_app): ApplicationBundle =
+    let (app_box, sync_app_box, query_app, recheck_app, snapshot_app, check_tx_app): ApplicationBundle =
         if use_abci {
             let proxy_path = config
                 .proxy_app
@@ -426,12 +428,17 @@ async fn run_node(
                 Arc::new(IpcApplicationClient::new(proxy_path));
             let ipc_client_for_snapshots: Arc<dyn Application> =
                 Arc::new(IpcApplicationClient::new(proxy_path));
+            // CheckTx must not share the consensus socket. A slow validation
+            // otherwise holds the connection the engine uses to commit.
+            let ipc_client_for_check_tx: Arc<dyn Application> =
+                Arc::new(IpcApplicationClient::new(proxy_path));
             (
                 Box::new(ipc_client),
                 Box::new(ipc_client_for_sync),
                 Some(ipc_client_for_queries),
                 ipc_client_for_recheck,
                 ipc_client_for_snapshots,
+                ipc_client_for_check_tx,
             )
         } else {
             info!("fullnode mode: using embedded no-op application");
@@ -439,6 +446,7 @@ async fn run_node(
                 Box::new(hotmint::consensus::application::NoopApplication),
                 Box::new(hotmint::consensus::application::NoopApplication),
                 None,
+                Arc::new(hotmint::consensus::application::NoopApplication),
                 Arc::new(hotmint::consensus::application::NoopApplication),
                 Arc::new(hotmint::consensus::application::NoopApplication),
             )
@@ -486,15 +494,18 @@ async fn run_node(
     // Channel for chain event broadcasting (WebSocket subscribers).
     let (event_tx, event_rx) = broadcast::channel::<ChainEvent>(256);
 
-    let app: Arc<dyn Application> = Arc::new(AppWithStatus {
+    let app_status = Arc::new(AppWithStatus {
         inner: Arc::from(app_box),
         recheck_app,
+        check_tx_app,
         status_tx,
         vs_tx,
         epoch_tx,
         mempool: mempool.clone(),
         event_tx: Some(event_tx),
+        last_emitted_epoch: AtomicU64::new(u64::MAX),
     });
+    let app: Arc<dyn Application> = app_status.clone();
     let query_app = query_app.unwrap_or_else(|| app.clone());
 
     // 11. Create RPC server
@@ -872,6 +883,32 @@ async fn run_node(
         }
     }
 
+    // A fresh sync stores the tip's commit QC but does not copy it into the
+    // consensus state. Without it the leader has nothing to justify the next
+    // proposal, and replicas have no lock.
+    if let Some(qc) = store.read().get_commit_qc(state.last_committed_height) {
+        if state
+            .locked_qc
+            .as_ref()
+            .is_none_or(|locked| qc.view > locked.view)
+        {
+            state.locked_qc = Some(qc.clone());
+        }
+        if state
+            .highest_qc
+            .as_ref()
+            .is_none_or(|highest| qc.rank() > highest.rank())
+        {
+            state.highest_qc = Some(qc);
+        }
+    }
+    if let Some(ref qc) = state.locked_qc {
+        pcs.save_locked_qc(qc);
+    }
+    if let Some(ref qc) = state.highest_qc {
+        pcs.save_highest_qc(qc);
+    }
+
     pcs.save_current_view(state.current_view);
     pcs.save_last_committed_height(state.last_committed_height);
     pcs.save_current_epoch(&state.current_epoch);
@@ -879,6 +916,7 @@ async fn run_node(
     pcs.save_pending_epoch(engine_state_pending_epoch.as_ref());
     pcs.save_previous_epoch(engine_previous_epoch.as_ref());
     pcs.flush();
+    app_status.note_epoch(state.current_epoch.number.as_u64());
 
     startup_status_tx.send_replace(ConsensusStatus::new(
         state.current_view.as_u64(),
@@ -1032,11 +1070,21 @@ struct AppWithStatus {
     inner: Arc<dyn Application>,
     /// Separate ABCI connection for post-commit mempool recheck.
     recheck_app: Arc<dyn Application>,
+    /// Separate ABCI connection for CheckTx (gossip and submit_tx).
+    check_tx_app: Arc<dyn Application>,
     status_tx: watch::Sender<ConsensusStatus>,
     vs_tx: watch::Sender<Vec<ValidatorInfoResponse>>,
     epoch_tx: watch::Sender<hotmint_types::epoch::Epoch>,
     mempool: Arc<Mempool>,
     event_tx: Option<broadcast::Sender<ChainEvent>>,
+    /// Epoch last announced on the event stream. `u64::MAX` means unset.
+    last_emitted_epoch: AtomicU64,
+}
+
+impl AppWithStatus {
+    fn note_epoch(&self, epoch: u64) {
+        self.last_emitted_epoch.store(epoch, Ordering::Relaxed);
+    }
 }
 
 impl Application for AppWithStatus {
@@ -1061,7 +1109,7 @@ impl Application for AppWithStatus {
         tx: &[u8],
         ctx: Option<&hotmint_types::context::TxContext>,
     ) -> TxValidationResult {
-        self.inner.validate_tx(tx, ctx)
+        self.check_tx_app.validate_tx(tx, ctx)
     }
 
     fn execute_block(&self, txs: &[&[u8]], ctx: &BlockContext) -> Result<EndBlockResponse> {
@@ -1097,9 +1145,18 @@ impl Application for AppWithStatus {
         ));
         // Publish NewBlock event to WebSocket subscribers.
         if let Some(ref tx) = self.event_tx {
+            let epoch = ctx.epoch.as_u64();
+            let previous_epoch = self.last_emitted_epoch.swap(epoch, Ordering::Relaxed);
+            if previous_epoch != u64::MAX && previous_epoch != epoch {
+                let _ = tx.send(ChainEvent::EpochChange {
+                    epoch,
+                    start_view: ctx.epoch_start_view.as_u64(),
+                    validator_count: ctx.validator_set.validator_count(),
+                });
+            }
             let _ = tx.send(ChainEvent::NewBlock {
                 height: block.height.as_u64(),
-                hash: format!("{}", block.hash),
+                hash: hex::encode(block.hash.0),
                 view: block.view.as_u64(),
                 proposer: block.proposer.0,
                 timestamp: block.timestamp,

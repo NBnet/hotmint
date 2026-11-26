@@ -488,10 +488,18 @@ pub fn replay_blocks(
             ));
         }
 
+        // On the activating block the outgoing epoch is still `current_epoch`.
+        // Live proposal checks evidence against that set. Swapping it in
+        // afterwards would hide a validator removed by this transition.
+        let evidence_previous = if activates_epoch {
+            Some(&*state.current_epoch)
+        } else {
+            state.previous_epoch.as_ref()
+        };
         commit::validate_block_evidence(
             block,
             &replay_epoch,
-            state.previous_epoch.as_ref(),
+            evidence_previous,
             state.chain_id_hash,
             &hotmint_crypto::Ed25519Verifier,
         )?;
@@ -553,18 +561,23 @@ pub fn replay_blocks(
         // this replay batch accumulate identically to the live commit path;
         // otherwise a synced node would derive a different validator set.
         if !response.validator_updates.is_empty() {
-            pending_epoch = Some(
-                commit::chained_pending_epoch(
-                    state.current_epoch,
-                    pending_epoch.as_ref(),
-                    block.view,
-                    &response.validator_updates,
-                )
-                .c(d!(
-                    "invalid validator updates while replaying height {}",
-                    block.height.as_u64()
-                ))?,
-            );
+            // Same rule as live commit: the block is already executed, so a
+            // bad update must not abort replay and cause a second execution.
+            match commit::chained_pending_epoch(
+                state.current_epoch,
+                pending_epoch.as_ref(),
+                block.view,
+                &response.validator_updates,
+            ) {
+                Ok(epoch) => pending_epoch = Some(epoch),
+                Err(e) => {
+                    warn!(
+                        height = block.height.as_u64(),
+                        error = %e,
+                        "rejecting invalid validator updates during replay"
+                    );
+                }
+            }
         }
 
         // Replay must build the same RPC indexes/results as live commits.
@@ -573,10 +586,10 @@ pub fn replay_blocks(
                 .store
                 .put_tx_index(*blake3::hash(tx).as_bytes(), block.height, index as u32);
         }
-        // Idempotent result write: the reconnect re-sync watcher replays with
-        // a NoopApplication concurrently with the live engine and must never
-        // overwrite real application results with defaults.
-        if state.store.get_block_results(block.height).is_none() {
+        // The reconnect watcher replays with NoopApplication, which does not
+        // track app hashes and would publish a placeholder over the live
+        // engine's result. Only a tracking application writes results.
+        if state.app.tracks_app_hash() && state.store.get_block_results(block.height).is_none() {
             state.store.put_block_results(block.height, response);
         }
         state.store.flush();

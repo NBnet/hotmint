@@ -309,19 +309,47 @@ impl<S: StakingStore> StakingManager<S> {
         self.store.set_validator(id, vs);
 
         // Slash pending unbondings for this validator at the same rate.
-        let unbondings = self.store.all_unbondings();
-        let mut unbonding_slashed = 0u64;
+        // One truncating division per entry lets a stake split into small
+        // pieces pay nothing. Charge the aggregate, then spread it with the
+        // same cumulative floor used for active delegations.
+        let mut unbondings: Vec<UnbondingEntry> = self.store.all_unbondings();
+        let mut target_indexes: Vec<usize> = unbondings
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.validator == id && entry.amount > 0)
+            .map(|(index, _)| index)
+            .collect();
+        target_indexes.sort_by(|&left, &right| {
+            let a = &unbondings[left];
+            let b = &unbondings[right];
+            a.staker
+                .cmp(&b.staker)
+                .then(a.completion_height.cmp(&b.completion_height))
+                .then(a.amount.cmp(&b.amount))
+                .then(left.cmp(&right))
+        });
+        let total_unbonding: u128 = target_indexes
+            .iter()
+            .map(|&index| u128::from(unbondings[index].amount))
+            .sum();
+        let unbonding_slash_total = total_unbonding * u128::from(rate) / 10_000;
+        if total_unbonding > 0 && unbonding_slash_total > 0 {
+            let mut slashed_so_far = 0u128;
+            let mut cumulative = 0u128;
+            for index in target_indexes {
+                cumulative += u128::from(unbondings[index].amount);
+                let cumulative_slash = cumulative * unbonding_slash_total / total_unbonding;
+                let entry_slash = cumulative_slash - slashed_so_far;
+                slashed_so_far = cumulative_slash;
+                unbondings[index].amount = unbondings[index]
+                    .amount
+                    .saturating_sub(u64::try_from(entry_slash).unwrap_or(u64::MAX));
+            }
+        }
+        let unbonding_slashed = u64::try_from(unbonding_slash_total).unwrap_or(u64::MAX);
         let updated: Vec<UnbondingEntry> = unbondings
             .into_iter()
-            .map(|mut e| {
-                if e.validator == id && e.amount > 0 {
-                    let ub_slash = (e.amount as u128 * rate as u128 / 10_000) as u64;
-                    e.amount = e.amount.saturating_sub(ub_slash);
-                    unbonding_slashed = unbonding_slashed.saturating_add(ub_slash);
-                }
-                e
-            })
-            .filter(|e| e.amount > 0)
+            .filter(|entry| entry.amount > 0)
             .collect();
         self.store.replace_unbondings(updated);
 

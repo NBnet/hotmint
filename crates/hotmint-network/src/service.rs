@@ -909,35 +909,20 @@ impl NetworkService {
     /// Periodic connection maintenance: reconnect persistent peers, save peer book.
     async fn run_maintenance(&mut self) {
         // 1. Reconnect disconnected persistent peers.
-        // Collect addresses outside the lock scope to avoid holding it across await.
-        let to_dial: Vec<(PeerId, Vec<Multiaddr>)> = {
-            let book = self.peer_book.read().await;
-            self.persistent_peers
-                .values()
-                .filter(|pid| !self.connected_peers.contains(pid))
-                .filter_map(|&pid| {
-                    book.get(&pid.to_string()).map(|info| {
-                        let addrs: Vec<Multiaddr> = info
-                            .addresses
-                            .iter()
-                            .filter_map(|a| a.parse().ok())
-                            .collect();
-                        (pid, addrs)
-                    })
-                })
-                .collect()
-        };
+        // Startup registers their listen addresses with litep2p. The peer book
+        // is not that table: a fresh book is empty, and a PEX response can
+        // replace a record. `dial` uses the addresses registered at startup.
+        let local_peer = *self.litep2p.local_peer_id();
+        let to_dial: Vec<PeerId> = self
+            .persistent_peers
+            .values()
+            .copied()
+            .filter(|pid| *pid != local_peer && !self.connected_peers.contains(pid))
+            .collect();
 
-        for (pid, addrs) in to_dial {
-            if !addrs.is_empty() {
-                self.litep2p
-                    .add_known_address(pid, addrs.clone().into_iter());
-                // F-07: Also actively dial the first address to trigger reconnection.
-                let mut dial_addr = addrs[0].clone();
-                dial_addr.push(litep2p::types::multiaddr::Protocol::P2p(pid.into()));
-                if let Err(e) = self.litep2p.dial_address(dial_addr).await {
-                    debug!(peer = %pid, error = ?e, "persistent peer redial failed");
-                }
+        for pid in to_dial {
+            if let Err(e) = self.litep2p.dial(&pid).await {
+                debug!(peer = %pid, error = ?e, "persistent peer redial failed");
             }
         }
 

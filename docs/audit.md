@@ -12,7 +12,7 @@
 
 ## Won't Fix
 
-> Rechecked after the dependency bump (`litep2p` 0.17, `vsdb` 17.0.19, `ed25519-dalek` 3). All of the entries below still match the current tree. Locations were refreshed. `litep2p` 0.17 adds `TransportService::force_close`, but that method is not on `NotificationHandle`, which is what `hotmint-network` holds.
+> Rechecked after the dependency bump (`litep2p` 0.17, `vsdb` 17.0.21, `ed25519-dalek` 3). All of the entries below still match the current tree. Locations were refreshed. `litep2p` 0.17 adds `TransportService::force_close`, but that method is not on `NotificationHandle`, which is what `hotmint-network` holds. `vsdb` 17.0.21 `Namespace::try_sync_wal` is still a durability fence, not a transaction across collections or shards.
 
 ### [CRITICAL] sync: a Vote QC is not a double certificate
 - **Where**: `crates/hotmint-consensus/src/sync.rs` `verify_vote_qc` (hard-coded `VoteType::Vote`)
@@ -27,12 +27,71 @@
 ### [HIGH] storage: vsdb maps are not one crash-atomic checkpoint
 - **Where**: `crates/hotmint-storage/src/block_store.rs`, `consensus_state.rs`
 - **What**: Height, hash, commit QC, and consensus keys are separate maps. `vsdb_flush` does not fsync them as one record.
-- **Reason**: `vsdb` 17.0.19 still documents `vsdb_flush` as not a transaction across collections or shards. Needs a single versioned checkpoint record. Refusing to replace a commit QC with a different block, and rolling back a torn WAL write, are the guards that landed in this round.
+- **Reason**: `vsdb` 17.0.21 still documents `Namespace::try_sync_wal` as a durability fence, not a transaction across collections or shards. `vsdb_flush` walks shards independently. Needs a single versioned checkpoint record. Refusing to replace a commit QC with a different block, and rolling back a torn WAL write, are the guards that landed in this round.
 
 ### [HIGH] network: peer cap and PEX do not drop sockets or authenticate address-book records
 - **Where**: `crates/hotmint-network/src/service.rs` eviction path (`connected_peers.remove` around the `pick_non_validator_to_evict` branch)
 - **What**: Over-limit connections stay open, and a PEX peer response can replace another peer's record.
-- **Reason**: `NotificationHandle` in litep2p 0.17 can close a notification substream (`close_substream`) but cannot force-close the connection. `TransportService::force_close` is not on that handle. PEX authentication is a protocol change of its own. Not patched blindly.
+- **Reason**: `NotificationHandle` in litep2p 0.17 can close a notification substream (`close_substream`) but cannot force-close the connection. `TransportService::force_close` is not on that handle. PEX authentication is a protocol change of its own. Not patched blindly. Persistent peers are redialed from the addresses registered at startup; that does not close an over-limit socket or authenticate PEX.
+
+### [HIGH] abci: Go server mutex lets a query stall commit-path IPC
+- **Where**: `sdk/go/server.go` `dispatch` (`appMu` around every method, including `Query` and `ValidateTx`)
+- **What**: A Go ABCI callback holds `appMu` for the whole call. Commit-path IPC on the other connection blocks in that lock with no deadline, so a stuck query stops the pacemaker.
+- **Reason**: The Go `Application` is not safe to call concurrently. `appMu` is what keeps `Query` from racing `ExecuteBlock` on app state. Removing it would data-race the application. A priority lock that preempts advisory calls is a separate server design.
+
+## Resolved — Overhaul (2026-11-26)
+
+> **Scope:** Full codebase after the dependency bump (postcard 1.2.0, vsdb 17.0.21, clap 4.6.10, toml 1.2.3, zstd 0.14.5, prost-build 0.14.6, and the highest compatible lockfile). One reviewer per subsystem group.
+> **Findings:** 13 actionable (2 critical, 6 high, 4 medium, 1 low), all fixed. One new observation moved to Won't Fix (Go `appMu`). The four previous Won't Fix entries were rechecked and still hold.
+> **Validation:** `make fmt`, `make lint` (`clippy -D warnings`), workspace tests.
+
+### [CRITICAL] consensus: a self-quorum leader re-entered propose on the same poll
+- **Where**: `engine.rs` `try_propose` / `advance_view_to`
+- **Resolution**: The run loop is the only caller of `try_propose`. A view that actually starts yields before the next one, so a one-validator chain commits without growing the stack.
+
+### [CRITICAL] node: startup sync left the tip commit QC out of the lock and the highest QC
+- **Where**: `crates/hotmint/src/bin/node.rs` post-sync writeback
+- **Resolution**: The commit QC at the last committed height is installed when it outranks the restored certificates, then persisted with the rest of the checkpoint.
+
+### [HIGH] consensus: invalid validator updates aborted a commit the application had already executed
+- **Where**: `commit.rs` `try_commit`, `sync.rs` replay
+- **Resolution**: After `execute_committed_block`, a rejected update is logged and dropped. The height still advances, so the same double certificate does not execute the block again and the WAL intent is completed.
+
+### [HIGH] sync: the activating block checked evidence against the pre-transition previous set
+- **Where**: `sync.rs` `replay_blocks`
+- **Resolution**: Evidence on the activating block is checked with the outgoing epoch as the previous set, then the epoch swap runs.
+
+### [HIGH] network: configured persistent peers were not redialed after the TCP session dropped
+- **Where**: `network/src/service.rs` `run_maintenance`
+- **Resolution**: A disconnected persistent peer is dialed by `PeerId`, which reuses the listen addresses registered at startup. Redial does not read the peer book.
+
+### [HIGH] node: CheckTx ran on the consensus ABCI connection
+- **Where**: `node.rs` `AppWithStatus::validate_tx`
+- **Resolution**: Gossip and `submit_tx` use their own IPC client. Commit-path calls stay on `inner`.
+
+### [HIGH] mgmt: the pid file was removed while the node process was still alive
+- **Where**: `hotmint-mgmt` `local.rs` `stop`, `lib.rs` `kill_stale_nodes`
+- **Resolution**: An alive pid whose identity cannot be confirmed keeps its pid file and `stop` returns an error. `kill_stale_nodes` unlinks only after exit, and `start_cluster_nodes` will not spawn over a live pid.
+
+### [HIGH] staking: split unbonding entries truncated delegation slashes to zero
+- **Where**: `staking/src/manager.rs` `slash_with_evidence`
+- **Resolution**: Unbonding entries for the validator are charged `sum * rate / 10_000` and the total is spread with the same cumulative floor as active delegations.
+
+### [MEDIUM] mempool: an in-flight recheck overwrote a newer replace-by-fee or keep
+- **Where**: `mempool/src/lib.rs` `recheck` / `recheck_blocking`
+- **Resolution**: Each insert has a generation, and each recheck has a ticket. A decision applies only when it is still the newest recheck and the entry is still the snapshotted generation.
+
+### [MEDIUM] sync: a noop replay could publish block results over the live engine
+- **Where**: `sync.rs` replay result write
+- **Resolution**: Only an application that tracks app hashes writes block results.
+
+### [MEDIUM] api: NewBlock events published a 4-byte hash and EpochChange was never sent
+- **Where**: `node.rs` `on_commit`
+- **Resolution**: `NewBlock.hash` is the full 32-byte hex. `EpochChange` is sent when a commit's epoch differs from the epoch recorded at startup.
+
+### [LOW] abci: the documented proto omitted fields the engine sends
+- **Where**: `proto/abci.proto`
+- **Resolution**: `proto/abci.proto` is a copy of `crates/hotmint-abci-proto/proto/abci.proto`, which is the schema prost compiles.
 
 ## Resolved — Overhaul (2026-11-16)
 

@@ -5,7 +5,7 @@ use crate::store::BlockStore;
 use hotmint_types::context::BlockContext;
 use hotmint_types::epoch::Epoch;
 use hotmint_types::{Block, BlockHash, DoubleCertificate, EndBlockResponse, Height, ViewNumber};
-use tracing::info;
+use tracing::{error, info};
 
 /// Result of a commit operation
 pub struct CommitResult {
@@ -184,21 +184,25 @@ pub fn try_commit(
             // Chain epoch transitions onto the in-flight pending (or freshly
             // activated) epoch so multiple updates accumulate deterministically
             // and identically across the live, engine, and sync replay paths.
-            pending_epoch = Some(
-                chained_pending_epoch(
-                    &active_epoch,
-                    pending_epoch.as_ref(),
-                    block.view,
-                    &response.validator_updates,
-                )
-                .map_err(|e| {
-                    eg!(
-                        "invalid validator updates at committed height {}: {}",
-                        block.height.as_u64(),
-                        e
-                    )
-                })?,
-            );
+            // The application has already committed this certified block.
+            // Returning here would let the same double certificate execute it
+            // again, so an invalid update is dropped and the height still
+            // advances.
+            match chained_pending_epoch(
+                &active_epoch,
+                pending_epoch.as_ref(),
+                block.view,
+                &response.validator_updates,
+            ) {
+                Ok(epoch) => pending_epoch = Some(epoch),
+                Err(e) => {
+                    error!(
+                        height = block.height.as_u64(),
+                        error = %e,
+                        "rejecting invalid validator updates after commit"
+                    );
+                }
+            }
         }
 
         block_responses.push(response);

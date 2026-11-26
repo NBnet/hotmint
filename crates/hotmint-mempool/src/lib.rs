@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use tokio::sync::Mutex;
 use tracing::debug;
@@ -43,6 +44,9 @@ struct TxEntry {
     priority: u64,
     gas_wanted: u64,
     hash: TxHash,
+    /// Bumped on every insert and replace. A recheck applies only to the
+    /// generation it snapshotted.
+    generation: u64,
 }
 
 impl Eq for TxEntry {}
@@ -85,6 +89,10 @@ pub struct Mempool {
     seen: Mutex<HashMap<TxHash, u64>>,
     max_size: usize,
     max_tx_bytes: usize,
+    /// Monotonic id stored on each inserted entry.
+    generation: AtomicU64,
+    /// Identifies the newest `recheck` so an older decision cannot land later.
+    recheck_ticket: AtomicU64,
 }
 
 impl Mempool {
@@ -94,7 +102,13 @@ impl Mempool {
             seen: Mutex::new(HashMap::new()),
             max_size,
             max_tx_bytes,
+            generation: AtomicU64::new(0),
+            recheck_ticket: AtomicU64::new(0),
         }
+    }
+
+    fn alloc_generation(&self) -> u64 {
+        self.generation.fetch_add(1, AtomicOrdering::Relaxed) + 1
     }
 
     /// Add a transaction with a given priority.
@@ -139,6 +153,7 @@ impl Mempool {
                 priority: existing_priority,
                 gas_wanted: 0,
                 hash,
+                generation: 0,
             };
             entries.remove(&old);
             seen.insert(hash, priority);
@@ -147,6 +162,7 @@ impl Mempool {
                 priority,
                 gas_wanted,
                 hash,
+                generation: self.alloc_generation(),
             });
             debug!(
                 old = existing_priority,
@@ -184,6 +200,7 @@ impl Mempool {
             priority,
             gas_wanted,
             hash,
+            generation: self.alloc_generation(),
         });
         true
     }
@@ -293,6 +310,7 @@ impl Mempool {
     /// without holding the locks across the callback and without occupying
     /// a runtime worker.
     pub fn recheck_blocking(&self, validator: impl Fn(&[u8]) -> Option<(u64, u64)>) {
+        let ticket = self.recheck_ticket.fetch_add(1, AtomicOrdering::AcqRel) + 1;
         let snapshot: Vec<TxEntry> = {
             let entries = self.entries.blocking_lock();
             entries.iter().cloned().collect()
@@ -306,29 +324,7 @@ impl Mempool {
             .collect();
         let mut entries = self.entries.blocking_lock();
         let mut seen = self.seen.blocking_lock();
-        for (entry, decision) in decisions {
-            let Some(current) = entries.iter().find(|e| e.hash == entry.hash).cloned() else {
-                continue;
-            };
-            if current.tx != entry.tx {
-                continue;
-            }
-            entries.remove(&current);
-            match decision {
-                Some((new_priority, new_gas)) => {
-                    seen.insert(entry.hash, new_priority);
-                    entries.insert(TxEntry {
-                        tx: entry.tx,
-                        priority: new_priority,
-                        gas_wanted: new_gas,
-                        hash: entry.hash,
-                    });
-                }
-                None => {
-                    seen.remove(&entry.hash);
-                }
-            }
-        }
+        self.apply_recheck(ticket, decisions, &mut entries, &mut seen);
     }
 
     /// Re-validate all pending transactions after a block commit.
@@ -338,6 +334,7 @@ impl Mempool {
     /// `Some((priority, gas_wanted))`, the tx is kept with possibly updated
     /// priority.
     pub async fn recheck(&self, validator: impl Fn(&[u8]) -> Option<(u64, u64)>) {
+        let ticket = self.recheck_ticket.fetch_add(1, AtomicOrdering::AcqRel) + 1;
         let snapshot: Vec<TxEntry> = {
             let entries = self.entries.lock().await;
             entries.iter().cloned().collect()
@@ -353,11 +350,34 @@ impl Mempool {
         }
         let mut entries = self.entries.lock().await;
         let mut seen = self.seen.lock().await;
+        self.apply_recheck(ticket, decisions, &mut entries, &mut seen);
+
+        if removed > 0 {
+            debug!(
+                removed,
+                remaining = entries.len(),
+                "mempool recheck complete"
+            );
+        }
+    }
+
+    /// Apply one recheck only when it is still the newest and each entry is
+    /// still the generation that was validated.
+    fn apply_recheck(
+        &self,
+        ticket: u64,
+        decisions: Vec<(TxEntry, Option<(u64, u64)>)>,
+        entries: &mut std::collections::BTreeSet<TxEntry>,
+        seen: &mut HashMap<TxHash, u64>,
+    ) {
+        if self.recheck_ticket.load(AtomicOrdering::Acquire) != ticket {
+            return;
+        }
         for (entry, decision) in decisions {
             let Some(current) = entries.iter().find(|e| e.hash == entry.hash).cloned() else {
                 continue;
             };
-            if current.tx != entry.tx {
+            if current.tx != entry.tx || current.generation != entry.generation {
                 continue;
             }
             entries.remove(&current);
@@ -369,20 +389,13 @@ impl Mempool {
                         priority: new_priority,
                         gas_wanted: new_gas,
                         hash: entry.hash,
+                        generation: self.alloc_generation(),
                     });
                 }
                 None => {
                     seen.remove(&entry.hash);
                 }
             }
-        }
-
-        if removed > 0 {
-            debug!(
-                removed,
-                remaining = entries.len(),
-                "mempool recheck complete"
-            );
         }
     }
 
@@ -513,6 +526,26 @@ mod tests {
 
         pool.recheck(|_| None).await;
         assert_eq!(pool.size().await, 0);
+    }
+
+    #[tokio::test]
+    async fn stale_recheck_does_not_drop_a_replaced_transaction() {
+        let pool = std::sync::Arc::new(Mempool::new(10, 1024));
+        assert!(pool.add_tx_with_gas(b"tx".to_vec(), 10, 1).await);
+        let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let pool_bg = pool.clone();
+        let gate_bg = gate.clone();
+        let worker = std::thread::spawn(move || {
+            pool_bg.recheck_blocking(|tx| {
+                assert_eq!(tx, b"tx");
+                gate_bg.wait();
+                None
+            });
+        });
+        gate.wait();
+        assert!(pool.add_tx_with_gas(b"tx".to_vec(), 40, 9).await);
+        worker.join().unwrap();
+        assert_eq!(pool.size().await, 1);
     }
 
     #[tokio::test]

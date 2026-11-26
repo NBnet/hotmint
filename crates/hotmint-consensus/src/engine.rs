@@ -1,6 +1,6 @@
 use ruc::*;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::application::Application;
@@ -73,8 +73,6 @@ pub struct ConsensusEngine {
     pacemaker: Pacemaker,
     pacemaker_config: PacemakerConfig,
     msg_rx: mpsc::Receiver<(Option<ValidatorId>, ConsensusMessage)>,
-    /// Collected unique status cert senders (for leader, per view)
-    status_senders: HashSet<ValidatorId>,
     /// The QC formed in this view's first voting round (used to build DoubleCert)
     current_view_qc: Option<QuorumCertificate>,
     /// Pending epoch transition (set by try_commit, applied in advance_view_to)
@@ -298,7 +296,6 @@ impl ConsensusEngine {
             pacemaker: Pacemaker::with_config(pc.clone()),
             pacemaker_config: pc,
             msg_rx,
-            status_senders: HashSet::new(),
             current_view_qc: None,
             pending_epoch: config.pending_epoch,
             persistence: config.persistence,
@@ -349,6 +346,21 @@ impl ConsensusEngine {
         }
 
         loop {
+            // Propose from this loop, not from inside view advance. A
+            // self-quorum leader finishes Vote and Vote2 in the same poll and
+            // would otherwise recurse until the stack overflows.
+            if self.state.is_leader() && self.state.step == ViewStep::WaitingForStatus {
+                let view_before = self.state.current_view;
+                let step_before = self.state.step;
+                self.try_propose().await;
+                let advanced =
+                    self.state.current_view != view_before || self.state.step != step_before;
+                if advanced {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+            }
+
             let deadline = self.pacemaker.sleep_until_deadline();
             tokio::pin!(deadline);
 
@@ -387,59 +399,54 @@ impl ConsensusEngine {
         );
         self.pacemaker.reset_timer();
 
-        // If leader of genesis view, propose immediately
+        // The run loop proposes once the step is WaitingForStatus. Calling
+        // try_propose here would nest the next view on the same poll.
         if self.state.is_leader() {
             self.state.step = ViewStep::WaitingForStatus;
-            // In genesis, skip status wait — propose directly
-            self.try_propose().await;
         }
     }
 
-    fn try_propose(
-        &mut self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
-        Box::pin(async move {
-            // Collect pending evidence to embed in the block (C-3).
-            let pending_evidence = self
-                .evidence_store
-                .as_ref()
-                .map(|s| s.get_pending())
-                .unwrap_or_default();
+    async fn try_propose(&mut self) {
+        // Collect pending evidence to embed in the block (C-3).
+        let pending_evidence = self
+            .evidence_store
+            .as_ref()
+            .map(|s| s.get_pending())
+            .unwrap_or_default();
 
-            // Propose is synchronous; acquire, run, and release the lock before any await.
-            let proposed_block = {
-                let mut store = self.store.write();
-                view_protocol::propose(
-                    &mut self.state,
-                    store.as_mut(),
-                    &view_protocol::ViewDeps {
-                        network: self.network.as_ref(),
-                        app: self.app.as_ref(),
-                        signer: self.signer.as_ref(),
-                        verifier: self.verifier.as_ref(),
-                    },
-                    pending_evidence,
-                    view_protocol::EpochContext {
-                        previous_epoch: self.previous_epoch.as_ref(),
-                        in_flight_pending: None,
-                    },
-                )
-            }; // lock released here
+        // Propose is synchronous; acquire, run, and release the lock before any await.
+        let proposed_block = {
+            let mut store = self.store.write();
+            view_protocol::propose(
+                &mut self.state,
+                store.as_mut(),
+                &view_protocol::ViewDeps {
+                    network: self.network.as_ref(),
+                    app: self.app.as_ref(),
+                    signer: self.signer.as_ref(),
+                    verifier: self.verifier.as_ref(),
+                },
+                pending_evidence,
+                view_protocol::EpochContext {
+                    previous_epoch: self.previous_epoch.as_ref(),
+                    in_flight_pending: None,
+                },
+            )
+        }; // lock released here
 
-            match proposed_block {
-                Ok(block) => {
-                    // Leader votes for its own block
-                    self.leader_self_vote(block.hash).await;
-                }
-                Err(e) => {
-                    warn!(
-                        validator = %self.state.validator_id,
-                        error = %e,
-                        "failed to propose"
-                    );
-                }
+        match proposed_block {
+            Ok(block) => {
+                // Leader votes for its own block
+                self.leader_self_vote(block.hash).await;
             }
-        })
+            Err(e) => {
+                warn!(
+                    validator = %self.state.validator_id,
+                    error = %e,
+                    "failed to propose"
+                );
+            }
+        }
     }
 
     async fn leader_self_vote(&mut self, block_hash: BlockHash) {
@@ -1448,27 +1455,15 @@ impl ConsensusEngine {
                 validator,
                 signature: _,
             } => {
-                if self.state.is_leader() && self.state.step == ViewStep::WaitingForStatus {
-                    if let Some(ref qc) = locked_qc
-                        && qc.aggregate_signature.count() > 0
-                    {
-                        if block_in_place(|| self.verify_vote_qc(qc, VoteType::Vote)) {
-                            self.state.update_highest_qc(qc);
-                        } else {
-                            warn!(validator = %validator, "status cert carries invalid locked_qc");
-                        }
-                    }
-                    self.status_senders.insert(validator);
-                    let status_power: u64 = self
-                        .status_senders
-                        .iter()
-                        .map(|v| self.state.validator_set.power_of(*v))
-                        .sum();
-                    // Leader's own power counts toward quorum
-                    let total_power =
-                        status_power + self.state.validator_set.power_of(self.state.validator_id);
-                    if total_power >= self.state.validator_set.quorum_threshold() {
-                        self.try_propose().await;
+                if self.state.is_leader()
+                    && self.state.step == ViewStep::WaitingForStatus
+                    && let Some(ref qc) = locked_qc
+                    && qc.aggregate_signature.count() > 0
+                {
+                    if block_in_place(|| self.verify_vote_qc(qc, VoteType::Vote)) {
+                        self.state.update_highest_qc(qc);
+                    } else {
+                        warn!(validator = %validator, "status cert carries invalid locked_qc");
                     }
                 }
             }
@@ -1981,7 +1976,6 @@ impl ConsensusEngine {
         self.vote_collector.prune_before(self.state.current_view);
         self.pacemaker.clear_view(self.state.current_view);
         self.pacemaker.prune_before(self.state.current_view);
-        self.status_senders.clear();
         self.current_view_qc = None;
 
         // Epoch transition: apply pending validator set change when we reach the
@@ -2057,15 +2051,6 @@ impl ConsensusEngine {
         }
 
         self.persist_state();
-
-        // If we're the leader, propose immediately.
-        // Note: in a full implementation, the leader would collect StatusCerts
-        // before proposing (status_senders quorum gate). Currently the immediate
-        // propose path is required for liveness across epoch transitions where
-        // cross-epoch verification complexity can stall status collection.
-        if self.state.is_leader() && self.state.step == ViewStep::WaitingForStatus {
-            self.try_propose().await;
-        }
     }
 }
 
@@ -2153,6 +2138,20 @@ mod tests {
             },
         );
         (engine, tx)
+    }
+
+    #[tokio::test]
+    async fn single_validator_commits_without_stack_overflow() {
+        let signer = Ed25519Signer::generate(ValidatorId(0));
+        let vs = ValidatorSet::new(vec![ValidatorInfo {
+            id: ValidatorId(0),
+            public_key: signer.public_key(),
+            power: 1,
+        }]);
+        let (engine, _tx) = make_test_engine(ValidatorId(0), vs, signer);
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(400), engine.run()).await;
+        assert!(result.is_err());
     }
 
     #[test]
