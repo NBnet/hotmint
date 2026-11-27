@@ -22,7 +22,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.8.16"
+version = "0.8.17"
 edition = "2024"
 license = "GPL-3.0-only"
 repository = "https://github.com/NBnet/hotmint"
@@ -35,10 +35,10 @@ tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 ruc = "11.0.3"
 postcard = { version = "1.2.0", features = ["alloc"] }
-blake3 = "1.8.7"
+blake3 = "1.8.8"
 ed25519-dalek = { version = "3.0.0", features = ["serde", "rand_core", "batch"] }
 rand = "0.10.4"
-vsdb = "17.0.21"
+vsdb = "19.0.4"
 litep2p = "0.17.0"
 async-trait = "0.1.92"
 futures = "0.3.34"
@@ -55,16 +55,16 @@ axum = { version = "0.8.9", features = ["ws"] }
 tower-http = { version = "0.7.1", features = ["cors"] }
 parking_lot = "0.13.0"
 
-hotmint = { version = "0.8.16", path = "crates/hotmint" }
-hotmint-types = { version = "0.8.16", path = "crates/hotmint-types" }
-hotmint-crypto = { version = "0.8.16", path = "crates/hotmint-crypto" }
-hotmint-consensus = { version = "0.8.16", path = "crates/hotmint-consensus" }
-hotmint-storage = { version = "0.8.16", path = "crates/hotmint-storage" }
-hotmint-network = { version = "0.8.16", path = "crates/hotmint-network" }
-hotmint-mempool = { version = "0.8.16", path = "crates/hotmint-mempool" }
-hotmint-api = { version = "0.8.16", path = "crates/hotmint-api" }
-hotmint-abci = { version = "0.8.16", path = "crates/hotmint-abci" }
-hotmint-abci-proto = { version = "0.8.16", path = "crates/hotmint-abci-proto" }
-hotmint-staking = { version = "0.8.16", path = "crates/hotmint-staking" }
-hotmint-light = { version = "0.8.16", path = "crates/hotmint-light" }
-hotmint-mgmt = { version = "0.8.16", path = "crates/hotmint-mgmt" }
+hotmint = { version = "0.8.17", path = "crates/hotmint" }
+hotmint-types = { version = "0.8.17", path = "crates/hotmint-types" }
+hotmint-crypto = { version = "0.8.17", path = "crates/hotmint-crypto" }
+hotmint-consensus = { version = "0.8.17", path = "crates/hotmint-consensus" }
+hotmint-storage = { version = "0.8.17", path = "crates/hotmint-storage" }
+hotmint-network = { version = "0.8.17", path = "crates/hotmint-network" }
+hotmint-mempool = { version = "0.8.17", path = "crates/hotmint-mempool" }
+hotmint-api = { version = "0.8.17", path = "crates/hotmint-api" }
+hotmint-abci = { version = "0.8.17", path = "crates/hotmint-abci" }
+hotmint-abci-proto = { version = "0.8.17", path = "crates/hotmint-abci-proto" }
+hotmint-staking = { version = "0.8.17", path = "crates/hotmint-staking" }
+hotmint-light = { version = "0.8.17", path = "crates/hotmint-light" }
+hotmint-mgmt = { version = "0.8.17", path = "crates/hotmint-mgmt" }

@@ -50,17 +50,17 @@ fn utxo_spends_pages_roots_and_proofs_match_an_independent_model() {
             }
         }
         // Check the dirty state too, then the committed state.
-        let mut oracle = SmtCalc::from_entries(
+        let oracle = SmtCalc::from_entries(
             expected
                 .iter()
                 .map(|(k, v)| (k.to_vec(), postcard::to_allocvec(v).unwrap())),
         )
         .unwrap();
-        let expected_root = oracle.root_hash().unwrap();
+        let expected_root = oracle.root_hash();
         assert_eq!(state.utxo_root().unwrap(), expected_root);
         state.commit().unwrap();
-        let root: [u8; 32] = state.utxo_root().unwrap().try_into().unwrap();
-        assert_eq!(root.as_slice(), expected_root);
+        let root = state.utxo_root().unwrap();
+        assert_eq!(root, expected_root);
         assert_eq!(state.total_supply(), 12_800);
         for owner in 0..4 {
             let keys: Vec<_> = expected
@@ -136,7 +136,7 @@ fn utxo_block_cost() {
             state.commit().unwrap();
             commit.push(started.elapsed().as_micros());
             let started = Instant::now();
-            let hash: [u8; 32] = state.utxo_root().unwrap().try_into().unwrap();
+            let hash = state.utxo_root().unwrap();
             root.push(started.elapsed().as_micros());
             let point = outpoint(size + n);
             assert!(

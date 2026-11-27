@@ -101,7 +101,7 @@ impl UtxoState {
     }
 
     /// Compute the UTXO set SMT root hash (32 bytes).
-    pub fn utxo_root(&mut self) -> Result<Vec<u8>> {
+    pub fn utxo_root(&mut self) -> Result<[u8; 32]> {
         self.utxos.merkle_root(self.main_branch).c(d!())
     }
 

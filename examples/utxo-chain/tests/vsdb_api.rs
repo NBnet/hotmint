@@ -7,8 +7,8 @@ fn serde_json_roundtrips_both_proof_kinds() {
     let mut smt = SmtCalc::new();
     mpt.insert(b"key", b"value").unwrap();
     smt.insert(b"key", b"value").unwrap();
-    let mpt_root: [u8; 32] = mpt.root_hash().unwrap().try_into().unwrap();
-    let smt_root: [u8; 32] = smt.root_hash().unwrap().try_into().unwrap();
+    let mpt_root = mpt.root_hash();
+    let smt_root = smt.root_hash();
     for key in [b"key".as_slice(), b"missing"] {
         let mpt = mpt.prove(key).unwrap();
         let smt = smt.prove(key).unwrap();
@@ -39,7 +39,7 @@ fn proofs_follow_uncommitted_changes_without_a_root_query() {
         proof.value(),
         Some(postcard::to_allocvec(&output).unwrap().as_slice())
     );
-    let root: [u8; 32] = state.utxo_root().unwrap().try_into().unwrap();
+    let root = state.utxo_root().unwrap();
     assert!(SmtCalc::verify_proof(&root, &point.to_key(), &proof).unwrap());
     state.commit().unwrap();
 
@@ -56,7 +56,7 @@ fn proofs_follow_uncommitted_changes_without_a_root_query() {
     );
     let proof = state.prove_utxo(&point).unwrap();
     assert!(proof.value().is_none());
-    let root: [u8; 32] = state.utxo_root().unwrap().try_into().unwrap();
+    let root = state.utxo_root().unwrap();
     assert!(SmtCalc::verify_proof(&root, &point.to_key(), &proof).unwrap());
 }
 

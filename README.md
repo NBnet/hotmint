@@ -211,7 +211,7 @@ Add `hotmint` as a dependency:
 
 ```toml
 [dependencies]
-# This tree is workspace version 0.8.16. crates.io currently publishes 0.8.14.
+# This tree is workspace version 0.8.17. crates.io currently publishes 0.8.15.
 hotmint = { git = "https://github.com/NBnet/hotmint" }
 tokio = { version = "1", features = ["full"] }
 ruc = "11.0.3"

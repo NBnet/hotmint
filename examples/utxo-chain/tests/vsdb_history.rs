@@ -53,7 +53,7 @@ fn phase(dir: PathBuf, phase: &str) {
         proof.map_mut().commit(branch).unwrap();
     }
     let added = phase == "append" || phase == "read-appended";
-    let mut oracle = SmtCalc::from_entries((u8::from(added)..64 + u8::from(added)).map(|n| {
+    let oracle = SmtCalc::from_entries((u8::from(added)..64 + u8::from(added)).map(|n| {
         (
             key(n).to_vec(),
             postcard::to_allocvec(&TxOutput {
@@ -64,8 +64,8 @@ fn phase(dir: PathBuf, phase: &str) {
         )
     }))
     .unwrap();
-    let root: [u8; 32] = proof.merkle_root(branch).unwrap().try_into().unwrap();
-    assert_eq!(root.as_slice(), oracle.root_hash().unwrap());
+    let root = proof.merkle_root(branch).unwrap();
+    assert_eq!(root, oracle.root_hash());
     for n in 0..=64 {
         let p = proof.prove(&key(n)).unwrap();
         assert!(SmtCalc::verify_proof(&root, &key(n), &p).unwrap());

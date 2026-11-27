@@ -37,7 +37,7 @@ cargo run --release -p utxo-chain-example --bin bench-utxo
 - Ed25519 `verify_strict` for signature verification
 
 The `prove` query takes a 36-byte outpoint key and returns
-`SmtProof::to_bytes()` in `QueryResponse.data`. VSDB 17.0.19 provides this
+`SmtProof::to_bytes()` in `QueryResponse.data`. VSDB 19.0.4 provides this
 versioned encoding, its matching `SmtProof::from_bytes()` decoder, and serde
 support for both SMT and MPT proofs. Proof generation synchronizes the current
 working state through `prove_at`; no preceding `utxo_root` query is required.

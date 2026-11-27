@@ -54,8 +54,8 @@ fn both_proof_kinds_reach_the_light_client_across_processes() {
         }
         let state_dir = dir.join(state);
         fs::create_dir(&state_dir).unwrap();
-        fs::write(state_dir.join("mpt-root"), mpt.root_hash().unwrap()).unwrap();
-        fs::write(state_dir.join("smt-root"), smt.root_hash().unwrap()).unwrap();
+        fs::write(state_dir.join("mpt-root"), mpt.root_hash()).unwrap();
+        fs::write(state_dir.join("smt-root"), smt.root_hash()).unwrap();
         for name in ["account", "missing"] {
             fs::write(
                 state_dir.join(format!("mpt-{name}")),

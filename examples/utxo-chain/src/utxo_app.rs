@@ -273,7 +273,7 @@ impl Application for UtxoApplication {
             }
             "utxo_root" => {
                 let root = state.utxo_root().unwrap_or_default();
-                Ok(root)
+                Ok(root.to_vec())
             }
             "total_supply" => {
                 let supply = state.total_supply();
