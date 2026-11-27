@@ -14,7 +14,7 @@ Hotmint provides two `BlockStore` implementations and a `PersistentConsensusStat
 
 [vsdb](https://crates.io/crates/vsdb) is a high-performance embedded key-value database whose API mirrors Rust standard collections (HashMap / BTreeMap). Under the hood it uses MMDB, a pure-Rust LSM-Tree storage engine, so there are no C library dependencies.
 
-Hotmint declares `vsdb = "19.0.4"` from crates.io. A v17 universe does not open in place; convert it with the v18 tools before a v19 process uses that directory. A fresh data directory needs no conversion.
+Hotmint declares `vsdb = "19.0.4"` from crates.io.
 
 ### Core Types
 
@@ -381,7 +381,7 @@ Both `VsdbBlockStore` and `PersistentConsensusState` expose a `.flush()` method 
 
 ## Advanced vsdb Features
 
-Beyond basic KV storage, vsdb v17.x offers several advanced features that may be useful for future Hotmint extensions:
+Beyond basic KV storage, vsdb 19 offers several advanced features that may be useful for future Hotmint extensions:
 
 ### VerMap — Versioned Storage
 
